@@ -57,13 +57,25 @@ def _graph(path, params, tries=6):
                 break
             except urllib.error.HTTPError as e:
                 body = e.read().decode()
-                # code 4 / 17 = rate limit. Meta holds these for minutes, far longer than
+                # Parse the code rather than substring-matching the body: '"code":1'
+                # also matches 17 and 100, which is exactly the kind of bug that makes a
+                # rate limit look like something else.
+                try:
+                    code = json.loads(body).get("error", {}).get("code")
+                except Exception:
+                    code = None
+                # 4 / 17 / 613 = rate limit. Meta holds these for minutes, far longer than
                 # a web request can wait, and hammering makes it worse. Two short retries,
                 # then give up so the caller can serve the last good numbers instead.
-                if '"code":17' in body or '"code":4' in body:
+                if code in (4, 17, 613):
                     if i < 2:
                         time.sleep(5 * (i + 1)); continue
                     raise RateLimited(f"Meta rate limit on {path.split('/')[-1]}")
+                # 1 / 2 = Meta-side transient ("Service temporarily unavailable"). Short
+                # lived and common; retrying is right. Not retrying these turned a blip
+                # into a 500 on a cold cache, which is how this branch got written.
+                if code in (1, 2) and i < tries - 1:
+                    time.sleep(3 * (i + 1)); continue
                 raise RuntimeError(f"Meta {path}: {body[:300]}")
             except Exception as ex:
                 if i < tries - 1:
