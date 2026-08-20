@@ -256,10 +256,14 @@ async function load(force){
     if(j.warning) notes.push(`<b>Numbers not refreshing.</b> ${j.warning}
        Last updated ${DATA.generated_at.replace(' IST','')} IST.`);
     if(j.degraded && j.degraded.length) notes.push(
-      `<b>Partial data for ${j.degraded.join(', ')}.</b> Meta would not return the ad set
-       and ad roster for ${j.degraded.length>1?'these accounts':'this account'}, so spend,
-       trials and CPT are correct but <b>budgets show ₹0, ad-set status is unknown</b>, and
-       anything that spent nothing today is missing. Clears when the rate limit lifts.`);
+      `<b>Partial data.</b> Meta is rate-limiting some listings (its total-request-time
+       limit, not call count) — ` +
+      j.degraded.map(d=>`<b>${d.account}</b>: ${d.missing.join(' + ')}`).join('; ') +
+      `. Spend, trials and CPT are unaffected and correct.
+       ${j.budgets_known ? '' : 'Budgets are unavailable, '}status shows
+       <i>unknown</i> for the missing listings, and anything that spent nothing today is
+       not listed. Recovers by itself — Meta's header put it at ~10 minutes once calls
+       stop.`);
     document.getElementById('err').innerHTML = notes.length
       ? `<div class="warnbox">${notes.join('<br><br>')}</div>` : '';
     // Served from a stale cache while a refresh runs behind the request — come back
@@ -292,7 +296,7 @@ function kpis(){
      <div class="s">target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}</div></div>
    <div class="kpi"><div class="k">Spend</div><div class="v">${rs(sp)}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
-       : deg ? 'budget unavailable — partial data'
+       : !DATA.budgets_known ? 'budget unavailable — partial data'
              : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used`}</div></div>
    <div class="kpi"><div class="k">Trials</div><div class="v">${num(tr)}</div>
      <div class="s">${EV==='t101'?'trial_started':'nc_after10min'} · Branch ${num(DATA.branch_totals[EV])} total</div></div>

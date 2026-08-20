@@ -55,15 +55,35 @@ bare `.bad`, which silently killed the colour coding the first time this was sty
 
 ## Meta rate limits
 
-The Meta app is on the **`development_access`** ads-API tier, whose per-account call
-ceiling is low enough to trip `code 17 — User request limit reached` during a normal
-day's refreshing. Requesting Standard Access in the Meta app dashboard is the durable
-fix; everything below is what the dashboard does so a throttle is survivable.
+The Meta app is on the **`development_access`** ads-API tier. Requesting **Standard
+Access** in the Meta app dashboard is the durable fix; everything below is what the
+dashboard does so a throttle is survivable meanwhile.
+
+Read the `x-business-use-case-usage` header before theorising — it names the limit:
+
+```
+call_count=1%   total_cputime=6%   total_time=108%   estimated_time_to_regain_access=10   tier=development_access
+```
+
+The ceiling that bites is **total request time**, not call count. So the thing to minimise
+is *expensive listings*, not the number of requests. It is also **not per-edge**: when
+`act_…/adsets` is throttled, `{campaign_id}/adsets` is throttled too. What survives is
+`/campaigns`, `/insights`, and single-object reads — listing ad sets and ads is what gets
+cut off. And do not poll a throttled endpoint waiting for it to clear: blocked attempts
+still accrue against the window and hold it open.
 
 - **Two Meta calls per refresh, not eleven.** The roster (campaigns, ad sets, ads —
-  names, statuses, budgets) is cached for 15 minutes (`ROSTER_TTL`), because it changes
-  on the timescale of ad-ops decisions, not seconds. Only the ad-level insights call runs
-  every refresh. This is ~80% fewer calls and cut a build from ~12s to ~5.5s.
+  names, statuses, budgets) is cached for 30 minutes (`ROSTER_TTL`; the ads listing, the
+  priciest and least urgent, gets 60 via `ADS_ROSTER_TTL`), because it changes on the
+  timescale of ad-ops decisions, not seconds. Only the ad-level insights call runs every
+  refresh. Builds went ~12s to ~5.5s.
+- **Each roster listing fails independently.** Fetching the three as a unit meant one
+  throttled listing threw away the other two — losing every budget because the *ads*
+  listing failed, when the ad set listing had answered fine.
+- **Roster listings do not retry a rate limit** (`rl_retries=0`); the caller degrades
+  anyway, and waiting 15s to be told "no" again made a throttled cold start take 44s
+  instead of 11s. The insights call keeps its retries — it is the one thing with no
+  fallback.
 - **A failed roster is cached too** (`ROSTER_RETRY`, 300s). Re-asking a throttled endpoint
   every refresh both feeds the limit and costs the full back-off on each build.
 - **Rate limits fail fast.** Two short retries, then give up — Meta holds these for
