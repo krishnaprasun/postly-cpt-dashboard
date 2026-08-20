@@ -105,6 +105,11 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 .note b{color:var(--ink)}
 .err{background:var(--red-lt);border:1px solid #EFCFCB;color:var(--red);padding:12px 15px;
   border-radius:11px;margin-bottom:14px;font-size:13px}
+/* A throttle is not a failure — the numbers are still on screen, they are just not
+   moving. Amber and calm, not red and alarming. */
+.warnbox{background:var(--gold-lt);border:1px solid #F0DDB4;color:var(--gold-dk);
+  padding:10px 15px;border-radius:11px;margin-bottom:14px;font-size:12.5px}
+.warnbox b{color:#8C5C05}
 .loading{opacity:.5;transition:opacity .15s}
 /* Progress bar shown while any fetch is in flight. The first load gets the big panel
    below as well; a background refresh gets only this, so the numbers on screen stay
@@ -244,9 +249,19 @@ async function load(force){
     const j = await r.json();
     lastFetchAt = Date.now();
     if(j.error){ document.getElementById('err').innerHTML =
-      `<div class="err"><b>Fetch failed.</b> ${j.error}</div>`; return; }
-    document.getElementById('err').innerHTML='';
+      `<div class="err"><b>Could not load.</b> ${j.error}</div>`; return; }
     DATA = j; render();
+    // Warnings still carry figures — render them, then explain what is off.
+    const notes = [];
+    if(j.warning) notes.push(`<b>Numbers not refreshing.</b> ${j.warning}
+       Last updated ${DATA.generated_at.replace(' IST','')} IST.`);
+    if(j.degraded && j.degraded.length) notes.push(
+      `<b>Partial data for ${j.degraded.join(', ')}.</b> Meta would not return the ad set
+       and ad roster for ${j.degraded.length>1?'these accounts':'this account'}, so spend,
+       trials and CPT are correct but <b>budgets show ₹0, ad-set status is unknown</b>, and
+       anything that spent nothing today is missing. Clears when the rate limit lifts.`);
+    document.getElementById('err').innerHTML = notes.length
+      ? `<div class="warnbox">${notes.join('<br><br>')}</div>` : '';
     // Served from a stale cache while a refresh runs behind the request — come back
     // for the fresh numbers instead of leaving old ones on screen.
     if(j.stale) staleTimer = setTimeout(()=>load(false), 12000);
@@ -269,19 +284,24 @@ function kpis(){
   const cov = DATA.branch_totals[EV] ? 100*DATA.matched[EV]/DATA.branch_totals[EV] : 0;
   const pace = c.budget ? 100*sp/c.budget : 0;
   const days = Math.round((new Date(DATA.until) - new Date(DATA.since))/864e5) + 1;
+  // budgets and statuses are only partly known when an account's roster failed
+  const deg = !!(DATA.degraded && DATA.degraded.length);
   document.getElementById('kpis').innerHTML = `
    <div class="kpi hero"><div class="k">Current CPT</div>
      <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
      <div class="s">target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}</div></div>
    <div class="kpi"><div class="k">Spend</div><div class="v">${rs(sp)}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
-                             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used`}</div></div>
+       : deg ? 'budget unavailable — partial data'
+             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used`}</div></div>
    <div class="kpi"><div class="k">Trials</div><div class="v">${num(tr)}</div>
      <div class="s">${EV==='t101'?'trial_started':'nc_after10min'} · Branch ${num(DATA.branch_totals[EV])} total</div></div>
    <div class="kpi"><div class="k">Attribution</div><div class="v">${cov.toFixed(1)}%</div>
      <div class="s">${num(DATA.unattributed[EV])} trials not matched to an ad</div></div>
-   <div class="kpi"><div class="k">Live</div><div class="v">${num(c.active_adsets)}</div>
-     <div class="s">active ad sets · ${num(c.active_ads)} ads</div></div>`;
+   <div class="kpi"><div class="k">${deg ? 'Ad sets' : 'Live'}</div>
+     <div class="v">${num(c.active_adsets)}</div>
+     <div class="s">${deg ? `with spend · ${num(c.active_ads)} ads (status unknown)`
+                          : `active ad sets · ${num(c.active_ads)} ads`}</div></div>`;
 }
 
 /* ---------- table specs ---------- */

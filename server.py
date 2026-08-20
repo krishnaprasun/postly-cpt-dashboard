@@ -42,6 +42,15 @@ ADMIN_PASS = os.environ.get("ADMIN_PASS", "")
 
 _cache, _lock = {}, threading.Lock()
 _refreshing = set()
+_last_error = {}
+
+
+def _friendly(exc):
+    """Meta's raw error JSON is not something to put in front of someone judging CPT."""
+    if isinstance(exc, P.RateLimited):
+        return ("Meta is rate-limiting this ad account (code 17). These are the last "
+                "figures that came through — it usually clears within a few minutes.")
+    return "Could not refresh: " + str(exc)[:200]
 
 
 # ------------------------------------------------------------------ auth ---
@@ -69,8 +78,11 @@ def _build_into_cache(key):
         data = P.build(*key)
         with _lock:
             _cache[key] = {"at": time.time(), "data": data}
-    except Exception:
+            _last_error.pop(key, None)
+    except Exception as e:
         traceback.print_exc()
+        with _lock:
+            _last_error[key] = _friendly(e)
     finally:
         with _lock:
             _refreshing.discard(key)
@@ -94,11 +106,29 @@ def get_data(since, until, force=False):
         if start_bg:
             threading.Thread(target=_build_into_cache, args=(key,), daemon=True).start()
         # stale=True tells the page to check back shortly for the refreshed numbers
-        return dict(hit["data"], cached=True, age=int(age), stale=True)
+        with _lock:
+            warn = _last_error.get(key)
+        out = dict(hit["data"], cached=True, age=int(age), stale=not warn)
+        if warn:
+            out["warning"] = warn
+        return out
 
-    data = P.build(since, until)
+    try:
+        data = P.build(since, until)
+    except Exception as e:
+        # A throttle or a blip must not blank the dashboard. If any figures were ever
+        # fetched for this window, serve those and say how old they are; only a cold
+        # cache with nothing to fall back on is a real error.
+        with _lock:
+            hit = _cache.get(key)
+            _last_error[key] = _friendly(e)
+        if hit:
+            return dict(hit["data"], cached=True, age=int(time.time() - hit["at"]),
+                        stale=False, warning=_friendly(e))
+        raise
     with _lock:
         _cache[key] = {"at": time.time(), "data": data}
+        _last_error.pop(key, None)
     return dict(data, cached=False, age=0, stale=False)
 
 

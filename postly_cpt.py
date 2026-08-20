@@ -15,7 +15,7 @@ spend, so no rollup double counts.
 
 Read-only. This module never writes to Meta.
 """
-import json, sys, time, urllib.error, urllib.parse, urllib.request
+import json, os, sys, threading, time, urllib.error, urllib.parse, urllib.request
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
@@ -40,6 +40,11 @@ def today_ist():
 
 
 # ---------------------------------------------------------------- Meta -----
+class RateLimited(RuntimeError):
+    """Meta code 4/17. Distinct from a real failure: the data is fine, we are just
+    not allowed to ask right now, so callers fall back to cached numbers."""
+
+
 def _graph(path, params, tries=6):
     pr = dict(params); pr["access_token"] = C.META_TOKEN; pr.setdefault("limit", "500")
     url = f"{C.GRAPH}/{path}?" + urllib.parse.urlencode(pr)
@@ -52,11 +57,13 @@ def _graph(path, params, tries=6):
                 break
             except urllib.error.HTTPError as e:
                 body = e.read().decode()
-                # code 4 / 17 = rate limit. Back off briefly; the dashboard must stay
-                # responsive, so this is a short retry rather than the 35-min cooldown
-                # the batch scripts use.
-                if ('"code":17' in body or '"code":4' in body) and i < tries - 1:
-                    time.sleep(8 * (i + 1)); continue
+                # code 4 / 17 = rate limit. Meta holds these for minutes, far longer than
+                # a web request can wait, and hammering makes it worse. Two short retries,
+                # then give up so the caller can serve the last good numbers instead.
+                if '"code":17' in body or '"code":4' in body:
+                    if i < 2:
+                        time.sleep(5 * (i + 1)); continue
+                    raise RateLimited(f"Meta rate limit on {path.split('/')[-1]}")
                 raise RuntimeError(f"Meta {path}: {body[:300]}")
             except Exception as ex:
                 if i < tries - 1:
@@ -67,21 +74,65 @@ def _graph(path, params, tries=6):
     return out
 
 
-def meta_account(acct, since, until):
-    """Ad-level spend for the window + the ACTIVE roster (names, status, budgets)."""
-    tr = json.dumps({"since": since, "until": until})
-    insights = _graph(f"{acct}/insights", {
-        "level": "ad", "time_range": tr,
+# The Meta app is on the **development_access** ads-API tier, whose per-account call
+# ceiling is low enough that a naive refresh loop trips code 17 within an afternoon.
+# The roster (names, statuses, budgets) is ~70% of the calls a refresh would make and
+# changes on the timescale of ad-ops decisions, not seconds — so it gets its own long
+# cache and the per-refresh cost drops to the insights call alone.
+ROSTER_TTL = int(os.environ.get("ROSTER_TTL", "900"))
+# After a roster fetch fails, stop asking for a while. Retrying a throttled endpoint on
+# every refresh both feeds the rate limit that caused it and costs the caller the full
+# back-off sleep on each build (~15s), so a failure is cached almost as deliberately as
+# a success.
+ROSTER_RETRY = int(os.environ.get("ROSTER_RETRY", "300"))
+_roster_cache, _roster_lock = {}, threading.Lock()
+_roster_fail_until = {}
+
+
+def meta_insights(acct, since, until):
+    """Ad-level spend for the window. Re-pulled on every refresh; this is the number."""
+    return _graph(f"{acct}/insights", {
+        "level": "ad", "time_range": json.dumps({"since": since, "until": until}),
         "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend"})
-    campaigns = _graph(f"{acct}/campaigns",
-                       {"fields": "id,name,effective_status,daily_budget"})
-    adsets = _graph(f"{acct}/adsets", {
-        "fields": "id,name,effective_status,daily_budget,campaign_id",
-        "effective_status": json.dumps(["ACTIVE"])})
-    ads = _graph(f"{acct}/ads", {
-        "fields": "id,name,effective_status,adset_id,campaign_id",
-        "effective_status": json.dumps(["ACTIVE"])})
-    return insights, campaigns, adsets, ads
+
+
+def meta_roster(acct):
+    """Campaigns + ACTIVE ad sets and ads: names, statuses, budgets. Cached hard, and on
+    a rate limit an EXPIRED copy is reused rather than failing the whole build — a stale
+    budget is worth far more than no dashboard."""
+    now = time.time()
+    with _roster_lock:
+        hit = _roster_cache.get(acct)
+        blocked_until = _roster_fail_until.get(acct, 0)
+    if hit and now - hit["at"] < ROSTER_TTL:
+        return hit["data"]
+    if now < blocked_until:
+        return hit["data"] if hit else None
+    try:
+        data = (
+            _graph(f"{acct}/campaigns",
+                   {"fields": "id,name,effective_status,daily_budget"}),
+            _graph(f"{acct}/adsets",
+                   {"fields": "id,name,effective_status,daily_budget,campaign_id",
+                    "effective_status": json.dumps(["ACTIVE"])}),
+            _graph(f"{acct}/ads",
+                   {"fields": "id,name,effective_status,adset_id,campaign_id",
+                    "effective_status": json.dumps(["ACTIVE"])}),
+        )
+        with _roster_lock:
+            _roster_cache[acct] = {"at": time.time(), "data": data}
+            _roster_fail_until.pop(acct, None)
+        return data
+    except Exception:
+        with _roster_lock:
+            _roster_fail_until[acct] = time.time() + ROSTER_RETRY
+        if hit:
+            return hit["data"]
+        # Nothing cached and Meta will not answer: return None so build() degrades to
+        # insights-only. The insights call alone carries every id and name needed for
+        # spend, trials and CPT at every level — only statuses and budgets are lost.
+        # A dashboard without a budget column beats no dashboard.
+        return None
 
 
 # -------------------------------------------------------------- Branch -----
@@ -129,12 +180,24 @@ def branch_trials_by_ad(since, until):
 # ---------------------------------------------------------------- build ----
 def build(since, until):
     started = time.time()
+    degraded = []
     trials = branch_trials_by_ad(since, until)
 
     ads, adsets, campaigns, accounts = {}, {}, {}, {}
 
     for a in ACCOUNTS:
-        insights, camps, live_sets, live_ads = meta_account(a["id"], since, until)
+        insights = meta_insights(a["id"], since, until)
+        roster = meta_roster(a["id"])
+        if roster is None:
+            degraded.append(a["name"])
+            camps, live_sets, live_ads = [], [], []
+        else:
+            camps, live_sets, live_ads = roster
+        # Without a roster nothing can be known to be paused, and defaulting to paused
+        # would empty every table behind the "active only" filter. Anything that spent
+        # in the window was live for part of it, so treat it as live and say so.
+        unk_status = "UNKNOWN" if roster is None else "INACTIVE"
+        unk_active = roster is None
         accounts[a["id"]] = {"id": a["id"], "name": a["name"], "spend": 0.0,
                              "budget": 0.0, "t101": 0.0, "t10m": 0.0,
                              "active_adsets": 0, "active_ads": 0}
@@ -170,19 +233,19 @@ def build(since, until):
             aid, sid, cid = r.get("ad_id"), r.get("adset_id"), r.get("campaign_id")
             if cid and cid not in campaigns:
                 campaigns[cid] = {"id": cid, "name": r.get("campaign_name", ""),
-                                  "status": "INACTIVE", "account": a["name"],
+                                  "status": unk_status, "account": a["name"],
                                   "account_id": a["id"], "spend": 0.0, "budget": 0.0,
                                   "t101": 0.0, "t10m": 0.0,
                                   "active_adsets": 0, "active_ads": 0}
             if sid and sid not in adsets:
                 adsets[sid] = {"id": sid, "name": r.get("adset_name", ""),
-                               "status": "INACTIVE", "active": False, "budget": 0.0,
+                               "status": unk_status, "active": unk_active, "budget": 0.0,
                                "campaign_id": cid, "campaign": r.get("campaign_name", ""),
                                "account": a["name"], "account_id": a["id"],
                                "spend": 0.0, "t101": 0.0, "t10m": 0.0, "active_ads": 0}
             if aid and aid not in ads:
-                ads[aid] = {"id": aid, "name": r.get("ad_name", ""), "status": "INACTIVE",
-                            "active": False, "adset_id": sid, "adset": r.get("adset_name", ""),
+                ads[aid] = {"id": aid, "name": r.get("ad_name", ""), "status": unk_status,
+                            "active": unk_active, "adset_id": sid, "adset": r.get("adset_name", ""),
                             "campaign_id": cid, "campaign": r.get("campaign_name", ""),
                             "account": a["name"], "account_id": a["id"],
                             "spend": 0.0, "t101": 0.0, "t10m": 0.0}
@@ -191,8 +254,14 @@ def build(since, until):
                 ads[aid]["adset"] = ads[aid]["adset"] or r.get("adset_name", "")
                 ads[aid]["campaign"] = ads[aid]["campaign"] or r.get("campaign_name", "")
 
-        accounts[a["id"]]["active_adsets"] = len(live_set_ids)
-        accounts[a["id"]]["active_ads"] = len(live_ad_ids)
+        if roster is None:
+            accounts[a["id"]]["active_adsets"] = sum(
+                1 for x in adsets.values() if x["account_id"] == a["id"])
+            accounts[a["id"]]["active_ads"] = sum(
+                1 for x in ads.values() if x["account_id"] == a["id"])
+        else:
+            accounts[a["id"]]["active_adsets"] = len(live_set_ids)
+            accounts[a["id"]]["active_ads"] = len(live_ad_ids)
 
     # fill parent names for roster ads that never spent
     for x in ads.values():
@@ -270,6 +339,9 @@ def build(since, until):
         "matched": {k: round(v, 1) for k, v in matched.items()},
         "unattributed": {k: round(v, 1) for k, v in unattributed.items()},
         "duplicate_ad_names": dup_names,
+        # accounts whose roster could not be fetched: spend/trials/CPT are correct,
+        # but statuses and budgets are missing for them
+        "degraded": degraded,
     }
 
 

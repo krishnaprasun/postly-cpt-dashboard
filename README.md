@@ -53,6 +53,32 @@ to ₹255, brick red above. **The semantic `.good/.warn/.bad` rules must stay at
 of the stylesheet** — `.kpi .v`, `td` and `tfoot td` each set a colour and out-specify a
 bare `.bad`, which silently killed the colour coding the first time this was styled.
 
+## Meta rate limits
+
+The Meta app is on the **`development_access`** ads-API tier, whose per-account call
+ceiling is low enough to trip `code 17 — User request limit reached` during a normal
+day's refreshing. Requesting Standard Access in the Meta app dashboard is the durable
+fix; everything below is what the dashboard does so a throttle is survivable.
+
+- **Two Meta calls per refresh, not eleven.** The roster (campaigns, ad sets, ads —
+  names, statuses, budgets) is cached for 15 minutes (`ROSTER_TTL`), because it changes
+  on the timescale of ad-ops decisions, not seconds. Only the ad-level insights call runs
+  every refresh. This is ~80% fewer calls and cut a build from ~12s to ~5.5s.
+- **A failed roster is cached too** (`ROSTER_RETRY`, 300s). Re-asking a throttled endpoint
+  every refresh both feeds the limit and costs the full back-off on each build.
+- **Rate limits fail fast.** Two short retries, then give up — Meta holds these for
+  minutes, longer than any request should wait, and hammering makes it worse.
+- **A throttle never blanks the dashboard.** Two fallbacks, in order:
+  1. If a build fails and any figures were previously fetched for that window, those are
+     served with an amber "not refreshing" banner and their age.
+  2. If there is nothing cached, the build **degrades to insights-only**. The insights
+     call alone carries every id and name needed for spend, trials and CPT at every
+     level — only statuses and budgets are lost. The affected account is listed in
+     `degraded`, the UI says so, and the budget and "live ad sets" KPIs stop claiming
+     numbers they cannot know rather than showing a wrong one.
+
+Only a cold cache *and* a failing insights call is a hard error.
+
 ## How CPT is computed
 
 `CPT = Meta spend / Branch trials`, joined at **ad-name** level and then rolled up
