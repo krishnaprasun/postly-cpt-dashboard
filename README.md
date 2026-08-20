@@ -109,6 +109,31 @@ still accrue against the window and hold it open.
   every refresh both feeds the limit and costs the full back-off on each build.
 - **Rate limits fail fast.** Two short retries, then give up — Meta holds these for
   minutes, longer than any request should wait, and hammering makes it worse.
+- **The retry waits exactly as long as Meta says**, not a generic back-off:
+  `estimated_time_to_regain_access` off the throttled response sets `_roster_fail_until`.
+  Asking early does not work and blocked attempts still count against the window, so an
+  eager loop keeps the throttle alive — a 60-second poller once held one open for half an
+  hour.
+- **The page says so, in plain words, with a deadline.** `rate_limit_report()` returns
+  which accounts are throttled, which listings (`campaigns` / `ad sets` / `ads` /
+  `spend`), how long it has been going on and when Meta said it ends. The banner counts
+  down and re-pulls itself at zero — silently, so it never blurs a table mid-read.
+  Nothing in that message is invented: an earlier version promised a throttle "usually
+  clears within a few minutes" and it then ran unbroken for over half an hour, so either
+  Meta's own figure is quoted or no time is given.
+- **The banner is honest about what is still true.** If only the roster listings are
+  throttled it says spend, trials and CPT are current and correct, because insights are
+  not affected. If the *spend* read is the throttled one it says the opposite — every
+  figure on screen is the last one that came through. Getting that backwards is exactly
+  the kind of false reassurance that makes someone act on a stale CPT.
+- **Throttle state is never cached.** A cached payload is re-stamped with a live
+  `rate_limit` block on the way out (`_with_live_limits`). Serving the cached one would
+  count down to a deadline that had already passed, or claim all-clear while a refresh is
+  being refused right now.
+- **The budget is reported on the way up, not only after it trips.** Every response
+  carries the usage header, so `worst_time_pct` is always known; past 85% the page warns
+  that refreshes may start being refused. `total_time` is the number that matters —
+  watching call count would have missed every throttle so far.
 - **A throttle never blanks the dashboard.** Two fallbacks, in order:
   1. If a build fails and any figures were previously fetched for that window, those are
      served with an amber "not refreshing" banner and their age.

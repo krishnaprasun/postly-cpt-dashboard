@@ -46,11 +46,31 @@ _last_error = {}
 
 
 def _friendly(exc):
-    """Meta's raw error JSON is not something to put in front of someone judging CPT."""
+    """Meta's raw error JSON is not something to put in front of someone judging CPT.
+
+    No estimate is invented here. An earlier version of this string promised a throttle
+    "usually clears within a few minutes"; it then ran unbroken for over half an hour.
+    Meta reports `estimated_time_to_regain_access` on the throttled response itself, so
+    either that number is quoted or no time is given at all.
+    """
     if isinstance(exc, P.RateLimited):
-        return ("Meta is rate-limiting this ad account (code 17). These are the last "
-                "figures that came through — it usually clears within a few minutes.")
-    return "Could not refresh: " + str(exc)[:200]
+        return {"kind": "rate_limit",
+                "text": "Meta is rate-limiting this ad account, so these are the last "
+                        "figures that came through." +
+                        (f" Meta puts access back in about {exc.regain_min} min."
+                         if exc.regain_min else "")}
+    return {"kind": "error", "text": "Could not refresh: " + str(exc)[:200]}
+
+
+def _with_live_limits(payload):
+    """A cached payload carries the rate-limit picture from whenever it was built.
+
+    Serving that verbatim is how a page ends up counting down to a moment that has
+    already passed, or claiming all-clear while a refresh is being refused right now.
+    The numbers are cached; the throttle state never is.
+    """
+    return dict(payload, rate_limit=P.rate_limit_report(
+        {a["id"]: a["name"] for a in P.ACCOUNTS}))
 
 
 # ------------------------------------------------------------------ auth ---
@@ -95,7 +115,8 @@ def get_data(since, until, force=False):
         hit = _cache.get(key)
         age = time.time() - hit["at"] if hit else None
         if hit and not force and age < CACHE_TTL:
-            return dict(hit["data"], cached=True, age=int(age), stale=False)
+            return _with_live_limits(dict(hit["data"], cached=True, age=int(age),
+                                          stale=False))
         if hit and not force:
             start_bg = key not in _refreshing
             if start_bg:
@@ -108,9 +129,11 @@ def get_data(since, until, force=False):
         # stale=True tells the page to check back shortly for the refreshed numbers
         with _lock:
             warn = _last_error.get(key)
-        out = dict(hit["data"], cached=True, age=int(age), stale=not warn)
+        out = _with_live_limits(dict(hit["data"], cached=True, age=int(age),
+                                     stale=not warn))
         if warn:
-            out["warning"] = warn
+            out["warning"] = warn["text"]
+            out["warning_kind"] = warn["kind"]
         return out
 
     try:
@@ -123,8 +146,10 @@ def get_data(since, until, force=False):
             hit = _cache.get(key)
             _last_error[key] = _friendly(e)
         if hit:
-            return dict(hit["data"], cached=True, age=int(time.time() - hit["at"]),
-                        stale=False, warning=_friendly(e))
+            w = _friendly(e)
+            return _with_live_limits(
+                dict(hit["data"], cached=True, age=int(time.time() - hit["at"]),
+                     stale=False, warning=w["text"], warning_kind=w["kind"]))
         raise
     with _lock:
         _cache[key] = {"at": time.time(), "data": data}

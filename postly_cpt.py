@@ -45,22 +45,92 @@ def today_ist():
 
 # ---------------------------------------------------------------- Meta -----
 class RateLimited(RuntimeError):
-    """Meta code 4/17. Distinct from a real failure: the data is fine, we are just
-    not allowed to ask right now, so callers fall back to cached numbers."""
+    """Meta code 4/17/613. Distinct from a real failure: the data is fine, we are just
+    not allowed to ask right now, so callers fall back to cached numbers.
+
+    Carries Meta's own `estimated_time_to_regain_access` so nothing downstream has to
+    guess when it clears. Guessing is how this got misreported once already — the first
+    version of this dashboard told people a throttle "usually clears within a few
+    minutes" and it then ran for over half an hour.
+    """
+
+    def __init__(self, msg, account=None, regain_min=0, usage=None):
+        super().__init__(msg)
+        self.account, self.regain_min, self.usage = account, regain_min, usage or {}
+
+
+# Meta reports its own budget on every response, throttled or not, in
+# x-business-use-case-usage: call_count / total_cputime / total_time as percentages of
+# the hourly allowance, estimated_time_to_regain_access in minutes, and the access tier.
+# total_time is the one that bites this app (108% when it first tripped, call_count 1%),
+# so it is worth watching on the way UP rather than only reporting the crash.
+_usage_lock = threading.Lock()
+_usage = {}                       # account id -> latest usage snapshot
+_throttle = {}                    # (account id, listing) -> {"since","until","regain_min"}
+
+
+def _note_usage(headers, acct):
+    raw = headers.get("x-business-use-case-usage")
+    if not raw:
+        return {}
+    try:
+        j = json.loads(raw)
+    except ValueError:
+        return {}
+    out = {}
+    for entries in j.values():
+        for e in entries or []:
+            for k in ("call_count", "total_cputime", "total_time"):
+                out[k] = max(out.get(k, 0), int(e.get(k) or 0))
+            out["regain_min"] = max(out.get("regain_min", 0),
+                                    int(e.get("estimated_time_to_regain_access") or 0))
+            if e.get("ads_api_access_tier"):
+                out["tier"] = e["ads_api_access_tier"]
+    if out:
+        with _usage_lock:
+            _usage[acct] = dict(out, at=time.time())
+    return out
+
+
+def _acct_of(path):
+    head = path.split("/")[0]
+    return head if head.startswith("act_") else ""
+
+
+def _mark_throttle(acct, edge, regain_min):
+    now = time.time()
+    with _usage_lock:
+        prev = _throttle.get((acct, edge))
+        _throttle[(acct, edge)] = {
+            # keep the original start across repeated failures, so the page can say how
+            # long this has been going on rather than restarting the clock each attempt
+            "since": prev["since"] if prev else now,
+            "until": now + max(regain_min, 1) * 60,
+            "regain_min": regain_min,
+        }
+
+
+def _clear_throttle(acct, edge):
+    with _usage_lock:
+        _throttle.pop((acct, edge), None)
 
 
 def _graph(path, params, tries=6, rl_retries=2):
     pr = dict(params); pr["access_token"] = C.META_TOKEN; pr.setdefault("limit", "500")
     url = f"{C.GRAPH}/{path}?" + urllib.parse.urlencode(pr)
+    acct, edge = _acct_of(path), path.split("/")[-1]
     out = []
     while url:
         for i in range(tries):
             try:
                 with urllib.request.urlopen(url, timeout=120) as r:
                     j = json.load(r)
+                    _note_usage(r.headers, acct)
+                    _clear_throttle(acct, edge)
                 break
             except urllib.error.HTTPError as e:
                 body = e.read().decode()
+                usage = _note_usage(e.headers, acct)
                 # Parse the code rather than substring-matching the body: '"code":1'
                 # also matches 17 and 100, which is exactly the kind of bug that makes a
                 # rate limit look like something else.
@@ -77,7 +147,10 @@ def _graph(path, params, tries=6, rl_retries=2):
                     # again just makes a throttled cold start feel broken.
                     if i < rl_retries:
                         time.sleep(5 * (i + 1)); continue
-                    raise RateLimited(f"Meta rate limit on {path.split('/')[-1]}")
+                    regain = usage.get("regain_min", 0)
+                    _mark_throttle(acct, edge, regain or ROSTER_RETRY // 60)
+                    raise RateLimited(f"Meta rate limit on {edge}", account=acct,
+                                      regain_min=regain, usage=usage)
                 # 1 / 2 = Meta-side transient ("Service temporarily unavailable"). Short
                 # lived and common; retrying is right. Not retrying these turned a blip
                 # into a 500 on a cold cache, which is how this branch got written.
@@ -141,9 +214,17 @@ def _part(acct, kind, fetch, ttl):
             _roster_cache[key] = {"at": time.time(), "data": data}
             _roster_fail_until.pop(key, None)
         return data, True
-    except Exception:
+    except Exception as ex:
+        now = time.time()
+        # Meta says how long it will be. Wait exactly that long rather than the generic
+        # back-off: asking early does not work and blocked attempts still count against
+        # the window, so an eager retry loop keeps the throttle alive. That is not
+        # theoretical — a 60s poller here held one open for half an hour.
+        wait = ROSTER_RETRY
+        if isinstance(ex, RateLimited):
+            wait = max(ROSTER_RETRY, (ex.regain_min or 0) * 60)
         with _roster_lock:
-            _roster_fail_until[key] = time.time() + ROSTER_RETRY
+            _roster_fail_until[key] = now + wait
         # An expired copy beats nothing; nothing beats failing the whole build.
         return (hit["data"], True) if hit else (None, False)
 
@@ -330,6 +411,54 @@ def classplus(since, until):
 
 
 # ---------------------------------------------------------------- build ----
+LISTING_LABEL = {"campaigns": "campaigns", "adsets": "ad sets", "ads": "ads",
+                 "insights": "spend"}
+
+
+def rate_limit_report(accounts):
+    """What Meta is currently refusing, and when it said it would stop.
+
+    accounts: {account id: display name}. Returns a dict the page renders directly —
+    everything it needs to state the situation without inferring anything.
+    """
+    now = time.time()
+    with _usage_lock:
+        live = {k: v for k, v in _throttle.items() if v["until"] > now}
+        usage = {a: dict(u) for a, u in _usage.items()}
+    per = {}
+    for (acct, kind), t in live.items():
+        e = per.setdefault(acct, {"account": accounts.get(acct, acct), "id": acct,
+                                  "listings": [], "until": 0, "since": t["since"]})
+        e["listings"].append(LISTING_LABEL.get(kind, kind))
+        e["until"] = max(e["until"], t["until"])
+        e["since"] = min(e["since"], t["since"])
+    out = []
+    for e in per.values():
+        e["listings"].sort()
+        e["eta_sec"] = int(e["until"] - now)
+        e["until_ist"] = datetime.fromtimestamp(e["until"], IST).strftime("%H:%M")
+        e["since_ist"] = datetime.fromtimestamp(e["since"], IST).strftime("%H:%M")
+        e["held_min"] = int((now - e["since"]) // 60)
+        out.append(e)
+    out.sort(key=lambda e: -e["eta_sec"])
+    # Budget headroom, reported whether or not anything is throttled: total_time is the
+    # limit that actually binds here, so seeing it climb is the warning that matters.
+    budget = [{"account": accounts.get(a, a), "id": a,
+               "time_pct": u.get("total_time", 0), "calls_pct": u.get("call_count", 0),
+               "cpu_pct": u.get("total_cputime", 0), "tier": u.get("tier", "")}
+              for a, u in usage.items() if a in accounts]
+    budget.sort(key=lambda b: -b["time_pct"])
+    return {
+        "active": bool(out),
+        "accounts": out,
+        # absolute deadline for the page to schedule its own retry against
+        "retry_in_sec": max((e["eta_sec"] for e in out), default=0),
+        "retry_at_ist": max(out, key=lambda e: e["eta_sec"])["until_ist"] if out else "",
+        "budget": budget,
+        "worst_time_pct": max((b["time_pct"] for b in budget), default=0),
+    }
+
+
 def build(since, until):
     started = time.time()
     degraded = []
@@ -530,6 +659,7 @@ def build(since, until):
         # trials and CPT stay correct regardless; only statuses and budgets are affected.
         "degraded": degraded,
         "budgets_known": budgets_known,
+        "rate_limit": rate_limit_report({a["id"]: a["name"] for a in ACCOUNTS}),
         # Signups / trial mandates per ad from the Classplus DB, or why they are absent.
         # `unmatched` is Classplus signups whose ad name is organic or matches no live
         # Meta ad — kept visible so the per-ad columns are never mistaken for the total.
