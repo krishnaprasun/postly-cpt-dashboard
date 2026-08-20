@@ -22,16 +22,24 @@ Credentials come from `~/.anthropic/` (see [Credentials](#credentials)).
   "active only" is on by default; objects that spent in the window but are now paused
   appear when you turn it off, tagged `paused`.
 - **Ranges** — Today / Yesterday / 3d / 7d (Branch caps a request at 7 days).
-- **Event toggle** — CPT can be measured against either trial event:
-  - `Trial 101` = `postly_trial_started_backend` — the daily report's CPT definition
-    and what the ₹150 target is set against. **This is the default.**
-  - `Trial 10min` = `postly_trial_nc_after10min_backend` — the event the
-    Trial_10min campaigns actually optimise for.
+- **Trial event** — CPT is always `postly_trial_started_backend`: the daily report's
+  definition and what the ₹150 target is set against. A UI toggle for
+  `postly_trial_nc_after10min_backend` was removed on 2026-08-20; the backend still
+  fetches that event (one extra Branch call, `t10m` in the API response), so restoring
+  the switch is a template-only change.
 - **Auto 30m** — on by default: a full re-pull every 30 minutes. While the tab is open
   it also pings `/healthz` every 10 minutes, because the free instance sleeps after ~15
   minutes idle and a bare 30-minute cycle would pay a cold wake every single time. The
   pings stop with the tab, so nothing is kept awake when nobody is looking. Manual
   `Refresh` forces a pull.
+- **Freshness** — the header always states how old the figures are ("16:06:57 IST ·
+  3 min ago"), turning amber past 35 minutes. Returning to the tab re-pulls anything
+  older than two minutes, because coming back to a stale CPT and acting on it is the
+  failure mode that matters. Any fetch in flight shows a progress bar, a spinner on the
+  timestamp and a "Refreshing…" button — during a background refresh the current numbers
+  stay on screen rather than blanking, so the page is never empty once it has data.
+  Server-side cache is 90s (`CACHE_TTL`); past that it is served stale and refreshed
+  behind the request rather than blocking it.
 
 ## Look
 

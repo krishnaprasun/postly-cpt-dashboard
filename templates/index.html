@@ -106,6 +106,19 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 .err{background:var(--red-lt);border:1px solid #EFCFCB;color:var(--red);padding:12px 15px;
   border-radius:11px;margin-bottom:14px;font-size:13px}
 .loading{opacity:.5;transition:opacity .15s}
+/* Progress bar shown while any fetch is in flight. The first load gets the big panel
+   below as well; a background refresh gets only this, so the numbers on screen stay
+   readable while they are being replaced. */
+#bar{position:fixed;top:0;left:0;right:0;height:2.5px;z-index:50;background:transparent;
+  opacity:0;transition:opacity .2s}
+#bar.on{opacity:1}
+#bar i{display:block;height:100%;width:35%;border-radius:0 3px 3px 0;
+  background:linear-gradient(90deg,#0B9C5D,#38D993);animation:slide 1.1s ease-in-out infinite}
+@keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
+.spin{display:inline-block;width:9px;height:9px;margin-right:5px;vertical-align:-1px;
+  border:1.5px solid var(--green);border-right-color:transparent;border-radius:50%;
+  animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 
 /* Semantic CPT colours come last on purpose. `.kpi .v`, `td` and `tfoot td` all set a
    colour of their own and out-specify a bare `.good`/`.bad`, which silently killed the
@@ -117,6 +130,7 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 </style>
 </head>
 <body>
+<div id="bar"><i></i></div>
 <header>
   <div class="hrow">
     <div class="brand"><svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -135,10 +149,6 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
       <button data-r="yesterday">Yesterday</button>
       <button data-r="3d">3d</button>
       <button data-r="7d">7d</button>
-    </div>
-    <div class="grp" id="evGrp">
-      <button data-e="t101" class="on">Trial&nbsp;101</button>
-      <button data-e="t10m">Trial&nbsp;10min</button>
     </div>
     <div class="spacer"></div>
     <label class="chk"><input type="checkbox" id="auto" checked> auto 30m</label>
@@ -172,7 +182,11 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 
 <script>
 let T = 150;                         // CPT target, replaced by the API value on load
-let DATA=null, EV='t101', RANGE='today', TAB='combined',
+let DATA=null, RANGE='today', TAB='combined',
+    /* CPT is measured against postly_trial_started_backend — the daily report's
+       definition and what the Rs150 target is set against. The Trial-10min event
+       is still fetched by the backend; only the UI switch was removed. */
+    EV='t101',
     SORT={key:'spend',dir:-1}, timer=null;
 
 const rs = n => '₹' + Math.round(n).toLocaleString('en-IN');
@@ -182,7 +196,28 @@ const cpt = (sp,tr) => tr>0 ? sp/tr : null;
 const cptTxt = (sp,tr) => tr>0 ? rs(sp/tr) : (sp>0 ? 'no trials' : '—');
 
 /* ---------- fetch ---------- */
-let staleTimer=null;
+let staleTimer=null, BUSY=false, lastFetchAt=0, ticker=null;
+
+/* How old the numbers on screen actually are: the server-side cache age when they were
+   sent, plus the wall time since. Shown live so stale figures can never look current —
+   the whole point of the dashboard is that the CPT is the one from a minute ago, not
+   from whenever the tab happened to be opened. */
+function ageSecs(){
+  return DATA ? (DATA.age || 0) + Math.max(0, (Date.now() - lastFetchAt) / 1000) : null;
+}
+function ago(sec){
+  if(sec < 45) return 'just now';
+  if(sec < 5400) return Math.round(sec/60) + ' min ago';
+  return (sec/3600).toFixed(1) + ' h ago';
+}
+function stampNow(){
+  const el = document.getElementById('stamp');
+  if(BUSY){ el.innerHTML = '<span class="spin"></span>refreshing…'; return; }
+  if(!DATA){ el.textContent = ''; return; }
+  const a = ageSecs();
+  el.innerHTML = `<b>${DATA.generated_at.replace(' IST','')}</b> IST · ` +
+                 `<span class="${a > 2100 ? 'warn' : ''}">${ago(a)}</span>`;
+}
 
 /* A cold instance takes ~15-30s to answer its first pull, and on the free plan it may
    be waking from sleep on top of that. Say so, rather than showing an empty page. */
@@ -198,12 +233,16 @@ function showLoading(){
 
 async function load(force){
   clearTimeout(staleTimer);
-  document.body.classList.add('loading');
+  BUSY = true;
+  document.getElementById('bar').classList.add('on');
   document.getElementById('refresh').disabled = true;
-  showLoading();
+  document.getElementById('refresh').textContent = 'Refreshing…';
+  if(!DATA) document.body.classList.add('loading');
+  showLoading(); stampNow();
   try{
     const r = await fetch(`/api/data?range=${RANGE}${force?'&force=1':''}`);
     const j = await r.json();
+    lastFetchAt = Date.now();
     if(j.error){ document.getElementById('err').innerHTML =
       `<div class="err"><b>Fetch failed.</b> ${j.error}</div>`; return; }
     document.getElementById('err').innerHTML='';
@@ -215,8 +254,12 @@ async function load(force){
     document.getElementById('err').innerHTML =
       `<div class="err"><b>Fetch failed.</b> ${e}</div>`;
   }finally{
+    BUSY = false;
+    document.getElementById('bar').classList.remove('on');
     document.body.classList.remove('loading');
     document.getElementById('refresh').disabled = false;
+    document.getElementById('refresh').textContent = 'Refresh';
+    stampNow();
   }
 }
 
@@ -370,9 +413,7 @@ function render(){
   T = DATA.cpt_target;
   document.getElementById('win').textContent =
     DATA.since===DATA.until ? DATA.since : `${DATA.since} → ${DATA.until}`;
-  document.getElementById('stamp').innerHTML =
-    `<b>${DATA.generated_at}</b>${DATA.stale ? ' · <span style="color:var(--warn)">refreshing…</span>'
-       : DATA.cached ? ` · cached ${DATA.age}s` : ` · fresh ${DATA.took}s`}`;
+  stampNow();
   for(const t of ['accounts','campaigns','adsets','ads'])
     document.getElementById('n-'+t).textContent = DATA[t].length;
   kpis(); renderTable();
@@ -395,18 +436,18 @@ document.getElementById('rangeGrp').onclick = e => {
   [...e.currentTarget.children].forEach(b=>b.classList.remove('on'));
   e.target.classList.add('on'); RANGE = e.target.dataset.r; load(false);
 };
-document.getElementById('evGrp').onclick = e => {
-  if(!e.target.dataset.e) return;
-  [...e.currentTarget.children].forEach(b=>b.classList.remove('on'));
-  e.target.classList.add('on'); EV = e.target.dataset.e; render();
-};
 document.getElementById('tabs').onclick = e => {
   if(!e.target.dataset.t) return;
   [...e.currentTarget.children].forEach(b=>b.classList.remove('on'));
   e.target.classList.add('on'); TAB = e.target.dataset.t;
   SORT = {key:'spend', dir:-1}; renderTable();
 };
-document.getElementById('refresh').onclick = () => load(true);
+document.getElementById('refresh').onclick = () => /* Not load(true): forcing a blocking pull here means every page open stares at a
+   spinner for ~12s (longer off a sleeping instance). load(false) paints the cached
+   numbers immediately, and if they are past their TTL the server refreshes behind the
+   request while the bar and the "refreshing…" stamp say so, then the page swaps in the
+   fresh figures on its own. Instant AND current, instead of one or the other. */
+load(false);
 document.getElementById('q').oninput = renderTable;
 document.getElementById('activeOnly').onchange = renderTable;
 document.getElementById('spentOnly').onchange = renderTable;
@@ -424,6 +465,34 @@ function setAuto(on){
 }
 document.getElementById('auto').onchange = e => setAuto(e.target.checked);
 setAuto(document.getElementById('auto').checked);
+
+// keep the "x min ago" honest between refreshes
+ticker = setInterval(stampNow, 15000);
+
+/* Coming back to the tab is exactly when stale numbers do damage — you glance at a CPT
+   and act on it. Anything older than two minutes gets re-pulled on focus. */
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible' && !BUSY && ageSecs() > 120) /* Not load(true): forcing a blocking pull here means every page open stares at a
+   spinner for ~12s (longer off a sleeping instance). load(false) paints the cached
+   numbers immediately, and if they are past their TTL the server refreshes behind the
+   request while the bar and the "refreshing…" stamp say so, then the page swaps in the
+   fresh figures on its own. Instant AND current, instead of one or the other. */
+load(false);
+});
+window.addEventListener('focus', () => {
+  if(!BUSY && ageSecs() > 120) /* Not load(true): forcing a blocking pull here means every page open stares at a
+   spinner for ~12s (longer off a sleeping instance). load(false) paints the cached
+   numbers immediately, and if they are past their TTL the server refreshes behind the
+   request while the bar and the "refreshing…" stamp say so, then the page swaps in the
+   fresh figures on its own. Instant AND current, instead of one or the other. */
+load(false);
+});
+
+/* Not load(true): forcing a blocking pull here means every page open stares at a
+   spinner for ~12s (longer off a sleeping instance). load(false) paints the cached
+   numbers immediately, and if they are past their TTL the server refreshes behind the
+   request while the bar and the "refreshing…" stamp say so, then the page swaps in the
+   fresh figures on its own. Instant AND current, instead of one or the other. */
 load(false);
 </script>
 </body>

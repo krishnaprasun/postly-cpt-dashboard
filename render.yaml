@@ -23,4 +23,4 @@ services:
       # Seconds before cached numbers are refreshed. Meta spend updates every few
       # minutes anyway, so anything under ~60 just burns API quota.
       - key: CACHE_TTL
-        value: "180"
+        value: "90"

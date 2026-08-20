@@ -29,7 +29,11 @@ app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 
-CACHE_TTL = int(os.environ.get("CACHE_TTL", "180"))
+# 90s: short enough that the figures on screen are never meaningfully behind Meta
+# (which lags a few minutes anyway), long enough that clicking between tabs and
+# ranges does not re-pull. Past this the cache is served stale and refreshed behind
+# the request rather than blocking it.
+CACHE_TTL = int(os.environ.get("CACHE_TTL", "90"))
 # Open by design — no login. Setting ADMIN_PASS turns on a browser password prompt;
 # leaving it unset (the default, and how this is deployed) serves the dashboard to
 # anyone with the URL. See README "Access" for what that exposes.
