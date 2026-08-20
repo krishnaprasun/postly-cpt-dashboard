@@ -1,4 +1,4 @@
-# Postly — Live CPT dashboard
+# Postly Performance
 
 Live Meta spend × Branch trials, with CPT at every level: combined, ad account,
 campaign, active ad set, and ad. Covers **both** ad accounts (`Postly` and
@@ -28,19 +28,33 @@ Credentials come from `~/.anthropic/` (see [Credentials](#credentials)).
   checkbox only appears when the data is actually available for the window on screen.
   See [Classplus](#classplus-signups--mandates) for what a mandate counts and why it
   will not match the Branch trial figure exactly.
-- **Ranges** — Today / Yesterday / 3d / 7d (Branch caps a request at 7 days).
+- **Range** — a dropdown, defaulting to **Today**: Today, Yesterday, Last 3 days,
+  Last 7 days, Custom range. Custom reveals two date pickers seeded to the last 7 days
+  and applies on click, not on every keystroke — a half-typed date must not fire a pull.
+  Both pickers are capped at today IST. Spans over **31 days** are refused with the
+  reason: Branch is fetched in 7-day chunks, so a quarter is dozens of round trips plus
+  a full Meta pull per account.
 - **Trial event** — CPT is always `postly_trial_started_backend`: the daily report's
   definition and what the ₹150 target is set against. A UI toggle for
   `postly_trial_nc_after10min_backend` was removed on 2026-08-20; the backend still
   fetches that event (one extra Branch call, `t10m` in the API response), so restoring
   the switch is a template-only change.
-- **Auto 30m** — on by default: a full re-pull every 30 minutes. While the tab is open
+- **Auto 30m** — always on, with no way to switch it off. The value of this page is that
+  the number on screen is current; someone leaving it on a stale window and acting on it
+  is the exact failure it exists to prevent. While the tab is open
   it also pings `/healthz` every 10 minutes, because the free instance sleeps after ~15
   minutes idle and a bare 30-minute cycle would pay a cold wake every single time. The
   pings stop with the tab, so nothing is kept awake when nobody is looking. Manual
   `Refresh` forces a pull.
-- **Freshness** — the header always states how old the figures are ("16:06:57 IST ·
-  3 min ago"), turning amber past 35 minutes. Returning to the tab re-pulls anything
+- **Loading** — a foreground pull blurs the page behind a card naming the three sources
+  being read and counting the seconds elapsed. A cold load lays skeleton KPI tiles and
+  table rows down first, so the blur has the real shape of the page behind it rather than
+  an empty screen. It is raised for foreground actions **only** — first load, a range
+  change, a manual Refresh. The 30-minute auto refresh, the tab-focus re-pull and the
+  follow-up after a stale response stay silent behind the thin progress bar: blurring a
+  table someone is reading, every half hour, would be worse than a slightly stale one.
+- **Freshness** — the header always states when the figures were pulled
+  ("Last refreshed 16:06:57 IST · 3 min ago · auto 30m"), turning amber past 35 minutes. Returning to the tab re-pulls anything
   older than two minutes, because coming back to a stale CPT and acting on it is the
   failure mode that matters. Any fetch in flight shows a progress bar, a spinner on the
   timestamp and a "Refreshing…" button — during a background refresh the current numbers

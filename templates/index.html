@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Postly — Live CPT</title>
+<title>Postly Performance</title>
 <link rel="icon" type="image/svg+xml" href="/static/postly_icon_logo.svg">
 <style>
 /* Postly brand palette — values taken from postly-insta-daily/brandkit.py so the
@@ -110,7 +110,6 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 .warnbox{background:var(--gold-lt);border:1px solid #F0DDB4;color:var(--gold-dk);
   padding:10px 15px;border-radius:11px;margin-bottom:14px;font-size:12.5px}
 .warnbox b{color:#8C5C05}
-.loading{opacity:.5;transition:opacity .15s}
 /* Progress bar shown while any fetch is in flight. The first load gets the big panel
    below as well; a background refresh gets only this, so the numbers on screen stay
    readable while they are being replaced. */
@@ -120,6 +119,58 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 #bar i{display:block;height:100%;width:35%;border-radius:0 3px 3px 0;
   background:linear-gradient(90deg,#0B9C5D,#38D993);animation:slide 1.1s ease-in-out infinite}
 @keyframes slide{0%{margin-left:-35%}100%{margin-left:100%}}
+/* Range picker. A select rather than a button row: five options plus a custom range
+   does not fit in the header as buttons, and the chosen range must stay readable at a
+   glance rather than being one highlighted item in a strip. */
+select.sel,input[type=date]{background:var(--white);border:1px solid var(--line);
+  color:var(--ink);border-radius:9px;padding:6px 12px;font-size:12.5px;font-family:inherit;
+  font-weight:550;cursor:pointer;box-shadow:var(--shadow)}
+select.sel{appearance:none;-webkit-appearance:none;padding-right:29px;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%23787E91' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat:no-repeat;background-position:right 10px center}
+select.sel:focus,input[type=date]:focus{outline:0;border-color:var(--green);
+  box-shadow:0 0 0 3px var(--green-lt)}
+#customWrap{display:none;gap:7px;align-items:center}
+#customWrap.on{display:flex}
+#customWrap span{font-size:12px;color:var(--faint)}
+
+/* Loading veil. The page behind it is blurred rather than blanked so the shape of what
+   is coming stays visible. Deliberately NOT shown for the 30-minute auto refresh or a
+   tab-focus re-pull: blurring a table someone is reading, every half hour, would be a
+   worse dashboard than a slightly stale one. Foreground actions only — first load,
+   range change, manual Refresh. */
+#veil{position:fixed;inset:0;z-index:40;display:none;align-items:flex-start;
+  justify-content:center;padding:15vh 20px 0;background:rgba(253,252,247,.5);
+  backdrop-filter:blur(10px) saturate(1.04);-webkit-backdrop-filter:blur(10px) saturate(1.04)}
+body.veiled #veil{display:flex}
+body.veiled main,body.veiled header{pointer-events:none;user-select:none}
+.veilcard{width:min(430px,94vw);background:var(--white);border:1px solid var(--line);
+  border-radius:18px;padding:24px 26px 22px;box-shadow:0 12px 44px rgba(26,28,46,.14);
+  text-align:center;animation:rise .25s ease-out}
+@keyframes rise{from{opacity:0;transform:translateY(9px)}to{opacity:1;transform:none}}
+.veilcard img{width:40px;height:40px;display:block;margin:0 auto 13px}
+.veilcard .vt{font-size:16px;font-weight:680;letter-spacing:-.2px;color:var(--navy)}
+.veilcard .vs{font-size:12.5px;color:var(--muted);margin-top:5px}
+.vsrc{margin:17px 0 3px;text-align:left;display:grid;gap:8px}
+.vsrc div{display:flex;align-items:center;gap:9px;font-size:12.5px;color:var(--ink)}
+.vdot{width:7px;height:7px;border-radius:50%;background:var(--green);flex:none;
+  animation:pulse 1.15s ease-in-out infinite}
+.vsrc div:nth-child(2) .vdot{animation-delay:.22s}
+.vsrc div:nth-child(3) .vdot{animation-delay:.44s}
+@keyframes pulse{0%,100%{opacity:.28;transform:scale(.8)}50%{opacity:1;transform:scale(1)}}
+.vbar{height:3px;border-radius:3px;background:var(--line2);overflow:hidden;margin-top:16px}
+.vbar i{display:block;height:100%;width:38%;border-radius:3px;
+  background:linear-gradient(90deg,#0B9C5D,#38D993);animation:slide 1.15s ease-in-out infinite}
+.vhint{font-size:11px;color:var(--faint);margin-top:11px;line-height:1.5}
+.vel{font-variant-numeric:tabular-nums;color:var(--green-dk);font-weight:650}
+
+/* Skeleton shown under the veil on a cold load, so the blur has the real layout behind
+   it instead of an empty page. */
+.skl{height:11px;border-radius:6px;
+  background:linear-gradient(90deg,var(--line2) 25%,var(--panel2) 50%,var(--line2) 75%);
+  background-size:200% 100%;animation:shim 1.4s linear infinite}
+@keyframes shim{from{background-position:200% 0}to{background-position:-200% 0}}
+
 .spin{display:inline-block;width:9px;height:9px;margin-right:5px;vertical-align:-1px;
   border:1.5px solid var(--green);border-right-color:transparent;border-radius:50%;
   animation:spin .7s linear infinite}
@@ -136,6 +187,19 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 </head>
 <body>
 <div id="bar"><i></i></div>
+<div id="veil"><div class="veilcard">
+  <img src="/static/postly_icon_logo.svg" alt="">
+  <div class="vt">Pulling live numbers</div>
+  <div class="vs" id="veilWin"></div>
+  <div class="vsrc">
+    <div><span class="vdot"></span>Meta — spend, budgets and statuses, both accounts</div>
+    <div><span class="vdot"></span>Branch — trials by ad name</div>
+    <div><span class="vdot"></span>Classplus — signups and trial mandates</div>
+  </div>
+  <div class="vbar"><i></i></div>
+  <div class="vhint"><span class="vel" id="veilEl">0s</span> elapsed · a cold instance
+    takes 15–30s to answer its first pull</div>
+</div></div>
 <header>
   <div class="hrow">
     <div class="brand"><svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -148,17 +212,21 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 <stop offset="1" stop-color="#38D993"/>
 </linearGradient>
 </defs>
-</svg><h1>Postly <em>CPT</em> <span id="win"></span></h1></div>
-    <div class="grp" id="rangeGrp">
-      <button data-r="today" class="on">Today</button>
-      <button data-r="yesterday">Yesterday</button>
-      <button data-r="3d">3d</button>
-      <button data-r="7d">7d</button>
+</svg><h1>Postly <em>Performance</em> <span id="win"></span></h1></div>
+    <select class="sel" id="range">
+      <option value="today" selected>Today</option>
+      <option value="yesterday">Yesterday</option>
+      <option value="3d">Last 3 days</option>
+      <option value="7d">Last 7 days</option>
+      <option value="custom">Custom range…</option>
+    </select>
+    <div id="customWrap">
+      <input type="date" id="cSince"><span>→</span><input type="date" id="cUntil">
+      <button class="btn" id="cGo">Apply</button>
     </div>
     <div class="spacer"></div>
-    <label class="chk"><input type="checkbox" id="auto" checked> auto 30m</label>
-    <button class="btn" id="refresh">Refresh</button>
     <div class="meta" id="stamp"></div>
+    <button class="btn" id="refresh">Refresh</button>
   </div>
 </header>
 
@@ -194,6 +262,17 @@ let DATA=null, RANGE='today', TAB='combined',
        is still fetched by the backend; only the UI switch was removed. */
     EV='t101',
     SORT={key:'spend',dir:-1}, timer=null;
+let CUSTOM = null;                   // {since, until} once a custom range is applied
+const MAX_SPAN = 31;                 // days; Branch is fetched in 7-day chunks, so a
+                                     // long range is many round trips, not one
+/* Today in IST regardless of where the browser is — shifting the epoch by +5:30 and
+   reading the UTC calendar date gives the IST wall-clock date. */
+const istToday = () => new Date(Date.now() + 330*60000).toISOString().slice(0,10);
+const apiQuery = () => CUSTOM
+  ? `since=${CUSTOM.since}&until=${CUSTOM.until}` : `range=${RANGE}`;
+const rangeLabel = () => CUSTOM
+  ? (CUSTOM.since===CUSTOM.until ? CUSTOM.since : `${CUSTOM.since} → ${CUSTOM.until}`)
+  : document.getElementById('range').selectedOptions[0].textContent;
 
 const rs = n => '₹' + Math.round(n).toLocaleString('en-IN');
 const num = n => Math.round(n).toLocaleString('en-IN');
@@ -227,32 +306,53 @@ function stampNow(){
   if(BUSY){ el.innerHTML = '<span class="spin"></span>refreshing…'; return; }
   if(!DATA){ el.textContent = ''; return; }
   const a = ageSecs();
-  el.innerHTML = `<b>${DATA.generated_at.replace(' IST','')}</b> IST · ` +
-                 `<span class="${a > 2100 ? 'warn' : ''}">${ago(a)}</span>`;
+  el.innerHTML = `Last refreshed <b>${DATA.generated_at.replace(' IST','')}</b> IST · ` +
+                 `<span class="${a > 2100 ? 'warn' : ''}">${ago(a)}</span> · auto 30m`;
 }
 
-/* A cold instance takes ~15-30s to answer its first pull, and on the free plan it may
-   be waking from sleep on top of that. Say so, rather than showing an empty page. */
-function showLoading(){
-  if(DATA) return;                       // already have numbers on screen — leave them
-  document.getElementById('kpis').innerHTML =
-    `<div class="kpi hero" style="grid-column:1/-1">
-       <div class="k">Pulling live data</div>
-       <div class="v dimtxt" style="font-size:19px">Meta spend + Branch trials…</div>
-       <div class="s">First load takes 15–30s, longer if the instance was asleep.</div>
-     </div>`;
+/* On a cold load there is nothing behind the veil to blur, so lay the real shape of the
+   page down as skeletons first. Never replaces figures that are already on screen. */
+function showSkeleton(){
+  if(DATA) return;
+  const bar = w => `<div class="skl" style="width:${w}"></div>`;
+  document.getElementById('kpis').innerHTML = Array.from({length:5}, (_,i) =>
+    `<div class="kpi${i?'':' hero'}">${bar('54%')}
+       <div style="height:15px"></div>${bar('78%')}
+       <div style="height:9px"></div>${bar('62%')}</div>`).join('');
+  document.getElementById('tbl').querySelector('tbody').innerHTML =
+    Array.from({length:9}, () =>
+      `<tr>${Array.from({length:6}, (_,j) =>
+        `<td>${bar(j?'58%':'86%')}</td>`).join('')}</tr>`).join('');
 }
 
-async function load(force){
+/* The veil blurs the page while a foreground pull runs. `silent` loads — the 30-minute
+   auto refresh, a tab-focus re-pull, the follow-up after a stale response — never raise
+   it: those happen while someone is reading and must not interrupt. */
+let veilAt = 0, veilTick = null;
+function veil(on){
+  document.body.classList.toggle('veiled', on);
+  clearInterval(veilTick); veilTick = null;
+  if(!on) return;
+  document.getElementById('veilWin').textContent = rangeLabel();
+  veilAt = Date.now();
+  document.getElementById('veilEl').textContent = '0s';
+  veilTick = setInterval(() => {
+    document.getElementById('veilEl').textContent =
+      Math.round((Date.now()-veilAt)/1000) + 's';
+  }, 1000);
+}
+
+async function load(force, silent){
   clearTimeout(staleTimer);
   BUSY = true;
   document.getElementById('bar').classList.add('on');
   document.getElementById('refresh').disabled = true;
   document.getElementById('refresh').textContent = 'Refreshing…';
-  if(!DATA) document.body.classList.add('loading');
-  showLoading(); stampNow();
+  showSkeleton();
+  if(!silent) veil(true);
+  stampNow();
   try{
-    const r = await fetch(`/api/data?range=${RANGE}${force?'&force=1':''}`);
+    const r = await fetch(`/api/data?${apiQuery()}${force?'&force=1':''}`);
     const j = await r.json();
     lastFetchAt = Date.now();
     if(j.error){ document.getElementById('err').innerHTML =
@@ -275,14 +375,14 @@ async function load(force){
       ? `<div class="warnbox">${notes.join('<br><br>')}</div>` : '';
     // Served from a stale cache while a refresh runs behind the request — come back
     // for the fresh numbers instead of leaving old ones on screen.
-    if(j.stale) staleTimer = setTimeout(()=>load(false), 12000);
+    if(j.stale) staleTimer = setTimeout(()=>load(false, true), 12000);
   }catch(e){
     document.getElementById('err').innerHTML =
       `<div class="err"><b>Fetch failed.</b> ${e}</div>`;
   }finally{
     BUSY = false;
+    veil(false);
     document.getElementById('bar').classList.remove('on');
-    document.body.classList.remove('loading');
     document.getElementById('refresh').disabled = false;
     document.getElementById('refresh').textContent = 'Refresh';
     stampNow();
@@ -543,10 +643,40 @@ function cpNote(){
 }
 
 /* ---------- wiring ---------- */
-document.getElementById('rangeGrp').onclick = e => {
-  if(!e.target.dataset.r) return;
-  [...e.currentTarget.children].forEach(b=>b.classList.remove('on'));
-  e.target.classList.add('on'); RANGE = e.target.dataset.r; load(false);
+const selEl = document.getElementById('range'),
+      cWrap = document.getElementById('customWrap'),
+      cSince = document.getElementById('cSince'), cUntil = document.getElementById('cUntil');
+cSince.max = cUntil.max = istToday();     // no pulling a window that has not happened
+
+selEl.onchange = () => {
+  const custom = selEl.value === 'custom';
+  cWrap.classList.toggle('on', custom);
+  if(custom){
+    // Seed with the last 7 days rather than blanks, so Apply is one click from useful.
+    if(!cUntil.value) cUntil.value = istToday();
+    if(!cSince.value) cSince.value =
+      new Date(Date.now() + 330*60000 - 6*864e5).toISOString().slice(0,10);
+    cSince.focus();
+    return;                               // wait for Apply — do not pull a half-set range
+  }
+  CUSTOM = null; RANGE = selEl.value; load(false);
+};
+
+document.getElementById('cGo').onclick = () => {
+  const a = cSince.value, b = cUntil.value;
+  const err = document.getElementById('err');
+  if(!a || !b) return;
+  if(a > b){ err.innerHTML = `<div class="err">Start date is after the end date.</div>`; return; }
+  // Branch is fetched in 7-day chunks and Meta insights are re-pulled per account, so a
+  // long window is many round trips. Refuse it outright rather than hanging for minutes.
+  const span = Math.round((new Date(b) - new Date(a))/864e5) + 1;
+  if(span > MAX_SPAN){
+    err.innerHTML = `<div class="err"><b>${span} days is too wide.</b> Branch is fetched in
+      7-day chunks, so this would be ${Math.ceil(span/7)*2} Branch calls plus a full Meta
+      pull per account. Keep it to ${MAX_SPAN} days or fewer.</div>`;
+    return;
+  }
+  err.innerHTML = ''; CUSTOM = {since:a, until:b}; load(false);
 };
 document.getElementById('tabs').onclick = e => {
   if(!e.target.dataset.t) return;
@@ -554,12 +684,11 @@ document.getElementById('tabs').onclick = e => {
   e.target.classList.add('on'); TAB = e.target.dataset.t;
   SORT = {key:'spend', dir:-1}; renderTable();
 };
-document.getElementById('refresh').onclick = () => /* Not load(true): forcing a blocking pull here means every page open stares at a
+/* Refresh is load(false), not load(true): a blocking pull makes every click stare at a
    spinner for ~12s (longer off a sleeping instance). load(false) paints the cached
-   numbers immediately, and if they are past their TTL the server refreshes behind the
-   request while the bar and the "refreshing…" stamp say so, then the page swaps in the
-   fresh figures on its own. Instant AND current, instead of one or the other. */
-load(false);
+   numbers immediately and, if they are past their TTL, the server refreshes behind the
+   request and the page swaps in the fresh figures on its own. */
+document.getElementById('refresh').onclick = () => load(false);
 document.getElementById('q').oninput = renderTable;
 document.getElementById('activeOnly').onchange = renderTable;
 document.getElementById('spentOnly').onchange = renderTable;
@@ -573,40 +702,25 @@ let keepalive = null;
 function setAuto(on){
   clearInterval(timer); clearInterval(keepalive); timer = keepalive = null;
   if(!on) return;
-  timer = setInterval(()=>load(true), REFRESH_MS);
+  timer = setInterval(()=>load(true, true), REFRESH_MS);
   keepalive = setInterval(()=>fetch('/healthz').catch(()=>{}), KEEPALIVE_MS);
 }
-document.getElementById('auto').onchange = e => setAuto(e.target.checked);
-setAuto(document.getElementById('auto').checked);
+/* Always on, with no way to switch it off: the whole value of this page is that the CPT
+   on screen is current. A dashboard someone left on a stale window and then acted on is
+   the failure this exists to prevent. `silent` so it never veils the page mid-read. */
+setAuto(true);
 
 // keep the "x min ago" honest between refreshes
 ticker = setInterval(stampNow, 15000);
 
 /* Coming back to the tab is exactly when stale numbers do damage — you glance at a CPT
    and act on it. Anything older than two minutes gets re-pulled on focus. */
-document.addEventListener('visibilitychange', () => {
-  if(document.visibilityState === 'visible' && !BUSY && ageSecs() > 120) /* Not load(true): forcing a blocking pull here means every page open stares at a
-   spinner for ~12s (longer off a sleeping instance). load(false) paints the cached
-   numbers immediately, and if they are past their TTL the server refreshes behind the
-   request while the bar and the "refreshing…" stamp say so, then the page swaps in the
-   fresh figures on its own. Instant AND current, instead of one or the other. */
-load(false);
-});
-window.addEventListener('focus', () => {
-  if(!BUSY && ageSecs() > 120) /* Not load(true): forcing a blocking pull here means every page open stares at a
-   spinner for ~12s (longer off a sleeping instance). load(false) paints the cached
-   numbers immediately, and if they are past their TTL the server refreshes behind the
-   request while the bar and the "refreshing…" stamp say so, then the page swaps in the
-   fresh figures on its own. Instant AND current, instead of one or the other. */
-load(false);
-});
+const refocus = () => { if(!BUSY && ageSecs() > 120) load(false, true); };
+document.addEventListener('visibilitychange',
+  () => { if(document.visibilityState === 'visible') refocus(); });
+window.addEventListener('focus', refocus);
 
-/* Not load(true): forcing a blocking pull here means every page open stares at a
-   spinner for ~12s (longer off a sleeping instance). load(false) paints the cached
-   numbers immediately, and if they are past their TTL the server refreshes behind the
-   request while the bar and the "refreshing…" stamp say so, then the page swaps in the
-   fresh figures on its own. Instant AND current, instead of one or the other. */
-load(false);
+load(false);   // veiled: the cold pull is exactly what the veil is for
 </script>
 </body>
 </html>
