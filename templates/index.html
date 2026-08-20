@@ -178,6 +178,7 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
     <input type="search" id="q" placeholder="Filter by name…">
     <label class="chk"><input type="checkbox" id="activeOnly" checked> active only</label>
     <label class="chk"><input type="checkbox" id="spentOnly"> spent &gt; 0 only</label>
+    <label class="chk" id="cpWrap" style="display:none"><input type="checkbox" id="cpCols" checked> signups &amp; mandates</label>
     <span class="meta" id="rowcount"></span>
   </div>
 
@@ -199,6 +200,12 @@ const num = n => Math.round(n).toLocaleString('en-IN');
 const cls = c => c===null ? 'dimtxt' : (c<=T ? 'good' : c<=T*1.7 ? 'warn' : 'bad');
 const cpt = (sp,tr) => tr>0 ? sp/tr : null;
 const cptTxt = (sp,tr) => tr>0 ? rs(sp/tr) : (sp>0 ? 'no trials' : '—');
+const pct = (n,d) => d>0 ? (100*n/d).toFixed(0)+'%' : '—';
+/* Classplus columns show only when the query's own window matches the one on screen —
+   see `classplus()` in postly_cpt.py. Never guess: a mandate count from another day
+   sitting next to today's spend is worse than a blank column. */
+const cpOn = () => !!(DATA && DATA.classplus && DATA.classplus.available
+                      && document.getElementById('cpCols').checked);
 
 /* ---------- fetch ---------- */
 let staleTimer=null, BUSY=false, lastFetchAt=0, ticker=null;
@@ -305,7 +312,26 @@ function kpis(){
    <div class="kpi"><div class="k">${deg ? 'Ad sets' : 'Live'}</div>
      <div class="v">${num(c.active_adsets)}</div>
      <div class="s">${deg ? `with spend · ${num(c.active_ads)} ads (status unknown)`
-                          : `active ad sets · ${num(c.active_ads)} ads`}</div></div>`;
+                          : `active ad sets · ${num(c.active_ads)} ads`}</div></div>` +
+   (cpOn() ? cpKpis(c, sp) : '');
+}
+
+/* Classplus reads the product DB rather than the attribution SDK, so it answers a
+   different question than Branch does: of the people who signed up through this ad,
+   how many put a mandate in place. Cost/mandate is the same rupees-per-trial unit as
+   CPT and is coloured against the same target, deliberately — it is the second opinion
+   on the number every decision here is made on. */
+function cpKpis(c, sp){
+  const p = DATA.classplus, m = c.cp_mandates, su = c.cp_signups;
+  return `
+   <div class="kpi"><div class="k">Cost / mandate</div>
+     <div class="v ${cls(cpt(sp,m))}">${cptTxt(sp,m)}</div>
+     <div class="s">${num(m)} mandates · Branch says ${num(c[EV])} trials</div></div>
+   <div class="kpi"><div class="k">Signups</div><div class="v">${num(su)}</div>
+     <div class="s">${cptTxt(sp,su)} each · ${pct(m,su)} take a mandate</div></div>
+   <div class="kpi"><div class="k">Day-0</div><div class="v">${pct(c.cp_d0a,m)}</div>
+     <div class="s">active on day 0 · ${pct(c.cp_d0c,m)} cancelled ·
+       Classplus ${p.age_min===null?'':p.age_min+' min old'}</div></div>`;
 }
 
 /* ---------- table specs ---------- */
@@ -343,10 +369,24 @@ const COLS = {
     {k:'cpt', t:'CPT', kind:'cpt'}],
 };
 
+/* Appended to whichever tab is showing, so signups and mandates sit on the same row as
+   the spend that bought them at every level. */
+const CP_COLS = [
+  {k:'cp_signups', t:'Signups', kind:'num'},
+  {k:'cps', t:'Cost/signup', kind:'rs'},
+  {k:'cp_mandates', t:'Mandates', kind:'num'},
+  {k:'cpm', t:'Cost/mandate', kind:'cpm'},
+  {k:'d0a', t:'D0 active', kind:'pct'},
+  {k:'d0c', t:'D0 cancel', kind:'pct'},
+];
+
 function rows(){
   if(TAB==='combined') return [];
   let r = DATA[TAB].map(o => Object.assign({}, o, {
-      trials: o[EV], cpt: cpt(o.spend, o[EV])}));
+      trials: o[EV], cpt: cpt(o.spend, o[EV]),
+      cps: cpt(o.spend, o.cp_signups), cpm: cpt(o.spend, o.cp_mandates),
+      d0a: o.cp_mandates > 0 ? 100*o.cp_d0a/o.cp_mandates : null,
+      d0c: o.cp_mandates > 0 ? 100*o.cp_d0c/o.cp_mandates : null}));
   const q = document.getElementById('q').value.trim().toLowerCase();
   if(q) r = r.filter(o => (o.name||'').toLowerCase().includes(q) ||
                           (o.campaign||'').toLowerCase().includes(q) ||
@@ -380,6 +420,9 @@ function cell(o, c){
   if(c.kind==='rs')  return `<td>${o[c.k] ? rs(o[c.k]) : '—'}</td>`;
   if(c.kind==='num') return `<td>${o[c.k] ? num(o[c.k]) : '<span class="dimtxt">0</span>'}</td>`;
   if(c.kind==='cpt') return `<td class="${cls(o.cpt)}">${cptTxt(o.spend, o.trials)}</td>`;
+  if(c.kind==='cpm') return `<td class="${cls(o.cpm)}">${cptTxt(o.spend, o.cp_mandates)}</td>`;
+  if(c.kind==='pct') return `<td>${o[c.k]===null ? '<span class="dimtxt">—</span>'
+                                                 : o[c.k].toFixed(0)+'%'}</td>`;
   return `<td>${o[c.k]??'—'}</td>`;
 }
 
@@ -387,28 +430,37 @@ function renderTable(){
   const tbl = document.getElementById('tbl');
   if(TAB==='combined'){
     document.getElementById('ctl').style.display='none';
+    const on = cpOn();
     tbl.querySelector('thead').innerHTML =
-      `<tr><th>Level</th><th>Spend</th><th>Trials</th><th>CPT</th><th>Share of spend</th><th>Share of trials</th></tr>`;
+      `<tr><th>Level</th><th>Spend</th><th>Trials</th><th>CPT</th>` +
+      (on ? `<th>Signups</th><th>Mandates</th><th>Cost/mandate</th>` : '') +
+      `<th>Share of spend</th><th>Share of trials</th></tr>`;
     const c = DATA.combined;
-    const mk = (label, sp, tr, indent) => `<tr><td class="name" style="padding-left:${12+indent*20}px">${label}</td>
-      <td>${rs(sp)}</td><td>${num(tr)}</td><td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>
-      <td>${c.spend?(100*sp/c.spend).toFixed(1):0}%</td>
-      <td>${c[EV]?(100*tr/c[EV]).toFixed(1):0}%</td></tr>`;
+    const mk = (label, o, indent) => { const sp = o.spend, tr = o[EV];
+      return `<tr><td class="name" style="padding-left:${12+indent*20}px">${label}</td>
+      <td>${rs(sp)}</td><td>${num(tr)}</td><td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>` +
+      (on ? `<td>${num(o.cp_signups)}</td><td>${num(o.cp_mandates)}</td>
+             <td class="${cls(cpt(sp,o.cp_mandates))}">${cptTxt(sp,o.cp_mandates)}</td>` : '') +
+      `<td>${c.spend?(100*sp/c.spend).toFixed(1):0}%</td>
+       <td>${c[EV]?(100*tr/c[EV]).toFixed(1):0}%</td></tr>`; };
     let h = '';
     for(const a of DATA.accounts){
-      h += mk(`<b>${a.name}</b>`, a.spend, a[EV], 0);
+      h += mk(`<b>${a.name}</b>`, a, 0);
       for(const cm of DATA.campaigns.filter(x=>x.account_id===a.id && (x.spend>0||x.status==='ACTIVE')))
-        h += mk(cm.name, cm.spend, cm[EV], 1);
+        h += mk(cm.name, cm, 1);
     }
     tbl.querySelector('tbody').innerHTML = h;
     tbl.querySelector('tfoot').innerHTML =
       `<tr><td>COMBINED — both accounts</td><td>${rs(c.spend)}</td><td>${num(c[EV])}</td>
-       <td class="${cls(cpt(c.spend,c[EV]))}">${cptTxt(c.spend,c[EV])}</td><td>100%</td><td>100%</td></tr>`;
+       <td class="${cls(cpt(c.spend,c[EV]))}">${cptTxt(c.spend,c[EV])}</td>` +
+      (on ? `<td>${num(c.cp_signups)}</td><td>${num(c.cp_mandates)}</td>
+             <td class="${cls(cpt(c.spend,c.cp_mandates))}">${cptTxt(c.spend,c.cp_mandates)}</td>` : '') +
+      `<td>100%</td><td>100%</td></tr>`;
     document.getElementById('rowcount').textContent='';
     return;
   }
   document.getElementById('ctl').style.display='flex';
-  const cols = COLS[TAB], r = rows();
+  const cols = cpOn() ? COLS[TAB].concat(CP_COLS) : COLS[TAB], r = rows();
   tbl.querySelector('thead').innerHTML = '<tr>' + cols.map(c =>
     `<th data-k="${c.k}" class="${SORT.key===c.k?'sorted':''}">${c.t}${
       SORT.key===c.k?(SORT.dir<0?' ↓':' ↑'):''}</th>`).join('') + '</tr>';
@@ -419,14 +471,23 @@ function renderTable(){
   });
   tbl.querySelector('tbody').innerHTML = r.map(o =>
     '<tr>' + cols.map(c => cell(o,c)).join('') + '</tr>').join('');
-  const sp = r.reduce((s,o)=>s+o.spend,0), tr = r.reduce((s,o)=>s+o.trials,0);
+  // Footer totals are recomputed from the visible rows, never averaged: a rate is
+  // derived from the summed numerator and denominator so filtering the table cannot
+  // produce a cost-per that no row actually implies.
+  const sum = k => r.reduce((s,o)=>s+(o[k]||0),0);
+  const sp = sum('spend'), tr = sum('trials'),
+        su = sum('cp_signups'), md = sum('cp_mandates');
   tbl.querySelector('tfoot').innerHTML = '<tr>' + cols.map(c => {
     if(c.kind==='name') return `<td>${r.length} rows shown</td>`;
     if(c.k==='spend') return `<td>${rs(sp)}</td>`;
     if(c.k==='trials') return `<td>${num(tr)}</td>`;
     if(c.kind==='cpt') return `<td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`;
+    if(c.k==='cps') return `<td>${cptTxt(sp,su)}</td>`;
+    if(c.kind==='cpm') return `<td class="${cls(cpt(sp,md))}">${cptTxt(sp,md)}</td>`;
+    if(c.k==='d0a') return `<td>${pct(sum('cp_d0a'),md)}</td>`;
+    if(c.k==='d0c') return `<td>${pct(sum('cp_d0c'),md)}</td>`;
     if(c.kind==='rs'||c.kind==='num')
-      return `<td>${c.kind==='rs'?rs(r.reduce((s,o)=>s+(o[c.k]||0),0)):num(r.reduce((s,o)=>s+(o[c.k]||0),0))}</td>`;
+      return `<td>${c.kind==='rs'?rs(sum(c.k)):num(sum(c.k))}</td>`;
     return '<td></td>';
   }).join('') + '</tr>';
   document.getElementById('rowcount').textContent =
@@ -440,8 +501,10 @@ function render(){
   stampNow();
   for(const t of ['accounts','campaigns','adsets','ads'])
     document.getElementById('n-'+t).textContent = DATA[t].length;
+  document.getElementById('cpWrap').style.display =
+    (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
   kpis(); renderTable();
-  document.getElementById('note').innerHTML =
+  document.getElementById('note').innerHTML = cpNote() +
     `CPT = Meta spend ÷ Branch trials, joined at <b>ad-name</b> level and rolled up
      (Branch does not expose campaign or account as attribution dimensions).
      Covers both ad accounts. ${DATA.unattributed[EV]>0
@@ -452,6 +515,31 @@ function render(){
        spend share — the rollups stay exact, the individual CPTs are an even assumption.`:''}
      Today's numbers are still landing — Meta spend lags a few minutes and Branch trials
      keep arriving through the day, so intraday CPT reads high early and settles down.`;
+}
+
+/* Signups and mandates come from a different system asking a different question, and
+   the gap between "mandates" and "trials" is the first thing anyone will ask about.
+   Say what each one counts here rather than letting the two columns look like a
+   discrepancy. */
+function cpNote(){
+  const p = DATA.classplus;
+  // Absent is the normal case on any window the query does not cover — a quiet line,
+  // not a warning banner, since nothing is broken.
+  if(!p) return '';
+  if(!p.available) return p.note ? `<span class="dimtxt">${p.note}</span><br><br>` : '';
+  if(!cpOn()) return '';                 // columns switched off — the checkbox says why
+  const u = p.unmatched;
+  return `<b>Signups &amp; mandates</b> come from the Classplus DB (query
+     ${p.window[0]}${p.window[1]!==p.window[0]?' → '+p.window[1]:''}, read
+     ${p.retrieved_at}), joined on the same <b>ad name</b> Branch uses.
+     A mandate is counted against the ad the user <i>signed up</i> through, so it is a
+     signup-cohort figure: someone who signed up yesterday and started a trial today
+     counts for Branch but not here. That, not a data problem, is why
+     ${num(DATA.combined.cp_mandates)} mandates and ${num(DATA.combined[EV])} Branch
+     trials differ slightly.
+     ${u.cp_signups>0 ? `${num(u.cp_signups)} signups and ${num(u.cp_mandates)} mandates
+       carry no matching live ad name (organic, or an ad since deleted) and sit outside
+       every row.`:''}<br><br>`;
 }
 
 /* ---------- wiring ---------- */
@@ -475,6 +563,7 @@ load(false);
 document.getElementById('q').oninput = renderTable;
 document.getElementById('activeOnly').onchange = renderTable;
 document.getElementById('spentOnly').onchange = renderTable;
+document.getElementById('cpCols').onchange = render;   // also swaps the KPI row
 /* Refresh cadence. The instance sleeps after ~15 min idle on the free plan, so a bare
    30-minute refresh would always be paying a cold wake. While a tab is open we ping the
    cheap /healthz every 10 min to keep it warm — that costs nothing when nobody is

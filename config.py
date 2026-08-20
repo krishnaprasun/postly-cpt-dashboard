@@ -9,6 +9,8 @@ No credential is hardcoded here. Resolution order (first hit wins):
   META_TOKEN     env META_TOKEN  ->  ~/.anthropic/meta_token  ->  Desktop toolkit import
   BRANCH creds   env BRANCH_KEY / BRANCH_SECRET  ->  ~/.anthropic/branch_creds.json
                  ->  Desktop toolkit import
+  CLASSPLUS      env CLASSPLUS_API_KEY / CLASSPLUS_QUERY_ID / CLASSPLUS_HOST
+                 ->  ~/.anthropic/classplus_creds.json          (OPTIONAL)
 
 Keep ~/.anthropic/ current — it is the one location every process here can read.
 Account and campaign ids below mirror postly_config.py; they are stable identifiers.
@@ -77,3 +79,29 @@ def _resolve():
 
 
 META_TOKEN, BRANCH_KEY, BRANCH_SECRET = _resolve()
+
+
+# ------------------------------------------------------- Classplus (Redash) ---
+# Product-side truth: signups and trial mandates per ad name, straight out of the
+# Classplus DB. OPTIONAL on purpose — if the key is absent the dashboard runs exactly
+# as it did before, just without those columns. Meta and Branch are what CPT is built
+# on and must never be blocked by a third source being down or unconfigured.
+def _classplus():
+    host = os.environ.get("CLASSPLUS_HOST", "").strip()
+    qid = os.environ.get("CLASSPLUS_QUERY_ID", "").strip()
+    key = os.environ.get("CLASSPLUS_API_KEY", "").strip()
+    if not (qid and key):
+        raw = _read("~/.anthropic/classplus_creds.json")
+        if raw:
+            try:
+                j = json.loads(raw)
+                host = host or j.get("host", "")
+                qid = qid or str(j.get("query_id", ""))
+                key = key or j.get("api_key", "")
+            except ValueError:
+                pass
+    return host or "data.classplus.co", qid, key
+
+
+CLASSPLUS_HOST, CLASSPLUS_QUERY_ID, CLASSPLUS_KEY = _classplus()
+CLASSPLUS_ON = bool(CLASSPLUS_QUERY_ID and CLASSPLUS_KEY)

@@ -2,7 +2,8 @@
 
 Live Meta spend × Branch trials, with CPT at every level: combined, ad account,
 campaign, active ad set, and ad. Covers **both** ad accounts (`Postly` and
-`Postly Install`). Read-only — nothing here writes to Meta.
+`Postly Install`). Signups and trial mandates come from the Classplus DB alongside,
+at the same levels. Read-only — nothing here writes to Meta.
 
 ## Run locally
 
@@ -21,6 +22,12 @@ Credentials come from `~/.anthropic/` (see [Credentials](#credentials)).
   Every column sorts; the name filter searches name, parent ad set and campaign.
   "active only" is on by default; objects that spent in the window but are now paused
   appear when you turn it off, tagged `paused`.
+- **Signups & mandates** — from the Classplus Redash query, joined on the same ad name
+  and rolled up the same way: Signups, Cost/signup, Mandates, Cost/mandate, D0 active,
+  D0 cancel, plus three KPIs. The `signups & mandates` checkbox hides the columns; the
+  checkbox only appears when the data is actually available for the window on screen.
+  See [Classplus](#classplus-signups--mandates) for what a mandate counts and why it
+  will not match the Branch trial figure exactly.
 - **Ranges** — Today / Yesterday / 3d / 7d (Branch caps a request at 7 days).
 - **Trial event** — CPT is always `postly_trial_started_backend`: the daily report's
   definition and what the ₹150 target is set against. A UI toggle for
@@ -129,6 +136,40 @@ IST day boundary are the same — no timezone skew in the join.
 - **Intraday.** Meta spend lags a few minutes and Branch trials keep landing
   through the day, so today's CPT reads high in the morning and settles.
 
+## Classplus (signups & mandates)
+
+Redash query `19634` on `data.classplus.co`, read through its query API key.
+
+**Cost/mandate is a second opinion on CPT.** It is the same rupees-per-trial unit,
+built from the product database instead of the attribution SDK, and it is coloured
+against the same ₹150 target. On 2026-08-20 the two agreed to within 3% combined and
+to within one or two per ad on the top spenders — which is the point of having it.
+
+Three things about this source shape the code:
+
+- **The window is written into the SQL.** The query takes no parameters; its bounds are
+  literal IST dates. `_cp_window()` reads them back out of the SQL text and the columns
+  are attached **only** when they match the window on screen — otherwise the page says
+  which day the query covers and shows nothing. Putting one day's mandates next to
+  another day's spend would be worse than a blank column. The practical consequence:
+  the query's dates have to be moved forward for "today" to keep working, or the query
+  parameterised with `{{start}}`/`{{end}}` so the dashboard can pass a range.
+- **It is a signup-cohort measure.** `trial_mandates` counts trials taken by people who
+  *signed up inside the window*. Branch counts trial events inside the window whoever
+  they came from. Someone who signed up yesterday and started a trial today counts for
+  Branch and not here. That is why the two columns differ slightly, and why they stay
+  separate columns rather than being reconciled into one.
+- **It is optional.** No key, or a query that fails, and the dashboard behaves exactly
+  as it did before. Meta and Branch are what CPT rests on; a third source must never be
+  able to block them. Failures are cached the same way roster failures are.
+
+Freshness is negotiated with Redash rather than polled: the fetch POSTs `max_age`
+(`CP_TTL`, 600s), so Redash either returns its cached result or starts a run. A run is
+polled for at most `CP_POLL_BUDGET` (20s) — the query takes ~13s and a cold page is not
+going to wait — and whatever happens the last result is served with its age shown. The
+numbers are then read from `results.json`, not from the POST response, because only
+`results.json` carries the SQL, and the SQL is the only place the window is recorded.
+
 ## Access
 
 **There is no login.** Anyone with the URL sees today's spend, CPT, budgets, and
@@ -192,9 +233,14 @@ Free-plan facts worth knowing:
 
 Nothing secret is committed. `config.py` reads, first hit wins:
 
-1. env `META_TOKEN`, `BRANCH_KEY`, `BRANCH_SECRET` — this is what Render uses
-2. `~/.anthropic/meta_token` and `~/.anthropic/branch_creds.json` — local runs
+1. env `META_TOKEN`, `BRANCH_KEY`, `BRANCH_SECRET`,
+   `CLASSPLUS_API_KEY` / `CLASSPLUS_QUERY_ID` / `CLASSPLUS_HOST` — this is what Render uses
+2. `~/.anthropic/meta_token`, `~/.anthropic/branch_creds.json`,
+   `~/.anthropic/classplus_creds.json` — local runs
 3. `~/Desktop/Postly Ads Management/postly_config.py` — last-resort local fallback
+
+The Classplus trio is the one set that is allowed to be absent: missing it turns the
+signup and mandate columns off and changes nothing else.
 
 It cannot rely on (3) alone: macOS protects `~/Desktop` and a process launched as a
 server is not granted access to it, so that import fails at serve time even though it
