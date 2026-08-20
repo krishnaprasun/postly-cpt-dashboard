@@ -85,6 +85,13 @@ th{position:sticky;top:0;background:var(--panel2);text-align:right;font-size:10.
   text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:9px 13px;
   border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap;z-index:2;font-weight:700}
 th:first-child,td:first-child{text-align:left}
+/* Parent-name columns — campaign under ad set, account under campaign, ad set under ad.
+   Their cells are left-aligned text but `th` defaults to right, so the header sat off to
+   the right of the values it labelled. `.grow` also hands this column the row's spare
+   width: with auto table layout the slack went to the widest column (the name), which
+   pushed the parent name far right and left a gap between it and the row it belongs to. */
+th.l{text-align:left}
+th.grow{width:100%}
 th:hover{color:var(--navy)}
 th.sorted{color:var(--green-dk)}
 td{padding:8px 13px;border-bottom:1px solid var(--line2);text-align:right;white-space:nowrap;
@@ -668,9 +675,12 @@ function renderTable(){
   }
   document.getElementById('ctl').style.display='flex';
   const cols = cpOn() ? COLS[TAB].concat(CP_COLS) : COLS[TAB], r = rows();
-  tbl.querySelector('thead').innerHTML = '<tr>' + cols.map(c =>
-    `<th data-k="${c.k}" class="${SORT.key===c.k?'sorted':''}">${c.t}${
-      SORT.key===c.k?(SORT.dir<0?' ↓':' ↑'):''}</th>`).join('') + '</tr>';
+  tbl.querySelector('thead').innerHTML = '<tr>' + cols.map(c => {
+    const cls = [c.kind==='name'||c.kind==='sub' ? 'l' : '',
+                 c.kind==='sub' ? 'grow' : '',
+                 SORT.key===c.k ? 'sorted' : ''].filter(Boolean).join(' ');
+    return `<th data-k="${c.k}" class="${cls}">${c.t}${
+      SORT.key===c.k?(SORT.dir<0?' ↓':' ↑'):''}</th>`; }).join('') + '</tr>';
   tbl.querySelector('thead').querySelectorAll('th').forEach(th => th.onclick = () => {
     const k = th.dataset.k;
     SORT = {key:k, dir: SORT.key===k ? -SORT.dir : (k==='name'?1:-1)};

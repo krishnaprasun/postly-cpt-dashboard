@@ -19,6 +19,10 @@ Credentials come from `~/.anthropic/` (see [Credentials](#credentials)).
 - **Current CPT** — combined spend / trials, coloured against the ₹150 target
   (green ≤ ₹150, amber to ₹255, red above).
 - **Tabs** — Combined (account → campaign tree), Ad accounts, Campaigns, Ad sets, Ads.
+  The parent-name column (campaign under ad set, account under campaign, ad set under ad)
+  is left-aligned header *and* cell, and takes the row's spare width so it sits beside the
+  name it belongs to. Auto table layout otherwise gives the slack to the widest column —
+  the name — which pushed the parent off to the far right under a right-aligned header.
   Every column sorts; the name filter searches name, parent ad set and campaign.
   "active only" is on by default; objects that spent in the window but are now paused
   appear when you turn it off, tagged `paused`.
