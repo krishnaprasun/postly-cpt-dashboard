@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: postly-cpt-dashboard
+    runtime: docker
+    # free: this is a read-only dashboard with no scheduler and no disk, so sleeping
+    # costs nothing but a slow first load. The app answers a woken request from its
+    # last cached numbers and refreshes behind the request (see server.get_data), so
+    # the wake shows real figures immediately rather than a blank page.
+    plan: free
+    healthCheckPath: /healthz     # public and cheap — never triggers a Meta/Branch pull
+    envVars:
+      # ── Meta ──
+      - key: META_TOKEN           # system user "Krishna" via app Gsheet2, does not expire
+        sync: false
+      # ── Branch.io Query API ──
+      - key: BRANCH_KEY
+        sync: false
+      - key: BRANCH_SECRET
+        sync: false
+      # No login by design — the dashboard is open to anyone with the URL, and sends
+      # noindex + robots.txt disallow so it stays out of search results. To turn a
+      # password prompt on later, add ADMIN_PASS (and optionally ADMIN_USER) here.
+      # Seconds before cached numbers are refreshed. Meta spend updates every few
+      # minutes anyway, so anything under ~60 just burns API quota.
+      - key: CACHE_TTL
+        value: "180"
