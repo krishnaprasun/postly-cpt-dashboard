@@ -27,7 +27,23 @@ Credentials come from `~/.anthropic/` (see [Credentials](#credentials)).
     and what the ₹150 target is set against. **This is the default.**
   - `Trial 10min` = `postly_trial_nc_after10min_backend` — the event the
     Trial_10min campaigns actually optimise for.
-- **Auto 5m** — re-pulls every five minutes. Manual `Refresh` forces a pull.
+- **Auto 30m** — on by default: a full re-pull every 30 minutes. While the tab is open
+  it also pings `/healthz` every 10 minutes, because the free instance sleeps after ~15
+  minutes idle and a bare 30-minute cycle would pay a cold wake every single time. The
+  pings stop with the tab, so nothing is kept awake when nobody is looking. Manual
+  `Refresh` forces a pull.
+
+## Look
+
+Palette is the Postly brand kit, taken from `postly-insta-daily/brandkit.py` rather than
+invented: cream ground `#FDFCF7`, navy ink `#1A1C2E`, green `#20A75D`, gold `#E8A017`.
+The mark in the header is the real `postly_icon_logo.svg` from the Creative Tool repo,
+inlined so it needs no request, and reused as the favicon.
+
+CPT colours reuse the brand rather than adding a second language: green under ₹150, gold
+to ₹255, brick red above. **The semantic `.good/.warn/.bad` rules must stay at the bottom
+of the stylesheet** — `.kpi .v`, `td` and `tfoot td` each set a colour and out-specify a
+bare `.bad`, which silently killed the colour coding the first time this was styled.
 
 ## How CPT is computed
 

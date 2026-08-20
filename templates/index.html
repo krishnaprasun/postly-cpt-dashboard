@@ -4,86 +4,132 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Postly — Live CPT</title>
+<link rel="icon" type="image/svg+xml" href="/static/postly_icon_logo.svg">
 <style>
+/* Postly brand palette — values taken from postly-insta-daily/brandkit.py so the
+   dashboard matches the creatives: cream ground, navy ink, green primary, gold
+   secondary. Red is the one addition; the brand has none, so it is a muted brick
+   chosen to sit with the gold rather than fight it. */
 :root{
-  --bg:#0e1116; --panel:#161b22; --panel2:#1c232c; --line:#262d38;
-  --fg:#e6edf3; --dim:#8b96a5; --dimmer:#5d6875;
-  --good:#3fb950; --warn:#d29922; --bad:#f85149; --acc:#58a6ff;
+  --cream:#FDFCF7; --white:#FFFFFF; --panel2:#F6F4EC;
+  --navy:#1A1C2E; --ink:#3A3E52; --muted:#787E91; --faint:#A8AEBE;
+  --line:#E7E4DA; --line2:#F0EEE6;
+  --green:#20A75D; --green-dk:#127A42; --green-lt:#EAF7F0;
+  --gold:#E8A017; --gold-dk:#B87A08; --gold-lt:#FDF4E3;
+  --red:#B3342C; --red-lt:#FBECEA;
+  --shadow:0 1px 2px rgba(26,28,46,.05), 0 4px 14px rgba(26,28,46,.045);
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);
-  font:14px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,Segoe UI,sans-serif}
-header{position:sticky;top:0;z-index:20;background:rgba(14,17,22,.94);
-  backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:12px 20px}
-.hrow{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
-h1{font-size:15px;margin:0;font-weight:650;letter-spacing:.2px}
-h1 span{color:var(--dimmer);font-weight:400}
+body{margin:0;background:var(--cream);color:var(--navy);
+  font:14px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,Segoe UI,sans-serif;
+  -webkit-font-smoothing:antialiased}
+
+header{position:sticky;top:0;z-index:20;background:rgba(253,252,247,.93);
+  backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:11px 22px}
+.hrow{display:flex;gap:13px;align-items:center;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:9px;margin-right:4px}
+.brand svg{width:26px;height:26px;display:block;flex:none}
+h1{font-size:15px;margin:0;font-weight:650;letter-spacing:-.1px;color:var(--navy)}
+h1 em{font-style:normal;color:var(--green-dk)}
+h1 span{color:var(--faint);font-weight:400;margin-left:5px;font-size:13px}
 .spacer{flex:1}
-.grp{display:flex;background:var(--panel2);border:1px solid var(--line);border-radius:8px;overflow:hidden}
-.grp button{background:none;border:0;color:var(--dim);padding:6px 11px;font-size:12.5px;
-  cursor:pointer;font-family:inherit;border-right:1px solid var(--line)}
+
+.grp{display:flex;background:var(--white);border:1px solid var(--line);border-radius:9px;
+  overflow:hidden;box-shadow:var(--shadow)}
+.grp button{background:none;border:0;color:var(--ink);padding:6px 12px;font-size:12.5px;
+  cursor:pointer;font-family:inherit;border-right:1px solid var(--line2);font-weight:500}
 .grp button:last-child{border-right:0}
-.grp button.on{background:var(--acc);color:#06121f;font-weight:600}
-.grp button:hover:not(.on){color:var(--fg);background:#232b36}
-.btn{background:var(--panel2);border:1px solid var(--line);color:var(--fg);border-radius:8px;
-  padding:6px 12px;font-size:12.5px;cursor:pointer;font-family:inherit}
-.btn:hover{border-color:var(--acc);color:var(--acc)}
-.btn[disabled]{opacity:.5;cursor:default}
-.meta{font-size:11.5px;color:var(--dimmer)}
-.meta b{color:var(--dim);font-weight:500}
+.grp button.on{background:var(--green);color:#fff;font-weight:650}
+.grp button:hover:not(.on){background:var(--green-lt);color:var(--green-dk)}
+.btn{background:var(--white);border:1px solid var(--line);color:var(--ink);border-radius:9px;
+  padding:6px 13px;font-size:12.5px;cursor:pointer;font-family:inherit;font-weight:550;
+  box-shadow:var(--shadow)}
+.btn:hover{border-color:var(--green);color:var(--green-dk);background:var(--green-lt)}
+.btn[disabled]{opacity:.45;cursor:default}
+.meta{font-size:11.5px;color:var(--faint)}
+.meta b{color:var(--ink);font-weight:600}
 
-main{padding:18px 20px 60px;max-width:1500px;margin:0 auto}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(165px,1fr));gap:12px;margin-bottom:18px}
-.kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
-.kpi .k{font-size:11px;text-transform:uppercase;letter-spacing:.7px;color:var(--dimmer)}
-.kpi .v{font-size:27px;font-weight:640;margin-top:5px;letter-spacing:-.5px;
-  font-variant-numeric:tabular-nums}
-.kpi .s{font-size:11.5px;color:var(--dim);margin-top:3px}
-.kpi.hero{border-color:#2f3a47;background:linear-gradient(160deg,var(--panel2),var(--panel))}
-.good{color:var(--good)} .warn{color:var(--warn)} .bad{color:var(--bad)} .dimtxt{color:var(--dim)}
+main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:13px;margin-bottom:20px}
+.kpi{background:var(--white);border:1px solid var(--line);border-radius:14px;padding:14px 16px;
+  box-shadow:var(--shadow)}
+.kpi .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);
+  font-weight:650}
+.kpi .v{font-size:28px;font-weight:680;margin-top:6px;letter-spacing:-.9px;
+  font-variant-numeric:tabular-nums;line-height:1.05}
+.kpi .s{font-size:11.5px;color:var(--muted);margin-top:5px}
+.kpi.hero{background:linear-gradient(150deg,var(--green-lt) 0%,var(--white) 62%);
+  border-color:#CBE8D8;position:relative;overflow:hidden}
+.kpi.hero::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+  background:linear-gradient(180deg,#0B9C5D,#38D993)}
 
-.tabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin-bottom:14px;flex-wrap:wrap}
-.tabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--dim);
-  padding:9px 14px;font-size:13px;cursor:pointer;font-family:inherit}
-.tabs button.on{color:var(--fg);border-bottom-color:var(--acc);font-weight:600}
-.tabs button:hover:not(.on){color:var(--fg)}
-.tabs button i{font-style:normal;color:var(--dimmer);font-size:11px;margin-left:5px}
+.tabs{display:flex;gap:3px;border-bottom:1px solid var(--line);margin-bottom:15px;flex-wrap:wrap}
+.tabs button{background:none;border:0;border-bottom:2px solid transparent;color:var(--muted);
+  padding:9px 14px;font-size:13px;cursor:pointer;font-family:inherit;font-weight:550;
+  margin-bottom:-1px}
+.tabs button.on{color:var(--green-dk);border-bottom-color:var(--green);font-weight:680}
+.tabs button:hover:not(.on){color:var(--navy)}
+.tabs button i{font-style:normal;color:var(--faint);font-size:11px;margin-left:5px;font-weight:500}
 
-.ctl{display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
-input[type=search]{background:var(--panel2);border:1px solid var(--line);color:var(--fg);
-  border-radius:8px;padding:6px 11px;font-size:12.5px;width:290px;font-family:inherit}
-input[type=search]:focus{outline:0;border-color:var(--acc)}
-label.chk{font-size:12.5px;color:var(--dim);display:flex;align-items:center;gap:6px;cursor:pointer}
+.ctl{display:flex;gap:11px;align-items:center;margin-bottom:11px;flex-wrap:wrap}
+input[type=search]{background:var(--white);border:1px solid var(--line);color:var(--navy);
+  border-radius:9px;padding:6px 12px;font-size:12.5px;width:290px;font-family:inherit}
+input[type=search]:focus{outline:0;border-color:var(--green);box-shadow:0 0 0 3px var(--green-lt)}
+label.chk{font-size:12.5px;color:var(--ink);display:flex;align-items:center;gap:6px;cursor:pointer}
+input[type=checkbox]{accent-color:var(--green)}
 
-.wrap{background:var(--panel);border:1px solid var(--line);border-radius:12px;overflow:auto;max-height:70vh}
+.wrap{background:var(--white);border:1px solid var(--line);border-radius:14px;overflow:auto;
+  max-height:70vh;box-shadow:var(--shadow)}
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
-th{position:sticky;top:0;background:var(--panel2);text-align:right;font-size:11px;
-  text-transform:uppercase;letter-spacing:.6px;color:var(--dim);padding:9px 12px;
-  border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap;z-index:2}
+th{position:sticky;top:0;background:var(--panel2);text-align:right;font-size:10.5px;
+  text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:9px 13px;
+  border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap;z-index:2;font-weight:700}
 th:first-child,td:first-child{text-align:left}
-th:hover{color:var(--fg)}
-th.sorted{color:var(--acc)}
-td{padding:8px 12px;border-bottom:1px solid #1d232c;text-align:right;white-space:nowrap}
+th:hover{color:var(--navy)}
+th.sorted{color:var(--green-dk)}
+td{padding:8px 13px;border-bottom:1px solid var(--line2);text-align:right;white-space:nowrap;
+  color:var(--ink)}
+td:first-child{color:var(--navy);font-weight:500}
 tr:last-child td{border-bottom:0}
-tbody tr:hover{background:#1a2029}
+tbody tr:hover{background:var(--green-lt)}
 td.name{text-align:left;max-width:520px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-td.sub{text-align:left;color:var(--dimmer);font-size:11.5px;max-width:260px;
-  overflow:hidden;text-overflow:ellipsis}
-tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:650;
+td.sub{text-align:left;color:var(--faint);font-size:11.5px;max-width:260px;
+  overflow:hidden;text-overflow:ellipsis;font-weight:400}
+tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color:var(--navy);
   border-top:1px solid var(--line);border-bottom:0}
-.pill{font-size:10px;padding:1px 6px;border-radius:20px;border:1px solid var(--line);
-  color:var(--dimmer);margin-left:6px}
-.pill.live{color:var(--good);border-color:#1d4a2a}
-.note{font-size:11.5px;color:var(--dimmer);margin-top:10px;line-height:1.6}
-.err{background:#2a1214;border:1px solid #5c2225;color:#ffb4b0;padding:12px 15px;
-  border-radius:10px;margin-bottom:14px;font-size:13px}
-.loading{opacity:.45;transition:opacity .15s}
+.pill{font-size:9.5px;padding:1.5px 7px;border-radius:20px;border:1px solid var(--line);
+  color:var(--muted);margin-left:7px;background:var(--panel2);font-weight:600;
+  text-transform:uppercase;letter-spacing:.4px}
+.pill.live{color:var(--green-dk);border-color:#CBE8D8;background:var(--green-lt)}
+.note{font-size:11.5px;color:var(--muted);margin-top:12px;line-height:1.65;max-width:1100px}
+.note b{color:var(--ink)}
+.err{background:var(--red-lt);border:1px solid #EFCFCB;color:var(--red);padding:12px 15px;
+  border-radius:11px;margin-bottom:14px;font-size:13px}
+.loading{opacity:.5;transition:opacity .15s}
+
+/* Semantic CPT colours come last on purpose. `.kpi .v`, `td` and `tfoot td` all set a
+   colour of their own and out-specify a bare `.good`/`.bad`, which silently killed the
+   colour coding the first time this was styled. Keep this block at the bottom. */
+.good,   .kpi .v.good,   td.good,   tfoot td.good  {color:var(--green-dk)}
+.warn,   .kpi .v.warn,   td.warn,   tfoot td.warn  {color:var(--gold-dk)}
+.bad,    .kpi .v.bad,    td.bad,    tfoot td.bad   {color:var(--red)}
+.dimtxt, .kpi .v.dimtxt, td.dimtxt, tfoot td.dimtxt{color:var(--faint)}
 </style>
 </head>
 <body>
 <header>
   <div class="hrow">
-    <h1>Postly — Live CPT <span id="win"></span></h1>
+    <div class="brand"><svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+<path d="M73.6914 31.4014C70.6177 30.4888 67.3639 29.999 64 29.999C58.3019 29.999 52.9198 31.4039 48.1934 33.8896C46.2383 34.918 45.4874 37.3368 46.5156 39.292C47.544 41.247 49.9619 41.9979 51.917 40.9697C55.5227 39.0734 59.6302 37.999 64 37.999C68.3698 37.999 72.4773 39.0734 76.083 40.9697C78.0381 41.9978 80.456 41.247 81.4844 39.292C81.4958 39.2703 81.5047 39.2474 81.5156 39.2256L88.7725 46.4824C88.7508 46.4933 88.7286 46.5033 88.707 46.5146C86.7521 47.543 86.0012 49.9609 87.0293 51.916C88.9256 55.5217 90 59.6292 90 63.999C90 68.3689 88.9256 72.4763 87.0293 76.082C86.0012 78.0371 86.7521 80.455 88.707 81.4834C90.6622 82.5117 93.081 81.7607 94.1094 79.8057C96.5951 75.0792 98 69.6972 98 63.999C98 60.6347 97.5095 57.3807 96.5967 54.3066L113.486 71.1963C109.998 95.4011 89.1726 114.001 64.002 114.001H14.002V64.001C14.002 38.8308 32.6006 18.0052 56.8047 14.5156L73.6914 31.4014ZM81.4844 88.7061C80.456 86.7511 78.0381 86.0002 76.083 87.0283C72.4773 88.9246 68.3698 89.999 64 89.999C59.6302 89.999 55.5227 88.9246 51.917 87.0283C49.9619 86.0002 47.544 86.7511 46.5156 88.7061C45.4874 90.6612 46.2383 93.08 48.1934 94.1084C52.9198 96.5941 58.3019 97.999 64 97.999C69.6981 97.999 75.0802 96.5941 79.8066 94.1084C81.7617 93.08 82.5126 90.6612 81.4844 88.7061ZM39.293 46.5146C37.3378 45.4864 34.919 46.2373 33.8906 48.1924C31.4049 52.9188 30 58.3009 30 63.999C30 69.6972 31.4049 75.0792 33.8906 79.8057C34.919 81.7607 37.3378 82.5117 39.293 81.4834C41.2479 80.455 41.9988 78.0371 40.9707 76.082C39.0744 72.4763 38 68.3689 38 63.999C38 59.6292 39.0744 55.5217 40.9707 51.916C41.9988 49.9609 41.2479 47.543 39.293 46.5146Z" fill="url(#paint0_linear_1272_1028)"/>
+<path d="M113.699 71.4097C111.19 71.7976 108.618 71.9995 106 71.9995C78.3859 71.9995 56.0003 49.6135 56 21.9995C56 19.3814 56.201 16.8098 56.5889 14.3003L113.699 71.4097Z" fill="#E1E6F0"/>
+<path d="M76.083 87.0278C78.0382 85.9996 80.457 86.7505 81.4854 88.7056C82.5135 90.6607 81.7617 93.0796 79.8066 94.1079C75.0802 96.5936 69.6981 97.9985 64 97.9985C58.3019 97.9985 52.9198 96.5936 48.1934 94.1079C46.2384 93.0795 45.4874 90.6607 46.5156 88.7056C47.544 86.7507 49.9619 85.9998 51.917 87.0278C55.5227 88.9241 59.6302 89.9985 64 89.9985C68.3698 89.9985 72.4773 88.9241 76.083 87.0278ZM33.8906 48.1919C34.919 46.2369 37.3378 45.4859 39.293 46.5142C41.2479 47.5424 41.9995 49.9605 40.9717 51.9155C39.0754 55.5212 38 59.6287 38 63.9985C38 68.3684 39.0754 72.4758 40.9717 76.0815C41.9996 78.0367 41.248 80.4556 39.293 81.4839C37.3378 82.512 34.9189 81.7603 33.8906 79.8052C31.4049 75.0787 30 69.6967 30 63.9985C30 58.3005 31.4049 52.9183 33.8906 48.1919ZM89.4766 69.2026C91.9756 70.0773 94.5652 70.7588 97.2275 71.23C96.5716 74.2567 95.5133 77.1356 94.1094 79.8052C93.081 81.7602 90.6622 82.5121 88.707 81.4839C86.7519 80.4556 86.0011 78.0367 87.0293 76.0815C88.1514 73.9479 88.9823 71.638 89.4766 69.2026ZM56.7676 30.771C57.2388 33.4333 57.9202 36.023 58.7949 38.522C56.3599 39.0165 54.0503 39.8483 51.917 40.9702C49.9619 41.998 47.5439 41.2464 46.5156 39.2915C45.4874 37.3364 46.2383 34.9175 48.1934 33.8892C50.8626 32.4853 53.7412 31.427 56.7676 30.771Z" fill="white"/>
+<defs>
+<linearGradient id="paint0_linear_1272_1028" x1="113.486" y1="14.5156" x2="-6.41245" y2="59.0939" gradientUnits="userSpaceOnUse">
+<stop stop-color="#0B9C5D"/>
+<stop offset="1" stop-color="#38D993"/>
+</linearGradient>
+</defs>
+</svg><h1>Postly <em>CPT</em> <span id="win"></span></h1></div>
     <div class="grp" id="rangeGrp">
       <button data-r="today" class="on">Today</button>
       <button data-r="yesterday">Yesterday</button>
@@ -95,7 +141,7 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:650;
       <button data-e="t10m">Trial&nbsp;10min</button>
     </div>
     <div class="spacer"></div>
-    <label class="chk"><input type="checkbox" id="auto"> auto 5m</label>
+    <label class="chk"><input type="checkbox" id="auto" checked> auto 30m</label>
     <button class="btn" id="refresh">Refresh</button>
     <div class="meta" id="stamp"></div>
   </div>
@@ -364,10 +410,20 @@ document.getElementById('refresh').onclick = () => load(true);
 document.getElementById('q').oninput = renderTable;
 document.getElementById('activeOnly').onchange = renderTable;
 document.getElementById('spentOnly').onchange = renderTable;
-document.getElementById('auto').onchange = e => {
-  clearInterval(timer);
-  if(e.target.checked) timer = setInterval(()=>load(true), 300000);
-};
+/* Refresh cadence. The instance sleeps after ~15 min idle on the free plan, so a bare
+   30-minute refresh would always be paying a cold wake. While a tab is open we ping the
+   cheap /healthz every 10 min to keep it warm — that costs nothing when nobody is
+   looking, because the pings stop with the tab. */
+const REFRESH_MS = 30*60*1000, KEEPALIVE_MS = 10*60*1000;
+let keepalive = null;
+function setAuto(on){
+  clearInterval(timer); clearInterval(keepalive); timer = keepalive = null;
+  if(!on) return;
+  timer = setInterval(()=>load(true), REFRESH_MS);
+  keepalive = setInterval(()=>fetch('/healthz').catch(()=>{}), KEEPALIVE_MS);
+}
+document.getElementById('auto').onchange = e => setAuto(e.target.checked);
+setAuto(document.getElementById('auto').checked);
 load(false);
 </script>
 </body>
