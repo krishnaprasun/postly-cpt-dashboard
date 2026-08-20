@@ -89,7 +89,14 @@ One-time setup:
    so they are never in git): `META_TOKEN`, `BRANCH_KEY`, `BRANCH_SECRET`.
 3. Check `/healthz` returns `{"ok": true}` before trusting a reading.
 
-After that, **deploy = `git push origin main`**.
+After that, **deploy = `git push origin main`** — *if* Render is connected through its
+GitHub App. This service was created through the Render REST API instead, so the repo has
+no Render webhook (`gh api repos/krishnaprasun/postly-cpt-dashboard/hooks` returns `[]`) and
+a push may not trigger anything. Until that is reconnected in the dashboard, deploy with:
+
+```bash
+./deploy.sh
+```
 
 Free-plan facts worth knowing:
 
