@@ -357,7 +357,11 @@ function veil(on){
   }, 1000);
 }
 
-async function load(force, silent){
+/* `hard` additionally re-reads Meta's roster — names, statuses and BUDGETS — which is
+   otherwise cached server-side for 30-60 min. Only the Refresh button and the throttle
+   retry set it; the automatic 30-minute pull deliberately does not, because the ads
+   listing is the most expensive call this makes. */
+async function load(force, silent, hard){
   clearTimeout(staleTimer);
   BUSY = true;
   document.getElementById('bar').classList.add('on');
@@ -367,7 +371,7 @@ async function load(force, silent){
   if(!silent) veil(true);
   stampNow();
   try{
-    const r = await fetch(`/api/data?${apiQuery()}${force?'&force=1':''}`);
+    const r = await fetch(`/api/data?${apiQuery()}${force?'&force=1':''}${hard?'&hard=1':''}`);
     const j = await r.json();
     lastFetchAt = Date.now();
     if(j.error){ document.getElementById('err').innerHTML =
@@ -430,10 +434,13 @@ function renderLimits(){
         Meta is rate-limiting ${a.length>1 ? 'these ad accounts' : 'this ad account'}
         <span class="lcd" id="rlcd">—</span></div>
       <div class="lbody">${who}. Refused for ${held} min so far.
-        ${rl.retry_at_ist
+        ${rl.retry_source === 'meta'
           ? `Meta puts access back at <b>${rl.retry_at_ist} IST</b> and this page retries
              itself then — nothing to do.`
-          : `This page retries by itself as soon as Meta allows it — nothing to do.`}
+          : `Meta gives no recovery estimate on this endpoint, so there is no countdown to
+             be had — this page re-checks every ${rl.recheck_min || 5} min (next at
+             <b>${rl.retry_at_ist} IST</b>) and picks the data up the moment it clears.
+             Nothing to do.`}
         ${spendHit
           ? `<br><b>Every figure below is the last one that came through</b> — the spend
              read was refused too, so nothing is moving until access returns.`
@@ -450,13 +457,16 @@ function renderLimits(){
     const tick = () => {
       const left = Math.max(0, Math.round((rlDeadline - Date.now())/1000));
       const el = document.getElementById('rlcd');
-      if(el) el.textContent = left ? `back in ${mmss(left)}` : 'retrying…';
+      if(el) el.textContent = left
+        ? `${rl.retry_source === 'meta' ? 'back in' : 're-check in'} ${mmss(left)}`
+        : 'retrying…';
       // Fire once per deadline. Retrying early does not work and blocked attempts still
       // count against the window, so an eager loop would keep the throttle alive.
       if(left <= 0 && rlDeadline !== rlFired){
         rlFired = rlDeadline;
         clearInterval(rlTick); rlTick = null;
-        load(true, true);                 // silent: no veil over numbers already on screen
+        load(true, true, true);           // silent, but hard: re-reading the blocked
+                                          // listing is the entire point of this retry
       }
     };
     tick(); rlTick = setInterval(tick, 1000);
@@ -491,7 +501,7 @@ function kpis(){
    <div class="kpi"><div class="k">Spend</div><div class="v">${rs(sp)}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
-             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used`}</div></div>
+             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>
    <div class="kpi"><div class="k">Trials</div><div class="v">${num(tr)}</div>
      <div class="s">${EV==='t101'?'trial_started':'nc_after10min'} · Branch ${num(DATA.branch_totals[EV])} total</div></div>
    <div class="kpi"><div class="k">Attribution</div><div class="v">${cov.toFixed(1)}%</div>
@@ -501,6 +511,16 @@ function kpis(){
      <div class="s">${deg ? `with spend · ${num(c.active_ads)} ads (status unknown)`
                           : `active ad sets · ${num(c.active_ads)} ads`}</div></div>` +
    (cpOn() ? cpKpis(c, sp) : '');
+}
+
+/* Spend is re-read every refresh; the budget beside it is not — it comes off the cached
+   ad set listing. Two numbers in one line, one a minute old and one possibly half an hour
+   old, must not look equally live. Silent under two minutes, because saying "as of now"
+   on every render is noise. */
+function budgetAge(){
+  const a = DATA.budget_age_sec;
+  if(a === null || a === undefined || a < 120) return '';
+  return ` · budget as of <span class="${a > 2400 ? 'warn' : ''}">${DATA.budget_as_of}</span>`;
 }
 
 /* Classplus reads the product DB rather than the attribution SDK, so it answers a
@@ -775,7 +795,12 @@ document.getElementById('tabs').onclick = e => {
    spinner for ~12s (longer off a sleeping instance). load(false) paints the cached
    numbers immediately and, if they are past their TTL, the server refreshes behind the
    request and the page swaps in the fresh figures on its own. */
-document.getElementById('refresh').onclick = () => load(false);
+/* Refresh is a deliberate act, so it forces everything the automatic pull will not:
+   the server payload cache AND Meta's roster, which is where budgets and paused/active
+   status come from. Without the second, pressing Refresh could never move a budget
+   figure for up to 30 minutes, which is the opposite of what the button promises. It
+   blocks, and the veil makes that legible. */
+document.getElementById('refresh').onclick = () => load(true, false, true);
 document.getElementById('q').oninput = renderTable;
 document.getElementById('activeOnly').onchange = renderTable;
 document.getElementById('spentOnly').onchange = renderTable;

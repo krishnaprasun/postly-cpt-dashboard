@@ -59,37 +59,69 @@ class RateLimited(RuntimeError):
         self.account, self.regain_min, self.usage = account, regain_min, usage or {}
 
 
-# Meta reports its own budget on every response, throttled or not, in
-# x-business-use-case-usage: call_count / total_cputime / total_time as percentages of
-# the hourly allowance, estimated_time_to_regain_access in minutes, and the access tier.
-# total_time is the one that bites this app (108% when it first tripped, call_count 1%),
-# so it is worth watching on the way UP rather than only reporting the crash.
+# Which usage headers Meta returns depends on the EDGE. Verified 2026-08-21 against both
+# accounts, because assuming otherwise produced a wrong claim once already:
+#
+#   /campaigns, /insights, single-object reads -> x-business-use-case-usage
+#   /adsets, /ads                              -> x-ad-account-usage + x-app-usage ONLY
+#
+# So the ad set and ad listings — the two that actually get throttled here — never carry
+# `estimated_time_to_regain_access`, and their code-17 response reports acc_id_util_pct 0
+# and reset_time_duration 0. There is no recovery estimate to be had for those. The page
+# says so and falls back to its own re-check interval rather than inventing a time.
+#
+# Each business-use-case entry is a SEPARATE quota keyed by type (ads_management for the
+# roster, ads_insights for spend), so they are kept per type instead of collapsed into one
+# number — they throttle independently.
 _usage_lock = threading.Lock()
-_usage = {}                       # account id -> latest usage snapshot
-_throttle = {}                    # (account id, listing) -> {"since","until","regain_min"}
+_usage = {}                       # account id -> {"types": {...}, "tier", "acct_pct", ...}
+_throttle = {}                    # (account id, edge) -> {"since","until","regain_min"}
 
 
 def _note_usage(headers, acct):
+    """Fold this response's usage headers into the account picture. Returns what it
+    learned about recovery time, which is usually nothing."""
+    if not acct:
+        return {}
+    now, found, regain = time.time(), {}, 0
     raw = headers.get("x-business-use-case-usage")
-    if not raw:
+    if raw:
+        try:
+            j = json.loads(raw)
+        except ValueError:
+            j = {}
+        for entries in j.values():
+            for e in entries or []:
+                r = int(e.get("estimated_time_to_regain_access") or 0)
+                regain = max(regain, r)
+                found.setdefault("types", {})[e.get("type") or "unknown"] = {
+                    "calls_pct": int(e.get("call_count") or 0),
+                    "cpu_pct": int(e.get("total_cputime") or 0),
+                    "time_pct": int(e.get("total_time") or 0),
+                    "regain_min": r, "at": now}
+                if e.get("ads_api_access_tier"):
+                    found["tier"] = e["ads_api_access_tier"]
+    raw = headers.get("x-ad-account-usage")
+    if raw:
+        try:
+            j = json.loads(raw)
+        except ValueError:
+            j = {}
+        found["acct_pct"] = float(j.get("acc_id_util_pct") or 0)
+        found["reset_sec"] = int(j.get("reset_time_duration") or 0)
+        if j.get("ads_api_access_tier"):
+            found.setdefault("tier", j["ads_api_access_tier"])
+    if not found:
         return {}
-    try:
-        j = json.loads(raw)
-    except ValueError:
-        return {}
-    out = {}
-    for entries in j.values():
-        for e in entries or []:
-            for k in ("call_count", "total_cputime", "total_time"):
-                out[k] = max(out.get(k, 0), int(e.get(k) or 0))
-            out["regain_min"] = max(out.get("regain_min", 0),
-                                    int(e.get("estimated_time_to_regain_access") or 0))
-            if e.get("ads_api_access_tier"):
-                out["tier"] = e["ads_api_access_tier"]
-    if out:
-        with _usage_lock:
-            _usage[acct] = dict(out, at=time.time())
-    return out
+    types = found.pop("types", {})
+    with _usage_lock:
+        cur = _usage.setdefault(acct, {"types": {}})
+        # merge, never replace: an /adsets response carries no business-use-case numbers
+        # and would otherwise wipe the ones /campaigns just supplied
+        cur["types"].update(types)
+        cur.update(found)
+        cur["at"] = now
+    return {"regain_min": regain, "reset_sec": found.get("reset_sec", 0)}
 
 
 def _acct_of(path):
@@ -98,6 +130,9 @@ def _acct_of(path):
 
 
 def _mark_throttle(acct, edge, regain_min):
+    """regain_min of 0 means Meta gave no estimate — which is the normal case for the
+    listing edges. Then the deadline is OUR re-check interval, and it is labelled as
+    such so the page never presents it as a promise from Meta."""
     now = time.time()
     with _usage_lock:
         prev = _throttle.get((acct, edge))
@@ -105,7 +140,7 @@ def _mark_throttle(acct, edge, regain_min):
             # keep the original start across repeated failures, so the page can say how
             # long this has been going on rather than restarting the clock each attempt
             "since": prev["since"] if prev else now,
-            "until": now + max(regain_min, 1) * 60,
+            "until": now + (regain_min * 60 if regain_min else ROSTER_RETRY),
             "regain_min": regain_min,
         }
 
@@ -147,8 +182,8 @@ def _graph(path, params, tries=6, rl_retries=2):
                     # again just makes a throttled cold start feel broken.
                     if i < rl_retries:
                         time.sleep(5 * (i + 1)); continue
-                    regain = usage.get("regain_min", 0)
-                    _mark_throttle(acct, edge, regain or ROSTER_RETRY // 60)
+                    regain = usage.get("regain_min", 0) or usage.get("reset_sec", 0) // 60
+                    _mark_throttle(acct, edge, regain)
                     raise RateLimited(f"Meta rate limit on {edge}", account=acct,
                                       regain_min=regain, usage=usage)
                 # 1 / 2 = Meta-side transient ("Service temporarily unavailable"). Short
@@ -193,7 +228,14 @@ def meta_insights(acct, since, until):
         "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend"})
 
 
-def _part(acct, kind, fetch, ttl):
+def roster_age(acct, kind):
+    """Seconds since this listing was last read from Meta, or None if never."""
+    with _roster_lock:
+        hit = _roster_cache.get((acct, kind))
+    return (time.time() - hit["at"]) if hit else None
+
+
+def _part(acct, kind, fetch, ttl, force=False):
     """One cached piece of the roster. Returns (data, ok).
 
     Each piece stands alone deliberately. Fetching all three as a unit meant one
@@ -204,8 +246,10 @@ def _part(acct, kind, fetch, ttl):
     with _roster_lock:
         hit = _roster_cache.get(key)
         blocked_until = _roster_fail_until.get(key, 0)
-    if hit and now - hit["at"] < ttl:
+    if hit and not force and now - hit["at"] < ttl:
         return hit["data"], True
+    # `force` overrides the TTL but NEVER an active throttle window. Letting a Refresh
+    # button hammer a throttled endpoint is precisely what keeps a throttle open.
     if now < blocked_until:
         return (hit["data"], True) if hit else (None, False)
     try:
@@ -229,20 +273,25 @@ def _part(acct, kind, fetch, ttl):
         return (hit["data"], True) if hit else (None, False)
 
 
-def meta_roster(acct):
+def meta_roster(acct, force=False):
     """(campaigns, active ad sets, active ads, ok_flags) — each piece independently
-    cached and independently allowed to fail."""
+    cached and independently allowed to fail.
+
+    `force` is for an explicit Refresh only. The automatic 30-minute pull must NOT set it:
+    the ads listing is the single most expensive call the dashboard makes and its 60-minute
+    TTL exists to keep it off the hourly time budget.
+    """
     camps, ok_c = _part(acct, "campaigns", lambda: _graph(
         f"{acct}/campaigns", {"fields": "id,name,effective_status,daily_budget"},
-        rl_retries=0), ROSTER_TTL)
+        rl_retries=0), ROSTER_TTL, force)
     sets, ok_s = _part(acct, "adsets", lambda: _graph(
         f"{acct}/adsets", {"fields": "id,name,effective_status,daily_budget,campaign_id",
                            "effective_status": json.dumps(["ACTIVE"])},
-        rl_retries=0), ROSTER_TTL)
+        rl_retries=0), ROSTER_TTL, force)
     ads_, ok_a = _part(acct, "ads", lambda: _graph(
         f"{acct}/ads", {"fields": "id,name,effective_status,adset_id,campaign_id",
                         "effective_status": json.dumps(["ACTIVE"])},
-        rl_retries=0), ADS_ROSTER_TTL)
+        rl_retries=0), ADS_ROSTER_TTL, force)
     return (camps or [], sets or [], ads_ or [],
             {"campaigns": ok_c, "adsets": ok_s, "ads": ok_a})
 
@@ -428,14 +477,20 @@ def rate_limit_report(accounts):
     per = {}
     for (acct, kind), t in live.items():
         e = per.setdefault(acct, {"account": accounts.get(acct, acct), "id": acct,
-                                  "listings": [], "until": 0, "since": t["since"]})
+                                  "listings": [], "until": 0, "since": t["since"],
+                                  "regain_min": 0})
         e["listings"].append(LISTING_LABEL.get(kind, kind))
         e["until"] = max(e["until"], t["until"])
         e["since"] = min(e["since"], t["since"])
+        e["regain_min"] = max(e["regain_min"], t.get("regain_min", 0))
     out = []
     for e in per.values():
         e["listings"].sort()
         e["eta_sec"] = int(e["until"] - now)
+        # 'meta' = Meta's own estimated_time_to_regain_access. 'recheck' = our own retry
+        # interval, because the listing edges give no estimate at all. The page must not
+        # present the second as though it were the first.
+        e["eta_source"] = "meta" if e.get("regain_min") else "recheck"
         e["until_ist"] = datetime.fromtimestamp(e["until"], IST).strftime("%H:%M")
         e["since_ist"] = datetime.fromtimestamp(e["since"], IST).strftime("%H:%M")
         e["held_min"] = int((now - e["since"]) // 60)
@@ -443,10 +498,18 @@ def rate_limit_report(accounts):
     out.sort(key=lambda e: -e["eta_sec"])
     # Budget headroom, reported whether or not anything is throttled: total_time is the
     # limit that actually binds here, so seeing it climb is the warning that matters.
-    budget = [{"account": accounts.get(a, a), "id": a,
-               "time_pct": u.get("total_time", 0), "calls_pct": u.get("call_count", 0),
-               "cpu_pct": u.get("total_cputime", 0), "tier": u.get("tier", "")}
-              for a, u in usage.items() if a in accounts]
+    budget = []
+    for a, u in usage.items():
+        if a not in accounts:
+            continue
+        rows = sorted(({"quota": t, **v} for t, v in (u.get("types") or {}).items()),
+                      key=lambda r: -r["time_pct"])
+        top = rows[0] if rows else {}
+        budget.append({"account": accounts[a], "id": a, "tier": u.get("tier", ""),
+                       "quota": top.get("quota", ""), "time_pct": top.get("time_pct", 0),
+                       "calls_pct": top.get("calls_pct", 0),
+                       "cpu_pct": top.get("cpu_pct", 0),
+                       "acct_pct": u.get("acct_pct", 0), "quotas": rows})
     budget.sort(key=lambda b: -b["time_pct"])
     return {
         "active": bool(out),
@@ -454,12 +517,16 @@ def rate_limit_report(accounts):
         # absolute deadline for the page to schedule its own retry against
         "retry_in_sec": max((e["eta_sec"] for e in out), default=0),
         "retry_at_ist": max(out, key=lambda e: e["eta_sec"])["until_ist"] if out else "",
+        # 'meta' only when Meta actually supplied an estimate for one of them
+        "retry_source": ("meta" if any(e["eta_source"] == "meta" for e in out)
+                         else "recheck"),
+        "recheck_min": ROSTER_RETRY // 60,
         "budget": budget,
         "worst_time_pct": max((b["time_pct"] for b in budget), default=0),
     }
 
 
-def build(since, until):
+def build(since, until, force=False):
     started = time.time()
     degraded = []
     budgets_known = True
@@ -469,7 +536,7 @@ def build(since, until):
 
     for a in ACCOUNTS:
         insights = meta_insights(a["id"], since, until)
-        camps, live_sets, live_ads, ok = meta_roster(a["id"])
+        camps, live_sets, live_ads, ok = meta_roster(a["id"], force)
         missing = [lbl for lbl, k in (("campaigns", "campaigns"), ("ad sets", "adsets"),
                                       ("ads", "ads")) if not ok[k]]
         if missing:
@@ -635,6 +702,14 @@ def build(since, until):
     for k in CP_KEYS:
         combined[k] = sum(a[k] for a in accounts.values())
 
+    # Budgets and statuses come off the cached ad set listing, not off the insights call
+    # that runs every refresh — so they can legitimately be up to ROSTER_TTL old while
+    # spend beside them is a minute old. Report that age instead of letting the two look
+    # equally live.
+    ages = [roster_age(a["id"], "adsets") for a in ACCOUNTS]
+    ages = [x for x in ages if x is not None]
+    budget_age = int(max(ages)) if ages else None
+
     branch_totals = {k: sum(trials[k].values()) for k in EVENTS}
     # Branch trials whose ad name matches nothing in either account: organic, other
     # channels, or ads deleted out of Meta. Shown so the combined CPT is honest about
@@ -659,6 +734,9 @@ def build(since, until):
         # trials and CPT stay correct regardless; only statuses and budgets are affected.
         "degraded": degraded,
         "budgets_known": budgets_known,
+        "budget_age_sec": budget_age,
+        "budget_as_of": (datetime.fromtimestamp(time.time() - budget_age, IST)
+                         .strftime("%H:%M") if budget_age is not None else ""),
         "rate_limit": rate_limit_report({a["id"]: a["name"] for a in ACCOUNTS}),
         # Signups / trial mandates per ad from the Classplus DB, or why they are absent.
         # `unmatched` is Classplus signups whose ad name is organic or matches no live

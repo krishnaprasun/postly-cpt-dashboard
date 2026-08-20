@@ -80,11 +80,32 @@ The Meta app is on the **`development_access`** ads-API tier. Requesting **Stand
 Access** in the Meta app dashboard is the durable fix; everything below is what the
 dashboard does so a throttle is survivable meanwhile.
 
-Read the `x-business-use-case-usage` header before theorising — it names the limit:
+Read the usage headers before theorising — but know **which edge returns which**,
+verified 2026-08-21 against both accounts:
+
+| edge | headers returned |
+|---|---|
+| `/campaigns`, `/insights`, single-object reads | `x-business-use-case-usage` |
+| `/adsets`, `/ads` | `x-ad-account-usage` + `x-app-usage` **only** |
 
 ```
-call_count=1%   total_cputime=6%   total_time=108%   estimated_time_to_regain_access=10   tier=development_access
+x-business-use-case-usage: call_count=1%  total_cputime=6%  total_time=108%
+                           estimated_time_to_regain_access=10  tier=development_access
 ```
+
+Two consequences that are easy to get wrong:
+
+- **`estimated_time_to_regain_access` is not available where it matters.** It only comes on
+  `x-business-use-case-usage`, and the ad set and ad listings — the two edges that actually
+  get throttled here — do not return that header at all. A code-17 response from
+  `act_…/adsets` carries `acc_id_util_pct: 0` and `reset_time_duration: 0`, i.e. no signal
+  whatsoever. So for a listing throttle **there is no ETA**, and the page says exactly that
+  and falls back to its own 5-minute re-check rather than presenting that interval as a
+  promise from Meta.
+- **`ads_management` and `ads_insights` are separate quotas.** Both appear as
+  `x-business-use-case-usage` with different `type` values, so they must be tracked
+  per type rather than collapsed — the roster and the spend call throttle independently.
+  Recent live reading: Postly `ads_management` 51%, `ads_insights` 38%.
 
 The ceiling that bites is **total request time**, not call count. So the thing to minimise
 is *expensive listings*, not the number of requests. It is also **not per-edge**: when
@@ -109,11 +130,12 @@ still accrue against the window and hold it open.
   every refresh both feeds the limit and costs the full back-off on each build.
 - **Rate limits fail fast.** Two short retries, then give up — Meta holds these for
   minutes, longer than any request should wait, and hammering makes it worse.
-- **The retry waits exactly as long as Meta says**, not a generic back-off:
-  `estimated_time_to_regain_access` off the throttled response sets `_roster_fail_until`.
-  Asking early does not work and blocked attempts still count against the window, so an
-  eager loop keeps the throttle alive — a 60-second poller once held one open for half an
-  hour.
+- **The retry waits as long as Meta says, when Meta says anything at all.**
+  `estimated_time_to_regain_access` sets `_roster_fail_until` where it is supplied; for the
+  listing edges, which supply nothing, it falls back to `ROSTER_RETRY` (5 min) and the page
+  labels that as its own re-check. Asking early does not work and blocked attempts still
+  count against the window, so an eager loop keeps the throttle alive — a 60-second poller
+  once held one open for half an hour.
 - **The page says so, in plain words, with a deadline.** `rate_limit_report()` returns
   which accounts are throttled, which listings (`campaigns` / `ad sets` / `ads` /
   `spend`), how long it has been going on and when Meta said it ends. The banner counts
@@ -144,6 +166,25 @@ still accrue against the window and hold it open.
      numbers they cannot know rather than showing a wrong one.
 
 Only a cold cache *and* a failing insights call is a hard error.
+
+### Budget freshness
+
+Spend is re-read on every refresh. **Budgets are not** — they come off the ad set listing,
+cached for `ROSTER_TTL` (30 min), so a budget changed in Ads Manager can be up to half an
+hour behind the spend figure sitting next to it. Two things follow:
+
+- The Spend KPI **states the budget's own age** ("budget as of 01:37") once it is over two
+  minutes old, turning amber past 40. Two numbers on one line, one a minute old and one
+  possibly half an hour old, must not look equally live.
+- **Refresh forces a fresh roster read** (`?hard=1` → `build(force=True)`), so the button
+  can actually move a budget figure. It previously could not: `force` only skipped the
+  90-second payload cache, leaving the roster untouched for up to 30 minutes. The
+  automatic 30-minute pull deliberately does **not** set it — the ads listing is the
+  single most expensive call here and its 60-minute TTL is what keeps the app under the
+  hourly request-time limit.
+- `force` never overrides an **active throttle window**. A Refresh button that hammers a
+  throttled endpoint is exactly what keeps a throttle open; during one, the cached roster
+  is served and the banner says why.
 
 ## How CPT is computed
 

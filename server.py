@@ -108,8 +108,15 @@ def _build_into_cache(key):
             _refreshing.discard(key)
 
 
-def get_data(since, until, force=False):
-    """Fresh -> serve. Stale -> serve stale, refresh behind the request. Cold -> block."""
+def get_data(since, until, force=False, hard=False):
+    """Fresh -> serve. Stale -> serve stale, refresh behind the request. Cold -> block.
+
+    `force` skips this cache. `hard` additionally re-reads Meta's roster — names,
+    statuses and BUDGETS — which is otherwise cached for 30-60 minutes. Only the explicit
+    Refresh button sets it: the automatic pull must not, because the ads listing is the
+    most expensive call here and its long TTL is what keeps the app under Meta's hourly
+    request-time limit.
+    """
     key = (since, until)
     with _lock:
         hit = _cache.get(key)
@@ -137,7 +144,7 @@ def get_data(since, until, force=False):
         return out
 
     try:
-        data = P.build(since, until)
+        data = P.build(since, until, force=hard)
     except Exception as e:
         # A throttle or a blip must not blank the dashboard. If any figures were ever
         # fetched for this window, serve those and say how old they are; only a cold
@@ -186,7 +193,9 @@ def api_data():
     since, until = resolve_range(request.args.get("range", "today"),
                                  request.args.get("since"), request.args.get("until"))
     try:
-        return jsonify(get_data(since, until, force=request.args.get("force") == "1"))
+        hard = request.args.get("hard") == "1"
+        return jsonify(get_data(since, until,
+                                force=hard or request.args.get("force") == "1", hard=hard))
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)[:500]}), 500
