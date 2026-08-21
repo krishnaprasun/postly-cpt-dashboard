@@ -33,7 +33,7 @@ Credentials come from `~/.anthropic/` (see [Credentials](#credentials)).
   See [Classplus](#classplus-signups--mandates) for what a mandate counts and why it
   will not match the Branch trial figure exactly.
 - **Range** — a dropdown, defaulting to **Today**: Today, Yesterday, Last 3 days,
-  Last 7 days, Custom range. Custom reveals two date pickers seeded to the last 7 days
+  Last 7 days, Last 30 days, Custom range. Custom reveals two date pickers seeded to the last 7 days
   and applies on click, not on every keystroke — a half-typed date must not fire a pull.
   Both pickers are capped at today IST. Spans over **31 days** are refused with the
   reason: Branch is fetched in 7-day chunks, so a quarter is dozens of round trips plus
@@ -222,7 +222,13 @@ IST day boundary are the same — no timezone skew in the join.
 
 ## Classplus (signups & mandates)
 
-Redash query `19634` on `data.classplus.co`, read through its query API key.
+Redash queries on `data.classplus.co`, each read through its own query API key. Two are
+configured and the dashboard picks whichever can honestly answer the window on screen:
+
+| query | window | shape |
+|---|---|---|
+| `19695` | rolling last 30 days (`UTC_TIMESTAMP()` ± `INTERVAL n DAY`) | one row per ad for the whole block |
+| `19634` | one fixed day, literal dates in the SQL | one row per ad for that day |
 
 **Cost/mandate is a second opinion on CPT.** It is the same rupees-per-trial unit,
 built from the product database instead of the attribution SDK, and it is coloured
@@ -231,13 +237,34 @@ to within one or two per ad on the top spenders — which is the point of having
 
 Three things about this source shape the code:
 
-- **The window is written into the SQL.** The query takes no parameters; its bounds are
-  literal IST dates. `_cp_window()` reads them back out of the SQL text and the columns
-  are attached **only** when they match the window on screen — otherwise the page says
-  which day the query covers and shows nothing. Putting one day's mandates next to
-  another day's spend would be worse than a blank column. The practical consequence:
-  the query's dates have to be moved forward for "today" to keep working, or the query
-  parameterised with `{{start}}`/`{{end}}` so the dashboard can pass a range.
+- **The window is written into the SQL.** These queries take no parameters — the result
+  key is read-only (`POST /api/queries/<id>` → 403) and a `parameters` object in the
+  POST body is ignored. `_cp_window()` reads the bounds back out of the SQL text, in
+  either shape: literal dates, or `UTC_TIMESTAMP()` ± `INTERVAL n DAY` for a window that
+  rolls with today. Figures are attached **only** when the query can genuinely answer
+  the window on screen — otherwise the page says what is available and shows nothing.
+  Putting one day's mandates next to another day's spend would be worse than a blank
+  column.
+- **Per-day only if the query says so.** A query that selects a signup-date column
+  (`signup_date`, `signup_date_ist`, `date`, `day` or `dt`) becomes a per-day table and
+  can answer *any* window inside its range. Without one it is a single block and can
+  only answer its own window — which is why `19695`, as written, lights the columns up
+  on **Last 30 days** and nowhere else. Adding the date to it is two lines:
+
+  ```sql
+  SELECT
+      g.signup_date_ist AS signup_date,     -- add
+      g.ad_name,
+      ...
+  GROUP BY
+      g.signup_date_ist,                    -- add
+      g.ad_name
+  ```
+
+  `signup_date_ist` is already computed in the `signups` CTE, so nothing else changes.
+  Row count goes from ~3.2k to roughly 11k (about 400 ads are live on any given day),
+  so the payload stays small. Once that is in, `19695` answers every range the page
+  offers and `19634` can be dropped from the config.
 - **It is a signup-cohort measure.** `trial_mandates` counts trials taken by people who
   *signed up inside the window*. Branch counts trial events inside the window whoever
   they came from. Someone who signed up yesterday and started a trial today counts for
@@ -245,14 +272,19 @@ Three things about this source shape the code:
   separate columns rather than being reconciled into one.
 - **It is optional.** No key, or a query that fails, and the dashboard behaves exactly
   as it did before. Meta and Branch are what CPT rests on; a third source must never be
-  able to block them. Failures are cached the same way roster failures are.
+  able to block them. Failures are cached per query the same way roster failures are, so
+  one dead query does not take the other down with it.
 
 Freshness is negotiated with Redash rather than polled: the fetch POSTs `max_age`
 (`CP_TTL`, 600s), so Redash either returns its cached result or starts a run. A run is
-polled for at most `CP_POLL_BUDGET` (20s) — the query takes ~13s and a cold page is not
+polled for at most `CP_POLL_BUDGET` (20s) — the query takes ~15s and a cold page is not
 going to wait — and whatever happens the last result is served with its age shown. The
 numbers are then read from `results.json`, not from the POST response, because only
 `results.json` carries the SQL, and the SQL is the only place the window is recorded.
+
+Configure with `CLASSPLUS_QUERIES="19695:key,19634:key"` (or a `queries` list in
+`~/.anthropic/classplus_creds.json`). The older single-source `CLASSPLUS_QUERY_ID` /
+`CLASSPLUS_API_KEY` pair still works and is appended to the list.
 
 ## Access
 

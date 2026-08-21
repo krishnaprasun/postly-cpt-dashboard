@@ -171,11 +171,10 @@ def resolve_range(rng, since, until):
     if rng == "yesterday":
         d = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
         return d, d
-    if rng == "7d":
-        d = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=6)).strftime("%Y-%m-%d")
-        return d, today
-    if rng == "3d":
-        d = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=2)).strftime("%Y-%m-%d")
+    back = {"3d": 2, "7d": 6, "30d": 29}.get(rng)
+    if back is not None:
+        d = (datetime.strptime(today, "%Y-%m-%d")
+             - timedelta(days=back)).strftime("%Y-%m-%d")
         return d, today
     return today, today
 

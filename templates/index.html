@@ -140,8 +140,8 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
   color:#8C5C05;white-space:nowrap}
 .lbody{margin-top:7px;line-height:1.65}
 
-/* Range picker. A select rather than a button row: five options plus a custom range
-   does not fit in the header as buttons, and the chosen range must stay readable at a
+/* Range picker. A select rather than a button row: five fixed spans plus a custom range
+   do not fit in the header as buttons, and the chosen range must stay readable at a
    glance rather than being one highlighted item in a strip. */
 select.sel,input[type=date]{background:var(--white);border:1px solid var(--line);
   color:var(--ink);border-radius:9px;padding:6px 12px;font-size:12.5px;font-family:inherit;
@@ -239,6 +239,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <option value="yesterday">Yesterday</option>
       <option value="3d">Last 3 days</option>
       <option value="7d">Last 7 days</option>
+      <option value="30d">Last 30 days</option>
       <option value="custom">Custom range…</option>
     </select>
     <div id="customWrap">

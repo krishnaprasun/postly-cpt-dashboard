@@ -346,10 +346,17 @@ def branch_trials_by_ad(since, until):
 #
 # Two things about it shape the code below.
 #
-# 1. The window is BAKED INTO THE SQL as literal dates — the query takes no parameters.
-#    So the window it covers is read back out of the SQL text and the numbers are only
-#    attached when the dashboard is looking at exactly that window. Labelling another
-#    day's figures as today's would be worse than showing nothing.
+# 1. The window is BAKED INTO THE SQL — the queries take no parameters (the result key
+#    is read-only; `parameters` in the POST body is ignored). So the window is read back
+#    out of the SQL text, and figures are attached only when the query can genuinely
+#    answer the window on screen. Labelling one day's numbers as another day's would be
+#    worse than showing nothing. Two shapes exist and both are parsed:
+#      - literal dates    -> covers exactly that window
+#      - UTC_TIMESTAMP() +/- INTERVAL n DAY -> a window that rolls with today
+#    Orthogonally, a query may GROUP BY the signup date and select it. One that does
+#    becomes a per-day table and can answer any window inside its range; one that does
+#    not is a single block and can only answer its own window. Several queries may be
+#    configured; whichever can answer the requested window does.
 # 2. It is a SIGNUP-COHORT measure, not an event measure: `trial_mandates` counts trials
 #    taken by people who *signed up inside the window*. Branch trials count trial events
 #    inside the window whenever the user signed up. The two agree closely but they are
@@ -359,104 +366,179 @@ CP_POLL_BUDGET = int(os.environ.get("CP_POLL_BUDGET", "20"))
 CP_KEYS = ("cp_signups", "cp_mandates", "cp_d0a", "cp_d0c")
 
 
-def _cp_url(path):
+def _cp_url(path, key):
     return (f"https://{C.CLASSPLUS_HOST}/api/{path}"
-            f"{'&' if '?' in path else '?'}api_key={urllib.parse.quote(C.CLASSPLUS_KEY)}")
+            f"{'&' if '?' in path else '?'}api_key={urllib.parse.quote(key)}")
 
 
-def _cp_call(path, body=None, timeout=120):
+def _cp_call(path, key, body=None, timeout=120):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(
-        _cp_url(path), data=data, method="POST" if data else "GET",
+        _cp_url(path, key), data=data, method="POST" if data else "GET",
         headers={"Content-Type": "application/json"} if data else {})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.load(r)
 
 
-def _cp_window(sql):
-    """The two literal IST bounds out of the SQL -> inclusive (since, until) dates."""
-    m = re.findall(r"CONVERT_TZ\('(\d{4}-\d{2}-\d{2}) [\d:]+', '\+05:30'", sql or "")
-    if len(m) < 2:
+def _cp_bound(seg, today):
+    """One IST bound out of its slice of the `bounds` CTE, literal or rolling."""
+    lit = re.search(r"'(\d{4}-\d{2}-\d{2})[ ']", seg)
+    if lit:
+        return datetime.strptime(lit.group(1), "%Y-%m-%d").date()
+    if "UTC_TIMESTAMP" not in seg.upper():
         return None
-    start = datetime.strptime(m[0], "%Y-%m-%d").date()
-    end = datetime.strptime(m[1], "%Y-%m-%d").date() - timedelta(days=1)  # end is exclusive
+    days = sum(int(f"{sign}1") * int(n)
+               for sign, n in re.findall(r"([-+])\s*INTERVAL\s+(\d+)\s+DAY", seg, re.I))
+    return today + timedelta(days=days)
+
+
+def _cp_window(sql, today=None):
+    """The query's own IST bounds -> inclusive (since, until) dates, or None.
+
+    Handles both shapes the Classplus queries use: literal dates written into the SQL,
+    and a rolling window expressed as UTC_TIMESTAMP() +/- INTERVAL n DAY. The bounds
+    are read positionally from the `bounds` CTE — the text up to `AS start_utc` gives
+    the start, the text between the two aliases gives the end.
+    """
+    sql = sql or ""
+    a, b = sql.find("AS start_utc"), sql.find("AS end_utc")
+    if a < 0 or b < a:
+        return None
+    today = today or datetime.strptime(today_ist(), "%Y-%m-%d").date()
+    start, end = _cp_bound(sql[:a], today), _cp_bound(sql[a:b], today)
+    if not start or not end:
+        return None
+    end -= timedelta(days=1)                       # the SQL end bound is exclusive
     if end < start:
         return None
     return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
 
-def _cp_parse(qr):
+# Any of these, if the query selects one, turns the result from a single block into a
+# per-day table — which is what lets one query answer every window the page offers.
+CP_DATE_COLS = ("signup_date", "signup_date_ist", "date", "day", "dt")
+
+
+def _cp_blank():
+    return {k: 0 for k in CP_KEYS}
+
+
+def _cp_parse(qr, qid=""):
     cols = {c["name"] for c in qr["data"]["columns"]}
     need = {"ad_name", "signups", "trial_mandates"}
     if not need <= cols:
-        raise RuntimeError(f"Classplus query is missing {sorted(need - cols)}")
+        raise RuntimeError(f"Classplus query {qid} is missing {sorted(need - cols)}")
     win = _cp_window(qr.get("query"))
     if not win:
-        raise RuntimeError("Classplus query has no readable date bounds")
-    by_ad, organic = {}, {"cp_signups": 0, "cp_mandates": 0, "cp_d0a": 0, "cp_d0c": 0}
+        raise RuntimeError(f"Classplus query {qid} has no readable date bounds")
+    datecol = next((c for c in CP_DATE_COLS if c in cols), None)
+
+    by_day = {}
     for r in qr["data"]["rows"]:
         rec = {"cp_signups": int(r.get("signups") or 0),
                "cp_mandates": int(r.get("trial_mandates") or 0),
                "cp_d0a": int(r.get("d0_active") or 0),
                "cp_d0c": int(r.get("d0_cancelled") or 0)}
-        name = r.get("ad_name")
-        if not name or name == "Organic / Unknown":
-            for k in CP_KEYS:
-                organic[k] += rec[k]
-            continue
-        prev = by_ad.setdefault(name, {k: 0 for k in CP_KEYS})
+        day = str(r.get(datecol) or "")[:10] if datecol else ""
+        name = r.get("ad_name") or "Organic / Unknown"
+        slot = by_day.setdefault(day, {}).setdefault(name, _cp_blank())
         for k in CP_KEYS:
-            prev[k] += rec[k]
+            slot[k] += rec[k]
+
     ts = qr.get("retrieved_at", "")
     try:
         at = datetime.strptime(ts[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
         age = int((datetime.now(timezone.utc) - at).total_seconds() // 60)
     except ValueError:
         at, age = None, None
-    return {"window": win, "by_ad": by_ad, "organic": organic,
+    return {"qid": qid, "window": win, "daily": bool(datecol), "by_day": by_day,
             "retrieved_at": at.astimezone(IST).strftime("%H:%M IST") if at else "",
-            "age_min": age,
-            "totals": {k: sum(v[k] for v in by_ad.values()) + organic[k] for k in CP_KEYS}}
+            "age_min": age}
 
 
-def classplus_fetch():
-    """Latest result, refreshing the query if the cached one is older than CP_TTL.
+def _cp_slice(src, since, until):
+    """The source's rows for [since, until] folded into the shape build() consumes."""
+    days = [d for d in src["by_day"]
+            if not src["daily"] or since <= d <= until]
+    by_ad, organic = {}, _cp_blank()
+    for d in days:
+        for name, rec in src["by_day"][d].items():
+            tgt = organic if name == "Organic / Unknown" else \
+                by_ad.setdefault(name, _cp_blank())
+            for k in CP_KEYS:
+                tgt[k] += rec[k]
+    return {"window": [since, until], "by_ad": by_ad, "organic": organic,
+            "retrieved_at": src["retrieved_at"], "age_min": src["age_min"],
+            "totals": {k: sum(v[k] for v in by_ad.values()) + organic[k]
+                       for k in CP_KEYS}}
+
+
+def classplus_fetch(qid, key):
+    """Latest result for one query, refreshed if the cached one is older than CP_TTL.
 
     Redash answers the POST either with a result (cache was fresh enough) or with a job.
-    A job is polled, but only within a budget: the query takes ~13s and the dashboard is
+    A job is polled, but only within a budget: the query takes ~15s and the dashboard is
     not going to sit on a cold page waiting for it. If the budget runs out the last
     result is served instead — still real data, just a few minutes old, and the job it
     kicked off means the next refresh gets the new figures. Its age is reported so the
     page can say how old it is rather than implying it is live.
     """
-    qid = C.CLASSPLUS_QUERY_ID
     # POST decides freshness; it answers with a result if the cache is young enough,
     # otherwise with a job. Its payload is trimmed and carries no SQL, and the SQL is
     # the only place the covered window is written down — so the numbers are always
     # read back from results.json, which returns the full record.
-    j = _cp_call(f"queries/{qid}/results", {"max_age": CP_TTL}, timeout=60)
+    j = _cp_call(f"queries/{qid}/results", key, {"max_age": CP_TTL}, timeout=60)
     job = (j.get("job") or {}).get("id") if "query_result" not in j else None
     deadline = time.time() + CP_POLL_BUDGET
     while job and time.time() < deadline:
         time.sleep(2)
         # 1 pending, 2 started, 3 success, 4 failure, 5 cancelled
-        if (_cp_call(f"queries/{qid}/jobs/{job}").get("job") or {}).get("status") in (3, 4, 5):
+        st = (_cp_call(f"queries/{qid}/jobs/{job}", key).get("job") or {}).get("status")
+        if st in (3, 4, 5):
             break
-    return _cp_parse(_cp_call(f"queries/{qid}/results.json", timeout=60)["query_result"])
+    qr = _cp_call(f"queries/{qid}/results.json", key, timeout=60)["query_result"]
+    return _cp_parse(qr, qid)
+
+
+def _cp_covers(src, since, until):
+    """Can this source answer exactly this window?
+
+    A per-day source can, for any window inside its range. A whole-block source can
+    only answer its own window: labelling one day's figures as another day's would be
+    worse than showing nothing.
+    """
+    lo, hi = src["window"]
+    if src["daily"]:
+        return lo <= since and until <= hi
+    return (lo, hi) == (since, until)
 
 
 def classplus(since, until):
     """(data, note) — data is None whenever it cannot be trusted for THIS window."""
     if not C.CLASSPLUS_ON:
         return None, None
-    d, ok = _part("classplus", "query", classplus_fetch, CP_TTL)
-    if not ok or not d:
+    seen, dead = [], 0
+    for qid, key in C.CLASSPLUS_QUERIES:
+        src, ok = _part("classplus", f"q{qid}", lambda q=qid, k=key: classplus_fetch(q, k),
+                        CP_TTL)
+        if not ok or not src:
+            dead += 1
+            continue
+        if _cp_covers(src, since, until):
+            return _cp_slice(src, since, until), None
+        seen.append(src)
+    if not seen:
         return None, "Classplus is not responding — signup and mandate columns are hidden."
-    if tuple(d["window"]) != (since, until):
-        w = d["window"][0] if d["window"][0] == d["window"][1] else " → ".join(d["window"])
-        return None, (f"Classplus covers {w}, not this window — its query has the dates "
-                      f"written into the SQL, so signups and mandates are hidden here.")
-    return d, None
+    have = ", ".join(sorted({
+        s["window"][0] if s["window"][0] == s["window"][1] else " → ".join(s["window"])
+        for s in seen}))
+    if any(s["daily"] for s in seen):
+        return None, (f"Classplus only holds {have} — this window falls outside it, so "
+                      f"signups and mandates are hidden here.")
+    return None, (f"Classplus covers {have} as a single total, not day by day — so "
+                  f"signups and mandates are hidden for this window. Adding the signup "
+                  f"date to the query would let it answer any day in that range.")
+
 
 
 # ---------------------------------------------------------------- build ----
