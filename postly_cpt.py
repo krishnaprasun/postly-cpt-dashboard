@@ -529,15 +529,19 @@ def classplus(since, until):
         seen.append(src)
     if not seen:
         return None, "Classplus is not responding — signup and mandate columns are hidden."
-    have = ", ".join(sorted({
-        s["window"][0] if s["window"][0] == s["window"][1] else " → ".join(s["window"])
-        for s in seen}))
-    if any(s["daily"] for s in seen):
-        return None, (f"Classplus only holds {have} — this window falls outside it, so "
-                      f"signups and mandates are hidden here.")
-    return None, (f"Classplus covers {have} as a single total, not day by day — so "
-                  f"signups and mandates are hidden for this window. Adding the signup "
-                  f"date to the query would let it answer any day in that range.")
+    # Say which query holds what, rather than merging every window into one phrase:
+    # the answer to "why is today blank" is different for each of them.
+    bits = []
+    for s in seen:
+        lo, hi = s["window"]
+        span = lo if lo == hi else f"{lo} → {hi}"
+        bits.append(f"query {s['qid']} covers {span}"
+                    + ("" if s["daily"] else " as a single total, not day by day"))
+    fix = ("" if any(s["daily"] for s in seen) else
+           " Selecting a signup-date column in the 30-day query would let it answer"
+           " any day in its range.")
+    return None, ("Classplus has no figures for this window — "
+                  + "; ".join(bits) + f".{fix}")
 
 
 
