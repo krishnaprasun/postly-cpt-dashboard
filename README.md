@@ -119,8 +119,8 @@ cut off. And do not poll a throttled endpoint waiting for it to clear: blocked a
 still accrue against the window and hold it open.
 
 - **Two Meta calls per refresh, not eleven.** The roster (campaigns, ad sets, ads —
-  names, statuses, budgets) is cached for 30 minutes (`ROSTER_TTL`; the ads listing, the
-  priciest and least urgent, gets 60 via `ADS_ROSTER_TTL`), because it changes on the
+  names, statuses, budgets) is cached for 25 minutes (`ROSTER_TTL`; the ads listing, the
+  priciest and least urgent, gets 55 via `ADS_ROSTER_TTL`), because it changes on the
   timescale of ad-ops decisions, not seconds. Only the ad-level insights call runs every
   refresh. Builds went ~12s to ~5.5s.
 - **Each roster listing fails independently.** Fetching the three as a unit meant one
@@ -174,8 +174,15 @@ Only a cold cache *and* a failing insights call is a hard error.
 ### Budget freshness
 
 Spend is re-read on every refresh. **Budgets are not** — they come off the ad set listing,
-cached for `ROSTER_TTL` (30 min), so a budget changed in Ads Manager can be up to half an
-hour behind the spend figure sitting next to it. Two things follow:
+cached for `ROSTER_TTL` (25 min), so a budget changed in Ads Manager can be up to half an
+hour behind the spend figure sitting next to it. Three things follow:
+
+- **The TTLs must not equal the refresh interval.** `_part()` stamps a listing's age when
+  its fetch *returns*, so a 30-minute TTL read by a 30-minute tick is always a few seconds
+  short of expiry, is served from cache, and the refresh does nothing — the listing then
+  refreshes every *other* tick. That is why budgets appeared frozen for up to an hour at a
+  time. `ROSTER_TTL` is 1500s and `ADS_ROSTER_TTL` 3300s so each expires with room to
+  spare, giving the intended 30- and 60-minute cadences.
 
 - The Spend KPI **states the budget's own age** ("budget as of 01:37") once it is over two
   minutes old, turning amber past 40. Two numbers on one line, one a minute old and one
@@ -183,9 +190,9 @@ hour behind the spend figure sitting next to it. Two things follow:
 - **Refresh forces a fresh roster read** (`?hard=1` → `build(force=True)`), so the button
   can actually move a budget figure. It previously could not: `force` only skipped the
   90-second payload cache, leaving the roster untouched for up to 30 minutes. The
-  automatic 30-minute pull deliberately does **not** set it — the ads listing is the
-  single most expensive call here and its 60-minute TTL is what keeps the app under the
-  hourly request-time limit.
+  automatic 30-minute pull deliberately does **not** set it: every open tab would then
+  force its own roster read, multiplying the one call the roster cache exists to avoid.
+  It relies on the TTLs above expiring on their own, which they now do.
 - `force` never overrides an **active throttle window**. A Refresh button that hammers a
   throttled endpoint is exactly what keeps a throttle open; during one, the cached roster
   is served and the banner says why.

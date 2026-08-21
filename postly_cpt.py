@@ -210,8 +210,15 @@ def _graph(path, params, tries=6, rl_retries=2):
 # read 108% time / 1% calls when this first tripped. So the cost to minimise is expensive
 # LISTINGS, not the number of requests. Listing every active ad is the priciest thing the
 # dashboard does and the least urgent, hence its own much longer TTL.
-ROSTER_TTL = int(os.environ.get("ROSTER_TTL", "1800"))
-ADS_ROSTER_TTL = int(os.environ.get("ADS_ROSTER_TTL", "3600"))
+# These MUST stay clear of the page's 30-minute auto-refresh rather than matching it.
+# A TTL equal to the refresh interval aliases against it: the roster's age is stamped
+# when its fetch RETURNS, so when the next tick asks, the entry is a few seconds short
+# of expiry, is served from cache, and the refresh does nothing. The listing then only
+# actually refreshes every OTHER tick — budgets moved on Meta took up to an hour to
+# appear rather than the half hour the cadence promises. The slack absorbs the fetch
+# itself, build time, and the cold-start delay off a sleeping instance.
+ROSTER_TTL = int(os.environ.get("ROSTER_TTL", "1500"))        # < 30 min refresh tick
+ADS_ROSTER_TTL = int(os.environ.get("ADS_ROSTER_TTL", "3300"))  # < 2 ticks
 # After a roster fetch fails, stop asking for a while. Retrying a throttled endpoint on
 # every refresh both feeds the rate limit that caused it and costs the caller the full
 # back-off sleep on each build (~15s), so a failure is cached almost as deliberately as

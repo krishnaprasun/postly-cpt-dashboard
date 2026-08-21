@@ -802,10 +802,6 @@ document.getElementById('tabs').onclick = e => {
   e.target.classList.add('on'); TAB = e.target.dataset.t;
   SORT = {key:'spend', dir:-1}; renderTable();
 };
-/* Refresh is load(false), not load(true): a blocking pull makes every click stare at a
-   spinner for ~12s (longer off a sleeping instance). load(false) paints the cached
-   numbers immediately and, if they are past their TTL, the server refreshes behind the
-   request and the page swaps in the fresh figures on its own. */
 /* Refresh is a deliberate act, so it forces everything the automatic pull will not:
    the server payload cache AND Meta's roster, which is where budgets and paused/active
    status come from. Without the second, pressing Refresh could never move a budget
@@ -825,6 +821,10 @@ let keepalive = null;
 function setAuto(on){
   clearInterval(timer); clearInterval(keepalive); timer = keepalive = null;
   if(!on) return;
+  /* force, not hard: this tick bypasses the 90s payload cache and lets each roster
+     listing expire on its own TTL, which is set below this interval so it always has.
+     Forcing the roster here instead would multiply Meta listing calls by the number of
+     open tabs — the one cost the roster cache exists to prevent. */
   timer = setInterval(()=>load(true, true), REFRESH_MS);
   keepalive = setInterval(()=>fetch('/healthz').catch(()=>{}), KEEPALIVE_MS);
 }
