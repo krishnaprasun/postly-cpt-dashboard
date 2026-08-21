@@ -94,7 +94,7 @@ def _classplus():
     day inside its range; one that does not can only serve the exact window written
     into its SQL. Listing both lets whichever can answer the requested window answer it.
 
-      CLASSPLUS_QUERIES  "19695:key,19634:key"       (preferred)
+      CLASSPLUS_QUERIES  "19695:key" — or "id:key,id:key" for several  (preferred)
       CLASSPLUS_QUERY_ID / CLASSPLUS_API_KEY          (single source, still honoured)
       ~/.anthropic/classplus_creds.json  {"queries": [{"id": ..., "key": ...}]}
                                          or the older {"query_id": ..., "api_key": ...}
