@@ -15,11 +15,22 @@ ad-name join, the degradation rules — and differ only in the `BRANDS` table in
 all three so CPT is comparable between them. The no-cancel-after-10-minutes variant is
 fetched and shown beside it but never drives CPT.
 
-| brand | ad accounts | Branch events (headline / second) | CPT target | Classplus |
-|---|---|---|---|---|
-| **Postly** | `Postly`, `Postly Install` | `postly_trial_started_backend` / `postly_trial_nc_after10min_backend` | ₹150 | yes |
-| **Speakeasy** | `SpeakEasy`, `SpeakEasy Install` | `speakeasy_trial_started` / `SE_trial_nc_after_10mins` | none | no |
-| **Funda** | `Funda`, `Funda Earning App`, `Funda 3` | `trial_started_backend` / `trial_nc_after10min_backend` | none | no |
+Each brand carries its own logo and accent colour, set in the same `BRANDS` entry
+(`logo`, `theme`). Switching brand swaps the header logo, the loading card, the favicon,
+the page title and the accent in one place (`applyBrand()`), so the page can never wear
+one brand's colour under another's name.
+
+**The accent is chrome only.** `--accent` / `--accent-dk` / `--accent-lt` drive the
+active tab, hovers, focus rings, the hero wash and stripe, and the progress bars.
+`--green` / `--gold` / `--red` are the *semantic* good/warn/bad colours and are never
+themed: a good CPT stays green on a gold-themed Speakeasy and a violet-themed Funda,
+because the one colour anyone acts on has to mean one thing everywhere.
+
+| brand | accent | ad accounts | Branch events (headline / second) | CPT target | Classplus |
+|---|---|---|---|---|---|
+| **Postly** | green `#20A75D` | `Postly`, `Postly Install` | `postly_trial_started_backend` / `postly_trial_nc_after10min_backend` | ₹150 | yes |
+| **Speakeasy** | gold `#F5B301` | `SpeakEasy`, `SpeakEasy Install` | `speakeasy_trial_started` / `SE_trial_nc_after_10mins` | none | no |
+| **Funda** | violet `#6A4BD8` | `Funda`, `Funda Earning App`, `Funda 3` | `trial_started_backend` / `trial_nc_after10min_backend` | none | no |
 
 Two states are deliberate rather than unfinished:
 
@@ -377,6 +388,7 @@ Free-plan facts worth knowing:
 | `server.py` | Flask app: `/`, `/api/data`, `/healthz`, `/robots.txt`, cache |
 | `templates/index.html` | the whole UI, no build step, no dependencies |
 | `config.py` | the `BRANDS` table (accounts, events, targets) + credential resolution |
+| `static/brand/` | one logo per brand — swap a file here to change a logo |
 | `Dockerfile`, `render.yaml` | deploy |
 
 ## Credentials

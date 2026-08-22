@@ -185,6 +185,11 @@ BRANDS = {
                        "t10m": "postly_trial_nc_after10min_backend"},
         "cpt_target": 150,
         "classplus": True,
+        "logo": "brand/postly.svg",
+        # Chrome only — active tab, hover, focus ring, hero wash, spinner. The
+        # good/warn/bad colours are NEVER themed: a "good" CPT has to stay green on
+        # every brand or the one colour anyone acts on stops meaning one thing.
+        "theme": {"accent": "#20A75D", "dark": "#127A42", "light": "#EAF7F0"},
     },
     "speakeasy": {
         "label": "Speakeasy",
@@ -198,6 +203,10 @@ BRANDS = {
         # No agreed target yet, so CPT is shown uncoloured rather than judged.
         "cpt_target": None,
         "classplus": False,
+        "logo": "brand/speakeasy.svg",
+        # Their black-on-gold identity. `dark` is a deep bronze rather than the logo's
+        # gold so it never reads as the amber "warn" colour in body text.
+        "theme": {"accent": "#F5B301", "dark": "#6E4A00", "light": "#FFF6DF"},
     },
     "funda": {
         "label": "Funda",
@@ -214,6 +223,10 @@ BRANDS = {
                        "t10m": "trial_nc_after10min_backend"},
         "cpt_target": None,
         "classplus": False,
+        "logo": "brand/funda.png",
+        # The violet end of their play-button gradient; the orange end is too close to
+        # the warn amber to use as chrome.
+        "theme": {"accent": "#6A4BD8", "dark": "#4A32A6", "light": "#F1EDFD"},
     },
 }
 DEFAULT_BRAND = "postly"

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Speakeasy">
+  <defs>
+    <linearGradient id="seG" gradientUnits="userSpaceOnUse" x1="40" y1="20" x2="480" y2="500">
+      <stop offset="0" stop-color="#ffe986"/>
+      <stop offset="0.5" stop-color="#f8c22e"/>
+      <stop offset="1" stop-color="#efa200"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#seG)"/>
+  <!-- soft raised shadow under the disc -->
+  <circle cx="262" cy="260" r="184" fill="#d18f00" opacity="0.55"/>
+  <!-- black disc -->
+  <circle cx="256" cy="252" r="182" fill="#0b0b0b"/>
+  <!-- eye -->
+  <circle cx="246" cy="150" r="25" fill="url(#seG)"/>
+  <!-- top lightning wedge: thick at right rim, tapering in toward center -->
+  <polygon points="436,182 436,226 244,258 244,244" fill="url(#seG)"/>
+  <!-- bottom lightning wedge: thick at left rim, tapering down toward center -->
+  <polygon points="74,266 74,310 312,342 312,330" fill="url(#seG)"/>
+</svg>

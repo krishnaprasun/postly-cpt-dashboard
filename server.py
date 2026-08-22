@@ -197,9 +197,13 @@ def index():
         "index.html",
         brands=[{"key": k, "label": v["label"]} for k, v in C.BRANDS.items()],
         default_brand=brand,
+        brand_logo=C.BRANDS[brand]["logo"],
+        brand_themes=[dict(t, key=k) for k, t in
+                      ((k, v["theme"]) for k, v in C.BRANDS.items())],
         brand_meta={k: {"label": v["label"], "accounts": len(v["accounts"]),
                         "branch": bool(C.BRAND_HAS_BRANCH(k)),
-                        "classplus": bool(v["classplus"])}
+                        "classplus": bool(v["classplus"]),
+                        "logo": v["logo"]}
                     for k, v in C.BRANDS.items()})
 
 
