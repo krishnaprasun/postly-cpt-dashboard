@@ -15,7 +15,7 @@ ad-name join, the degradation rules — and differ only in the `BRANDS` table in
 |---|---|---|---|---|
 | **Postly** | `Postly`, `Postly Install` | `postly_trial_started_backend` / `postly_trial_nc_after10min_backend` | ₹150 | yes |
 | **Speakeasy** | `SpeakEasy`, `SpeakEasy Install` | `speakeasy_trial_started` / `SE_trial_nc_after_10mins` | none | no |
-| **Funda** | `Funda`, `Funda Earning App`, `Funda 3` | *(no Branch app configured)* | none | no |
+| **Funda** | `Funda`, `Funda Earning App`, `Funda 3` | `trial_started_backend` / `trial_nc_after10min_backend` | none | no |
 
 Two states are deliberate rather than unfinished:
 
@@ -25,7 +25,18 @@ Two states are deliberate rather than unfinished:
   with zeros — a zero is a claim that nothing happened, which is not what a missing key
   means. The brand still gets its full Meta side: spend, budgets, statuses, at every
   level. Supplying the key and naming two events in `BRANDS` is the whole change needed
-  to light the columns up.
+  to light the columns up; all three brands are wired as of 2026-08-22, but the state is
+  kept because it is what any fourth brand starts in.
+
+Ad-name match rates, measured 2026-08-21 — the share of each brand's *attributed* Branch
+trials whose ad name exists in Meta. Low is not a bug, it is how much of the funnel that
+brand runs outside these ad accounts, and the Attribution KPI states it on every page:
+
+| brand | attributed trials matched to a Meta ad |
+|---|---|
+| Funda | 99.7% |
+| Postly | ~95% |
+| Speakeasy | 62% |
 
 The brand is part of the cache key, not a filter applied afterwards: each brand is its
 own set of Meta and Branch calls, so one brand's throttle can never evict or stale
@@ -372,7 +383,7 @@ Nothing secret is committed. `config.py` reads, first hit wins:
    - `META_TOKEN` — one token, all seven ad accounts across the three brands
    - `BRANCH_KEY` / `BRANCH_SECRET` — Postly (unprefixed for backwards compatibility)
    - `SPEAKEASY_BRANCH_KEY` / `SPEAKEASY_BRANCH_SECRET`
-   - `FUNDA_BRANCH_KEY` / `FUNDA_BRANCH_SECRET` — not yet supplied
+   - `FUNDA_BRANCH_KEY` / `FUNDA_BRANCH_SECRET`
    - `CLASSPLUS_QUERIES` / `CLASSPLUS_HOST`
 2. `~/.anthropic/meta_token`, `~/.anthropic/branch_creds.json`,
    `~/.anthropic/classplus_creds.json` — local runs. The Branch file is keyed by brand:

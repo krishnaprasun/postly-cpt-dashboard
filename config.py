@@ -199,12 +199,14 @@ BRANDS = {
         "accounts": [{"id": "act_1415034359774559", "name": "Funda"},
                      {"id": "act_1662727118397158", "name": "Funda Earning App"},
                      {"id": "act_826851770432701", "name": "Funda 3"}],
-        # Funda's Branch app key is not in hand yet. An empty map is a supported state:
-        # the Meta side works in full and the trial/CPT columns stay hidden until the
-        # events are filled in, at which point nothing else has to change.
-        "events": {},
-        "labels": {},
-        "event_note": {},
+        # Funda's Branch events are named exactly like Postly's minus the prefix.
+        # 99.7% of its attributed trials matched a live Meta ad name (2026-08-21),
+        # the cleanest join of the three brands.
+        "events": {"t101": "trial_started_backend",
+                   "t10m": "trial_nc_after10min_backend"},
+        "labels": {"t101": "Trials", "t10m": "NC 10m"},
+        "event_note": {"t101": "trial_started_backend",
+                       "t10m": "trial_nc_after10min_backend"},
         "cpt_target": None,
         "classplus": False,
     },

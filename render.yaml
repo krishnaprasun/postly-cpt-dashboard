@@ -24,7 +24,7 @@ services:
         sync: false
       - key: SPEAKEASY_BRANCH_SECRET
         sync: false
-      - key: FUNDA_BRANCH_KEY          # not supplied yet — Funda is Meta-only until it is
+      - key: FUNDA_BRANCH_KEY
         sync: false
       - key: FUNDA_BRANCH_SECRET
         sync: false
