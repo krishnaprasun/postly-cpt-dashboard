@@ -120,6 +120,48 @@ Credentials come from `~/.anthropic/` (see [Credentials](#credentials)).
   Server-side cache is 90s (`CACHE_TTL`); past that it is served stale and refreshed
   behind the request rather than blocking it.
 
+## Export
+
+`Export` in the header downloads one CSV per level — **ad accounts, campaigns, ad sets,
+ads** — or all four at once. It exists to be acted on, not read, so the file differs from
+the table in three ways:
+
+- **Meta ids are included** at every level, plus the parent ids (an ads export carries
+  `adset_id`, `campaign_id` and `ad_account_id`). A name is enough to recognise a row on
+  screen; it is not enough to act on one, because two ad sets can share a name — the same
+  ambiguity that makes Branch split their trials by spend share.
+- **Raw figures.** No `₹`, no thousands separators, blank where the table prints an em
+  dash. `cpt`, `cost_per_signup` and `cost_per_mandate` are numbers a spreadsheet can
+  average; `d0_active_pct` and `d0_cancel_pct` are plain numbers, not `%` strings.
+- **Ad and ad set names go out verbatim.** They are the join key back to Meta and to the
+  approval sheet, so nothing is stripped or escaped away — not even a leading `=`.
+
+Two details that are easy to get wrong and are handled here:
+
+- Meta object ids are 17 digits, and a spreadsheet reads a bare 17-digit cell as a number
+  and silently drops the last two. Pure-digit id columns are therefore written as
+  `="120212345678901234"`, the one form Excel and Sheets both keep as text. Account ids
+  already start with `act_` and go out plain. A reader that does not want the wrapper
+  strips `^="(.*)"$`.
+- The file starts with a UTF-8 BOM, because Excel reads a UTF-8 CSV as latin-1 without one
+  and plenty of these ad names are not ASCII.
+
+The columns follow the same two absence rules the tables do: a brand with no Branch app
+gets no `trials` and no `cpt` column *at all* rather than a column of zeros, and the
+Classplus columns appear only when that data exists. Unlike the table, the Classplus
+columns ignore the `signups & mandates` checkbox — that switch is there to declutter
+something being read, and a file being analysed later has no clutter to save.
+
+`apply the filters below` (on by default) cuts the file by whatever `active only`,
+`spend > 0 only` and the name search are set to, at every level — the menu spells out
+which ones are in effect, because Export is reachable from the Combined tab where the
+filter bar is not even on screen. Each item shows the row count it will write and is
+disabled at zero. Filenames are `{brand}_{level}_{window}_{HHMM}IST.csv`.
+
+Rows that sit outside the tables sit outside the export too: Branch trials matching no
+live ad, and Classplus signups with no matching ad name. Summing `trials` gives the
+attributed total, not `branch_totals`.
+
 ## Look
 
 Palette is the Postly brand kit, taken from `postly-insta-daily/brandkit.py` rather than

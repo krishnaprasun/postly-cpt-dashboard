@@ -61,6 +61,27 @@ h1 span{color:var(--faint);font-weight:400;margin-left:5px;font-size:13px}
   box-shadow:var(--shadow)}
 .btn:hover{border-color:var(--accent);color:var(--accent-dk);background:var(--accent-lt)}
 .btn[disabled]{opacity:.45;cursor:default}
+
+/* Export menu. A popover rather than another <select>, because every item needs a row
+   count beside it: how many rows are about to land in the file is the one thing worth
+   knowing before clicking, and a <select> has nowhere to put it. */
+.expwrap{position:relative}
+.expmenu{position:absolute;right:0;top:calc(100% + 7px);z-index:30;display:none;
+  width:282px;background:var(--white);border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 12px 34px rgba(26,28,46,.13);padding:7px}
+.expwrap.on .expmenu{display:block}
+.expmenu .exph{font-size:10px;text-transform:uppercase;letter-spacing:.8px;
+  color:var(--faint);font-weight:700;padding:6px 9px 5px}
+.expmenu button{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  width:100%;background:none;border:0;border-radius:8px;padding:7px 9px;cursor:pointer;
+  font:inherit;font-size:12.5px;font-weight:550;color:var(--ink);text-align:left}
+.expmenu button:hover:not([disabled]){background:var(--accent-lt);color:var(--accent-dk)}
+.expmenu button[disabled]{opacity:.38;cursor:default}
+.expmenu button i{font-style:normal;font-size:11px;color:var(--faint);
+  font-variant-numeric:tabular-nums;font-weight:500}
+.expsep{height:1px;background:var(--line2);margin:5px 9px}
+.expmenu label.chk{padding:6px 9px;font-size:12px}
+.expnote{font-size:11px;color:var(--faint);line-height:1.55;padding:3px 9px 6px}
 .meta{font-size:11.5px;color:var(--faint)}
 .meta b{color:var(--ink);font-weight:600}
 
@@ -273,6 +294,21 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     </div>
     <div class="spacer"></div>
     <div class="meta" id="stamp"></div>
+    <div class="expwrap" id="expwrap">
+      <button class="btn" id="expBtn" disabled>Export ▾</button>
+      <div class="expmenu" id="expMenu">
+        <div class="exph">Download CSV</div>
+        <button data-x="accounts">Ad accounts <i id="x-accounts"></i></button>
+        <button data-x="campaigns">Campaigns <i id="x-campaigns"></i></button>
+        <button data-x="adsets">Ad sets <i id="x-adsets"></i></button>
+        <button data-x="ads">Ads <i id="x-ads"></i></button>
+        <div class="expsep"></div>
+        <button data-x="all">All four levels <i>4 files</i></button>
+        <label class="chk"><input type="checkbox" id="expFilters" checked>
+          apply the filters below</label>
+        <div class="expnote" id="expNote"></div>
+      </div>
+    </div>
     <button class="btn" id="refresh">Refresh</button>
   </div>
 </header>
@@ -665,22 +701,32 @@ function colsFor(tab){
   return cpOn() ? base.concat(CP_COLS) : base;
 }
 
-function rows(){
-  if(TAB==='combined') return [];
-  let r = DATA[TAB].map(o => Object.assign({}, o, {
+/* Rows for one level, with the derived trials/CPT/cost-per columns the table shows.
+   The level is a parameter rather than read from TAB because the export builds all four
+   from the same code — an exported ad set row and the one on screen must never be able
+   to disagree. The current sort is applied only to the level actually on screen; the
+   others keep the payload's spend-descending order. */
+function rows(tab, filtered){
+  tab = tab || TAB;
+  filtered = filtered !== false;
+  if(tab==='combined') return [];
+  let r = DATA[tab].map(o => Object.assign({}, o, {
       trials: o[EV], cpt: cpt(o.spend, o[EV]),
       cps: cpt(o.spend, o.cp_signups), cpm: cpt(o.spend, o.cp_mandates),
       d0a: o.cp_mandates > 0 ? 100*o.cp_d0a/o.cp_mandates : null,
       d0c: o.cp_mandates > 0 ? 100*o.cp_d0c/o.cp_mandates : null}));
-  const q = document.getElementById('q').value.trim().toLowerCase();
-  if(q) r = r.filter(o => (o.name||'').toLowerCase().includes(q) ||
-                          (o.campaign||'').toLowerCase().includes(q) ||
-                          (o.adset||'').toLowerCase().includes(q));
-  if(document.getElementById('activeOnly').checked && (TAB==='adsets'||TAB==='ads'))
-    r = r.filter(o => o.active);
-  if(document.getElementById('activeOnly').checked && TAB==='campaigns')
-    r = r.filter(o => o.status==='ACTIVE');
-  if(document.getElementById('spentOnly').checked) r = r.filter(o => o.spend > 0);
+  if(filtered){
+    const q = document.getElementById('q').value.trim().toLowerCase();
+    if(q) r = r.filter(o => (o.name||'').toLowerCase().includes(q) ||
+                            (o.campaign||'').toLowerCase().includes(q) ||
+                            (o.adset||'').toLowerCase().includes(q));
+    if(document.getElementById('activeOnly').checked && (tab==='adsets'||tab==='ads'))
+      r = r.filter(o => o.active);
+    if(document.getElementById('activeOnly').checked && tab==='campaigns')
+      r = r.filter(o => o.status==='ACTIVE');
+    if(document.getElementById('spentOnly').checked) r = r.filter(o => o.spend > 0);
+  }
+  if(tab !== TAB) return r;
   const k = SORT.key, d = SORT.dir;
   r.sort((a,b) => {
     let x=a[k], y=b[k];
@@ -800,6 +846,8 @@ function render(){
   document.getElementById('cpWrap').style.display =
     (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
   renderLimits(); kpis(); renderTable();
+  document.getElementById('expBtn').disabled = false;
+  if(expWrap.classList.contains('on')) expCounts();
   const accts = `Covers ${DATA.accounts.length === 1 ? 'one ad account' :
     `all ${DATA.accounts.length} ${DATA.brand_label} ad accounts`}.`;
   const dup = DATA.duplicate_ad_names ? `${DATA.duplicate_ad_names} ad name(s) are reused by
@@ -846,6 +894,129 @@ function cpNote(){
      ${u.cp_signups>0 ? `${num(u.cp_signups)} signups and ${num(u.cp_mandates)} mandates
        carry no matching live ad name (organic, or an ad since deleted) and sit outside
        every row.`:''}<br><br>`;
+}
+
+/* ---------- export ---------- */
+/* The identifiers the tables deliberately do not show. On screen a name is enough to
+   recognise a row; in a file that gets acted on, the id is what makes the row
+   unambiguous — two ad sets can share a name, and Branch already cannot tell those
+   apart. Parent ids come along so an ads export can be grouped or joined without
+   going back to Meta. */
+const EXP_ID = {
+  accounts: [['ad_account_id', o=>o.id], ['ad_account', o=>o.name]],
+  campaigns: [['campaign_id', o=>o.id], ['campaign', o=>o.name],
+              ['status', o=>o.status],
+              ['ad_account_id', o=>o.account_id], ['ad_account', o=>o.account]],
+  adsets: [['adset_id', o=>o.id], ['adset', o=>o.name],
+           ['status', o=>o.status], ['daily_budget', o=>o.budget],
+           ['campaign_id', o=>o.campaign_id], ['campaign', o=>o.campaign],
+           ['ad_account_id', o=>o.account_id], ['ad_account', o=>o.account]],
+  ads: [['ad_id', o=>o.id], ['ad', o=>o.name],
+        ['status', o=>o.status],
+        ['adset_id', o=>o.adset_id], ['adset', o=>o.adset],
+        ['campaign_id', o=>o.campaign_id], ['campaign', o=>o.campaign],
+        ['ad_account_id', o=>o.account_id], ['ad_account', o=>o.account],
+        ['shared_name', o=>o.shared_name ? 'yes' : '']],
+};
+
+/* Metric columns follow the same two absence rules the tables do — no Branch app means
+   no trials and no CPT column at all, rather than a column of zeros. Classplus columns
+   follow whether the data exists, NOT the on-screen checkbox: that checkbox is there to
+   declutter a table being read, and a file being analysed later has no clutter to save. */
+function expCols(level){
+  const c = EXP_ID[level].slice();
+  c.push(['spend', o=>o.spend]);
+  if(level==='accounts' || level==='campaigns') c.push(['budget_per_day', o=>o.budget]);
+  if(hasTrials()) c.push(['trials', o=>o.trials], ['cpt', o=>o.cpt]);
+  if(level==='accounts' || level==='campaigns') c.push(['active_adsets', o=>o.active_adsets]);
+  if(level!=='ads') c.push(['active_ads', o=>o.active_ads]);
+  if(DATA && DATA.classplus && DATA.classplus.available)
+    c.push(['signups', o=>o.cp_signups], ['cost_per_signup', o=>o.cps],
+           ['mandates', o=>o.cp_mandates], ['cost_per_mandate', o=>o.cpm],
+           ['d0_active_pct', o=>o.d0a], ['d0_cancel_pct', o=>o.d0c]);
+  return c;
+}
+
+/* Meta object ids are 17 digits. A spreadsheet reads a bare 17-digit cell as a number
+   and silently drops the last two — an id that looks right and is not, which is the
+   worst possible failure in a file whose purpose is acting on specific ad sets. The
+   ="…" form is the one thing Excel and Sheets both keep as text. Applied only to
+   pure-digit ids; account ids start with "act_" and are already safe. */
+const idCell = v => /^\d{15,}$/.test(String(v)) ? '="' + v + '"' : v;
+
+/* Raw values, not the formatted ones on screen: no ₹, no thousands separators, empty
+   where the table prints an em dash. This file is summed and sorted, not read.
+   Names go out verbatim — mangling one to dodge a spreadsheet formula would break the
+   exact-name match that makes the export actionable in the first place. */
+function csvCell(v){
+  if(v === null || v === undefined) return '';
+  let s;
+  if(typeof v === 'number') s = Number.isFinite(v) ? String(Math.round(v*100)/100) : '';
+  else s = String(v);
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+
+function toCsv(level, r){
+  const cols = expCols(level);
+  const ids = new Set(cols.filter(c => /_id$/.test(c[0])).map(c => c[0]));
+  const line = a => a.join(',');
+  return [line(cols.map(c => c[0]))].concat(r.map(o => line(cols.map(c => {
+    const v = c[1](o);
+    return ids.has(c[0]) ? idCell(v == null ? '' : v) : csvCell(v);
+  })))).join('\r\n') + '\r\n';
+}
+
+function expName(level){
+  const win = DATA.since === DATA.until ? DATA.since : `${DATA.since}_to_${DATA.until}`;
+  const now = new Date(Date.now() + 330*60000).toISOString().slice(11,16).replace(':','');
+  return `${DATA.brand}_${level}_${win}_${now}IST.csv`;
+}
+
+function download(name, text){
+  // BOM: Excel reads a UTF-8 CSV as latin-1 without it, and plenty of these ad names
+  // are not ASCII. Sheets ignores it.
+  const url = URL.createObjectURL(new Blob(['\ufeff' + text],
+                                           {type:'text/csv;charset=utf-8'}));
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 4000);
+}
+
+function expLevel(level){
+  const r = rows(level, document.getElementById('expFilters').checked);
+  if(!r.length) return 0;
+  download(expName(level), toCsv(level, r));
+  return r.length;
+}
+
+/* Which filters the file will be cut by, spelled out rather than pointed at: the export
+   is reachable from the Combined tab, where the filter bar is not even on screen, and
+   "the filters below" would then be describing controls nobody can see. */
+function expFilterNote(){
+  if(!document.getElementById('expFilters').checked) return 'every row, unfiltered';
+  const b = [];
+  if(document.getElementById('activeOnly').checked) b.push('active only');
+  if(document.getElementById('spentOnly').checked) b.push('spend &gt; 0');
+  const q = document.getElementById('q').value.trim();
+  if(q) b.push(`name contains “${q}”`);
+  return b.length ? b.join(' · ') : 'every row, unfiltered';
+}
+
+function expCounts(){
+  const f = document.getElementById('expFilters').checked;
+  let total = 0;
+  for(const lv of ['accounts','campaigns','adsets','ads']){
+    const n = DATA ? rows(lv, f).length : 0;
+    total += n;
+    document.getElementById('x-' + lv).textContent = n ? num(n) + ' rows' : 'none';
+    document.querySelector(`#expMenu button[data-x="${lv}"]`).disabled = !n;
+  }
+  document.querySelector('#expMenu button[data-x="all"]').disabled = !total;
+  document.getElementById('expNote').innerHTML = DATA
+    ? `${rangeLabel()} · ${DATA.brand_label} · ${expFilterNote()}.<br>
+       Raw figures plus the Meta ids, so a row can be acted on as it stands.`
+    : '';
 }
 
 /* ---------- wiring ---------- */
@@ -929,6 +1100,35 @@ document.getElementById('brandsw').onclick = e => {
   history.replaceState(null, '', `?brand=${b}`);
   load(true, false, false);
 };
+/* Opened on click rather than hovered: it is a menu of downloads, and one stray mouse
+   path across the header should not put four files in someone's Downloads folder. */
+const expWrap = document.getElementById('expwrap');
+document.getElementById('expBtn').onclick = e => {
+  e.stopPropagation();
+  const open = !expWrap.classList.contains('on');
+  expWrap.classList.toggle('on', open);
+  if(open) expCounts();
+};
+document.getElementById('expMenu').onclick = e => {
+  e.stopPropagation();
+  const x = e.target.closest && e.target.closest('button');
+  if(!x || !x.dataset.x || x.disabled) return;
+  if(x.dataset.x === 'all'){
+    // Staggered: browsers treat a burst of programmatic downloads as one prompt, and
+    // firing them in the same tick makes some drop files silently.
+    ['accounts','campaigns','adsets','ads'].forEach(
+      (lv, i) => setTimeout(() => expLevel(lv), i * 280));
+  }else{
+    expLevel(x.dataset.x);
+  }
+  expWrap.classList.remove('on');
+};
+document.getElementById('expFilters').onchange = expCounts;
+document.addEventListener('click', () => expWrap.classList.remove('on'));
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape') expWrap.classList.remove('on');
+});
+
 document.getElementById('q').oninput = renderTable;
 document.getElementById('activeOnly').onchange = renderTable;
 document.getElementById('spentOnly').onchange = renderTable;
