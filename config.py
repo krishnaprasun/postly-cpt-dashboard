@@ -24,7 +24,6 @@ GRAPH = "https://graph.facebook.com/v21.0"
 AD_ACCOUNT = "act_964790132585820"        # "Postly"
 INSTALL_ACCOUNT = "act_2383113182218548"  # "Postly Install" — the second, easily missed one
 
-CPT_TARGET = 150
 IST_OFFSET_MIN = 330
 
 _TOOLKIT = "/Users/krishnaprasun/Desktop/Postly Ads Management"
@@ -49,36 +48,62 @@ def _read(path):
         return ""
 
 
+def _branch_creds():
+    """{brand: (key, secret)} — one Branch app per brand, each with its own pair.
+
+    Postly's pair keeps the unprefixed names it has always had so nothing that already
+    sets them breaks; the others are prefixed. A brand with no pair is not an error —
+    its Meta side (spend, budgets, statuses) works regardless and the trial columns
+    simply stay hidden until a key turns up.
+
+      env    BRANCH_KEY / BRANCH_SECRET                  -> postly
+             SPEAKEASY_BRANCH_KEY / SPEAKEASY_BRANCH_SECRET
+             FUNDA_BRANCH_KEY / FUNDA_BRANCH_SECRET
+      file   ~/.anthropic/branch_creds.json
+             {"postly": {"branch_key": ..., "branch_secret": ...}, "speakeasy": {...}}
+             or the older flat {"branch_key": ..., "branch_secret": ...} = postly
+    """
+    out = {}
+    try:
+        j = json.loads(_read("~/.anthropic/branch_creds.json") or "{}")
+    except ValueError:
+        j = {}
+    if j.get("branch_key"):                      # older flat file
+        j = {"postly": j}
+    for brand in ("postly", "speakeasy", "funda"):
+        pre = "" if brand == "postly" else brand.upper() + "_"
+        blk = j.get(brand) or {}
+        key = (os.environ.get(pre + "BRANCH_KEY", "").strip()
+               or blk.get("branch_key", "")).strip()
+        sec = (os.environ.get(pre + "BRANCH_SECRET", "").strip()
+               or blk.get("branch_secret", "")).strip()
+        if key and sec:
+            out[brand] = (key, sec)
+    return out
+
+
 def _resolve():
     token = os.environ.get("META_TOKEN", "").strip() or _read("~/.anthropic/meta_token")
-    key = os.environ.get("BRANCH_KEY", "").strip()
-    secret = os.environ.get("BRANCH_SECRET", "").strip()
-    if not (key and secret):
-        raw = _read("~/.anthropic/branch_creds.json")
-        if raw:
-            try:
-                j = json.loads(raw)
-                key = key or j.get("branch_key", "")
-                secret = secret or j.get("branch_secret", "")
-            except ValueError:
-                pass
-    if not (token and key and secret):
+    branch = _branch_creds()
+    if not (token and branch.get("postly")):
         pc = _toolkit()
         if pc:
             token = token or getattr(pc, "META_TOKEN", "")
-            key = key or getattr(pc, "BRANCH_KEY", "")
-            secret = secret or getattr(pc, "BRANCH_SECRET", "")
-    missing = [n for n, v in (("META_TOKEN", token), ("BRANCH_KEY", key),
-                              ("BRANCH_SECRET", secret)) if not v]
-    if missing:
+            k = getattr(pc, "BRANCH_KEY", "")
+            s = getattr(pc, "BRANCH_SECRET", "")
+            if k and s:
+                branch.setdefault("postly", (k, s))
+    # Meta is the one hard requirement: it is the only source of spend, and spend is
+    # what every other number on the page divides by. Branch being absent degrades a
+    # brand to Meta-only, which is a legible state; Meta being absent is not.
+    if not token:
         raise RuntimeError(
-            "missing credentials: " + ", ".join(missing) +
-            " — set them in the environment or in ~/.anthropic/ "
-            "(meta_token, branch_creds.json)")
-    return token, key, secret
+            "missing credentials: META_TOKEN — set it in the environment or in "
+            "~/.anthropic/meta_token")
+    return token, branch
 
 
-META_TOKEN, BRANCH_KEY, BRANCH_SECRET = _resolve()
+META_TOKEN, BRANCH = _resolve()
 
 
 # ------------------------------------------------------- Classplus (Redash) ---
@@ -128,3 +153,76 @@ def _classplus():
 
 CLASSPLUS_HOST, CLASSPLUS_QUERIES = _classplus()
 CLASSPLUS_ON = bool(CLASSPLUS_QUERIES)
+
+
+# ------------------------------------------------------------- brands ------
+# Three brands share this dashboard because they share everything that is hard about
+# it: Meta's rate limits, the roster caching, the ad-name join, the degradation rules.
+# What differs per brand is only this table — which ad accounts, which Branch app,
+# which two events, and what "good" costs.
+#
+# `events` maps the page's two fixed slots to each brand's own Branch event names:
+#   t101  the headline count, the CPT numerator
+#   t10m  the secondary count shown beside it
+# The slot keys stay the same across brands so the page needs no per-brand branching;
+# only the labels and the underlying event names change.
+#
+# `cpt_target` may be None, which means "show the number, do not colour it" — a target
+# nobody has agreed on is worse than no target, because a red cell is an instruction.
+BRANDS = {
+    "postly": {
+        "label": "Postly",
+        "accounts": [{"id": AD_ACCOUNT, "name": "Postly"},
+                     {"id": INSTALL_ACCOUNT, "name": "Postly Install"}],
+        "events": {"t101": "postly_trial_started_backend",
+                   "t10m": "postly_trial_nc_after10min_backend"},
+        "labels": {"t101": "Trials", "t10m": "NC 10m"},
+        "event_note": {"t101": "trial_started", "t10m": "nc_after10min"},
+        "cpt_target": 150,
+        "classplus": True,
+    },
+    "speakeasy": {
+        "label": "Speakeasy",
+        "accounts": [{"id": "act_874500498817876", "name": "SpeakEasy"},
+                     {"id": "act_909676394829541", "name": "SpeakEasy Install"}],
+        "events": {"t101": "speakeasy_trial_started",
+                   "t10m": "SE_trial_nc_after_10mins"},
+        "labels": {"t101": "Trials", "t10m": "NC 10m"},
+        "event_note": {"t101": "speakeasy_trial_started",
+                       "t10m": "SE_trial_nc_after_10mins"},
+        # No agreed target yet, so CPT is shown uncoloured rather than judged.
+        "cpt_target": None,
+        "classplus": False,
+    },
+    "funda": {
+        "label": "Funda",
+        "accounts": [{"id": "act_1415034359774559", "name": "Funda"},
+                     {"id": "act_1662727118397158", "name": "Funda Earning App"},
+                     {"id": "act_826851770432701", "name": "Funda 3"}],
+        # Funda's Branch app key is not in hand yet. An empty map is a supported state:
+        # the Meta side works in full and the trial/CPT columns stay hidden until the
+        # events are filled in, at which point nothing else has to change.
+        "events": {},
+        "labels": {},
+        "event_note": {},
+        "cpt_target": None,
+        "classplus": False,
+    },
+}
+DEFAULT_BRAND = "postly"
+
+
+def brand(name):
+    """One brand's config, with its Branch pair resolved. Unknown name -> default."""
+    b = dict(BRANDS.get(name) or BRANDS[DEFAULT_BRAND])
+    b["key"] = name if name in BRANDS else DEFAULT_BRAND
+    b["branch"] = BRANCH.get(b["key"])
+    if not b["branch"]:
+        b["events"], b["labels"], b["event_note"] = {}, {}, {}
+    return b
+
+
+def BRAND_HAS_BRANCH(name):
+    """Whether this brand can produce trial counts at all — used by the page to decide
+    what to promise while loading, before any data has come back."""
+    return bool(BRANCH.get(name) and BRANDS.get(name, {}).get("events"))

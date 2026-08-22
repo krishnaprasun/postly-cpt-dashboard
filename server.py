@@ -21,6 +21,7 @@ from functools import wraps
 
 from flask import Flask, Response, jsonify, render_template, request
 
+import config as C
 import postly_cpt as P
 
 app = Flask(__name__)
@@ -69,8 +70,9 @@ def _with_live_limits(payload):
     already passed, or claiming all-clear while a refresh is being refused right now.
     The numbers are cached; the throttle state never is.
     """
+    accounts = C.brand(payload.get("brand"))["accounts"]
     return dict(payload, rate_limit=P.rate_limit_report(
-        {a["id"]: a["name"] for a in P.ACCOUNTS}))
+        {a["id"]: a["name"] for a in accounts}))
 
 
 # ------------------------------------------------------------------ auth ---
@@ -108,7 +110,7 @@ def _build_into_cache(key):
             _refreshing.discard(key)
 
 
-def get_data(since, until, force=False, hard=False):
+def get_data(since, until, brand, force=False, hard=False):
     """Fresh -> serve. Stale -> serve stale, refresh behind the request. Cold -> block.
 
     `force` skips this cache. `hard` additionally re-reads Meta's roster — names,
@@ -117,7 +119,10 @@ def get_data(since, until, force=False, hard=False):
     most expensive call here and its long TTL is what keeps the app under Meta's hourly
     request-time limit.
     """
-    key = (since, until)
+    # The brand is part of the key, not a filter applied afterwards: each brand is a
+    # separate set of Meta and Branch calls, and one brand's throttle must never evict
+    # or stale another's figures.
+    key = (since, until, brand)
     with _lock:
         hit = _cache.get(key)
         age = time.time() - hit["at"] if hit else None
@@ -144,7 +149,7 @@ def get_data(since, until, force=False, hard=False):
         return out
 
     try:
-        data = P.build(since, until, force=hard)
+        data = P.build(since, until, brand, force=hard)
     except Exception as e:
         # A throttle or a blip must not blank the dashboard. If any figures were ever
         # fetched for this window, serve those and say how old they are; only a cold
@@ -183,7 +188,19 @@ def resolve_range(rng, since, until):
 @app.route("/")
 @protected
 def index():
-    return render_template("index.html")
+    # The brand list is server-rendered so the switcher and the loading veil are correct
+    # on the very first paint, before any data has been fetched.
+    brand = request.args.get("brand", C.DEFAULT_BRAND)
+    if brand not in C.BRANDS:
+        brand = C.DEFAULT_BRAND
+    return render_template(
+        "index.html",
+        brands=[{"key": k, "label": v["label"]} for k, v in C.BRANDS.items()],
+        default_brand=brand,
+        brand_meta={k: {"label": v["label"], "accounts": len(v["accounts"]),
+                        "branch": bool(C.BRAND_HAS_BRANCH(k)),
+                        "classplus": bool(v["classplus"])}
+                    for k, v in C.BRANDS.items()})
 
 
 @app.route("/api/data")
@@ -191,9 +208,12 @@ def index():
 def api_data():
     since, until = resolve_range(request.args.get("range", "today"),
                                  request.args.get("since"), request.args.get("until"))
+    brand = request.args.get("brand", C.DEFAULT_BRAND)
+    if brand not in C.BRANDS:
+        brand = C.DEFAULT_BRAND
     try:
         hard = request.args.get("hard") == "1"
-        return jsonify(get_data(since, until,
+        return jsonify(get_data(since, until, brand,
                                 force=hard or request.args.get("force") == "1", hard=hard))
     except Exception as e:
         traceback.print_exc()

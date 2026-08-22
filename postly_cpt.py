@@ -29,14 +29,12 @@ IST = timezone(timedelta(minutes=330))
 BRANCH_URL = "https://api2.branch.io/v1/query/analytics"
 BRANCH_MAX_SPAN = 7          # Branch Query API caps a request at 7 days
 
-ACCOUNTS = [
-    {"id": C.AD_ACCOUNT,      "name": "Postly"},
-    {"id": C.INSTALL_ACCOUNT, "name": "Postly Install"},
-]
-EVENTS = {
-    "t101": "postly_trial_started_backend",            # the daily report's CPT numerator
-    "t10m": "postly_trial_nc_after10min_backend",      # the 10-min campaigns' own event
-}
+# Which accounts, which Branch app, which two events and what "good" costs are the only
+# things that differ per brand; everything below this line is brand-agnostic. `EVENTS`
+# is therefore no longer a module constant — it is read off the brand being built, and
+# the two slot keys (t101 headline, t10m secondary) stay fixed so nothing downstream
+# has to know which brand it is looking at.
+ALL_ACCOUNTS = [a for b in C.BRANDS.values() for a in b["accounts"]]
 
 
 def today_ist():
@@ -323,16 +321,25 @@ def _branch(body, tries=5):
             raise RuntimeError(f"Branch: {ex}")
 
 
-def branch_trials_by_ad(since, until):
-    """{event_key: {ad_name_or_None: unique_count}} over the window, 7-day chunked."""
-    out = {k: defaultdict(int) for k in EVENTS}
+def branch_trials_by_ad(since, until, B):
+    """{event_key: {ad_name_or_None: unique_count}} over the window, 7-day chunked.
+
+    A brand with no Branch app, or none of its events named yet, yields an empty map
+    rather than raising — its Meta figures are unaffected and the page hides the
+    columns instead of showing zeros that would read as "no trials".
+    """
+    events, creds = B["events"], B["branch"]
+    if not (events and creds):
+        return {}
+    bkey, bsecret = creds
+    out = {k: defaultdict(int) for k in events}
     d = datetime.strptime(since, "%Y-%m-%d").date()
     endd = datetime.strptime(until, "%Y-%m-%d").date()
     while d <= endd:
         ce = min(d + timedelta(days=BRANCH_MAX_SPAN - 1), endd)
-        for key, ev in EVENTS.items():
+        for key, ev in events.items():
             j = _branch({
-                "branch_key": C.BRANCH_KEY, "branch_secret": C.BRANCH_SECRET,
+                "branch_key": bkey, "branch_secret": bsecret,
                 "start_date": d.strftime("%Y-%m-%d"), "end_date": ce.strftime("%Y-%m-%d"),
                 "dimensions": ["last_attributed_touch_data_tilde_ad_name"],
                 "granularity": "all", "aggregation": "unique_count",
@@ -619,11 +626,14 @@ def rate_limit_report(accounts):
     }
 
 
-def build(since, until, force=False):
+def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     started = time.time()
+    B = C.brand(brand)
+    EVENTS = B["events"]
+    ACCOUNTS = B["accounts"]
     degraded = []
     budgets_known = True
-    trials = branch_trials_by_ad(since, until)
+    trials = branch_trials_by_ad(since, until, B)
 
     ads, adsets, campaigns, accounts = {}, {}, {}, {}
 
@@ -740,7 +750,7 @@ def build(since, until, force=False):
                 g["shared_name"] = True
 
     # ---- attach Classplus signups/mandates to ads by the SAME name key ------
-    cp, cp_note = classplus(since, until)
+    cp, cp_note = classplus(since, until) if B["classplus"] else (None, None)
     cp_matched = {k: 0.0 for k in CP_KEYS}
     if cp:
         for name, rec in cp["by_ad"].items():
@@ -813,7 +823,15 @@ def build(since, until, force=False):
         "since": since, "until": until,
         "generated_at": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
         "took": round(time.time() - started, 1),
-        "cpt_target": C.CPT_TARGET,
+        "brand": B["key"],
+        "brand_label": B["label"],
+        "brands": [{"key": k, "label": v["label"]} for k, v in C.BRANDS.items()],
+        "events": list(EVENTS),
+        "event_labels": B["labels"],
+        "event_note": B["event_note"],
+        # None means "show the number, do not colour it": a target nobody has agreed
+        # on is worse than none, because a red cell reads as an instruction.
+        "cpt_target": B["cpt_target"],
         "combined": combined,
         "accounts": sorted(accounts.values(), key=lambda r: -r["spend"]),
         "campaigns": sorted(campaigns.values(), key=lambda r: -r["spend"]),

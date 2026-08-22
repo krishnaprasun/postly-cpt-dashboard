@@ -140,6 +140,17 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
   color:#8C5C05;white-space:nowrap}
 .lbody{margin-top:7px;line-height:1.65}
 
+/* Brand switcher. A segmented control next to the title rather than another select:
+   which brand you are looking at changes every number on the page, so it has to be
+   readable without opening anything, and obvious that it is not a filter. */
+.brandsw{display:flex;gap:2px;background:var(--line);border:1px solid var(--line);
+  border-radius:10px;padding:2px;box-shadow:var(--shadow)}
+.brandsw button{border:0;background:transparent;color:var(--dim);font:inherit;
+  font-size:12.5px;font-weight:650;padding:5px 13px;border-radius:8px;cursor:pointer;
+  letter-spacing:.01em}
+.brandsw button:hover{color:var(--ink)}
+.brandsw button.on{background:var(--white);color:var(--ink);box-shadow:var(--shadow)}
+
 /* Range picker. A select rather than a button row: five fixed spans plus a custom range
    do not fit in the header as buttons, and the chosen range must stay readable at a
    glance rather than being one highlighted item in a strip. */
@@ -212,11 +223,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   <img src="/static/postly_icon_logo.svg" alt="">
   <div class="vt">Pulling live numbers</div>
   <div class="vs" id="veilWin"></div>
-  <div class="vsrc">
-    <div><span class="vdot"></span>Meta — spend, budgets and statuses, both accounts</div>
-    <div><span class="vdot"></span>Branch — trials by ad name</div>
-    <div><span class="vdot"></span>Classplus — signups and trial mandates</div>
-  </div>
+  <div class="vsrc" id="veilSrc"></div>
   <div class="vbar"><i></i></div>
   <div class="vhint"><span class="vel" id="veilEl">0s</span> elapsed · a cold instance
     takes 15–30s to answer its first pull</div>
@@ -233,7 +240,8 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
 <stop offset="1" stop-color="#38D993"/>
 </linearGradient>
 </defs>
-</svg><h1>Postly <em>Performance</em> <span id="win"></span></h1></div>
+</svg><h1><span id="bname">Postly</span> <em>Performance</em> <span id="win"></span></h1></div>
+    <div class="brandsw" id="brandsw">{% for b in brands %}<button data-b="{{ b.key }}"{% if b.key == default_brand %} class="on"{% endif %}>{{ b.label }}</button>{% endfor %}</div>
     <select class="sel" id="range">
       <option value="today" selected>Today</option>
       <option value="yesterday">Yesterday</option>
@@ -278,11 +286,18 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
 </main>
 
 <script>
-let T = 150;                         // CPT target, replaced by the API value on load
+/* CPT target for the brand on screen. null is a real value meaning "do not colour":
+   an unagreed target is worse than none, because a red cell reads as an instruction. */
+let T = null;
+let BRAND = '{{ default_brand }}';
+/* Enough about each brand to paint the loading veil honestly before any data has been
+   fetched. The authoritative values still come from the payload. */
+const BRANDS = {{ brand_meta | tojson }};
 let DATA=null, RANGE='today', TAB='combined',
-    /* CPT is measured against postly_trial_started_backend — the daily report's
-       definition and what the Rs150 target is set against. The Trial-10min event
-       is still fetched by the backend; only the UI switch was removed. */
+    /* The headline slot. Each brand maps it to its own Branch event in config.py —
+       Postly's postly_trial_started_backend, Speakeasy's speakeasy_trial_started — so
+       the page never has to know which brand it is showing. The second slot (t10m) is
+       still fetched and rolled up; only the UI switch between them was removed. */
     EV='t101',
     SORT={key:'spend',dir:-1}, timer=null;
 let CUSTOM = null;                   // {since, until} once a custom range is applied
@@ -291,15 +306,22 @@ const MAX_SPAN = 31;                 // days; Branch is fetched in 7-day chunks,
 /* Today in IST regardless of where the browser is — shifting the epoch by +5:30 and
    reading the UTC calendar date gives the IST wall-clock date. */
 const istToday = () => new Date(Date.now() + 330*60000).toISOString().slice(0,10);
-const apiQuery = () => CUSTOM
-  ? `since=${CUSTOM.since}&until=${CUSTOM.until}` : `range=${RANGE}`;
+const apiQuery = () => `brand=${BRAND}&` + (CUSTOM
+  ? `since=${CUSTOM.since}&until=${CUSTOM.until}` : `range=${RANGE}`);
 const rangeLabel = () => CUSTOM
   ? (CUSTOM.since===CUSTOM.until ? CUSTOM.since : `${CUSTOM.since} → ${CUSTOM.until}`)
   : document.getElementById('range').selectedOptions[0].textContent;
 
 const rs = n => '₹' + Math.round(n).toLocaleString('en-IN');
 const num = n => Math.round(n).toLocaleString('en-IN');
-const cls = c => c===null ? 'dimtxt' : (c<=T ? 'good' : c<=T*1.7 ? 'warn' : 'bad');
+/* No target -> no verdict. Every cost-per cell renders plain, which is the honest
+   state for a brand whose "good" nobody has set yet. */
+const cls = c => (T===null || c===null) ? 'dimtxt'
+                 : (c<=T ? 'good' : c<=T*1.7 ? 'warn' : 'bad');
+/* Whether this brand has a Branch app and named events. Without them there are no
+   trials and therefore no CPT, so those columns and KPIs are removed rather than
+   shown as zeros — a zero reads as "none happened", which is a different claim. */
+const hasTrials = () => !!(DATA && DATA.events && DATA.events.length);
 const cpt = (sp,tr) => tr>0 ? sp/tr : null;
 const cptTxt = (sp,tr) => tr>0 ? rs(sp/tr) : (sp>0 ? 'no trials' : '—');
 const pct = (n,d) => d>0 ? (100*n/d).toFixed(0)+'%' : '—';
@@ -357,6 +379,14 @@ function veil(on){
   clearInterval(veilTick); veilTick = null;
   if(!on) return;
   document.getElementById('veilWin').textContent = rangeLabel();
+  /* Named per brand: listing Branch or Classplus while pulling a brand that has
+     neither would promise numbers that are never going to arrive. */
+  const B = BRANDS[BRAND] || {};
+  document.getElementById('veilSrc').innerHTML =
+    [`Meta — spend, budgets and statuses, ${B.accounts||'all'} ad account${B.accounts===1?'':'s'}`]
+    .concat(B.branch ? ['Branch — trials by ad name'] : [])
+    .concat(B.classplus ? ['Classplus — signups and trial mandates'] : [])
+    .map(t => `<div><span class="vdot"></span>${t}</div>`).join('');
   veilAt = Date.now();
   document.getElementById('veilEl').textContent = '0s';
   veilTick = setInterval(() => {
@@ -497,23 +527,37 @@ function renderLimits(){
 /* ---------- KPIs ---------- */
 function kpis(){
   const c = DATA.combined, tr = c[EV], sp = c.spend, k = cpt(sp,tr);
-  const cov = DATA.branch_totals[EV] ? 100*DATA.matched[EV]/DATA.branch_totals[EV] : 0;
+  const trials = hasTrials();
+  const cov = trials && DATA.branch_totals[EV]
+    ? 100*DATA.matched[EV]/DATA.branch_totals[EV] : 0;
   const pace = c.budget ? 100*sp/c.budget : 0;
   const days = Math.round((new Date(DATA.until) - new Date(DATA.since))/864e5) + 1;
   // budgets and statuses are only partly known when an account's roster failed
   const deg = !!(DATA.degraded && DATA.degraded.length);
-  document.getElementById('kpis').innerHTML = `
+  /* With a target, the hero says how far off it is. Without one it still leads with
+     CPT — the number people came for — and simply does not judge it. */
+  const heroSub = T===null
+    ? (k===null ? 'no target set' : `no target set · ${num(tr)} trials`)
+    : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`;
+  /* Spend leads instead when the brand has no trial feed: promoting a CPT tile that
+     could only ever read "—" would make a missing Branch key look like zero trials. */
+  document.getElementById('kpis').innerHTML =
+   (trials ? `
    <div class="kpi hero"><div class="k">Current CPT</div>
      <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
-     <div class="s">target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}</div></div>
-   <div class="kpi"><div class="k">Spend</div><div class="v">${rs(sp)}</div>
+     <div class="s">${heroSub}</div></div>` : '') + `
+   <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend</div><div class="v">${rs(sp)}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
-             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>
+             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
+   (trials ? `
    <div class="kpi"><div class="k">Trials</div><div class="v">${num(tr)}</div>
-     <div class="s">${EV==='t101'?'trial_started':'nc_after10min'} · Branch ${num(DATA.branch_totals[EV])} total</div></div>
+     <div class="s">${DATA.event_note[EV]||EV} · Branch ${num(DATA.branch_totals[EV])} total</div></div>
    <div class="kpi"><div class="k">Attribution</div><div class="v">${cov.toFixed(1)}%</div>
-     <div class="s">${num(DATA.unattributed[EV])} trials not matched to an ad</div></div>
+     <div class="s">${num(DATA.unattributed[EV])} trials not matched to an ad</div></div>`
+   : `
+   <div class="kpi"><div class="k">Budget/day</div><div class="v">${rs(c.budget)}</div>
+     <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) + `
    <div class="kpi"><div class="k">${deg ? 'Ad sets' : 'Live'}</div>
      <div class="v">${num(c.active_adsets)}</div>
      <div class="s">${deg ? `with spend · ${num(c.active_ads)} ads (status unknown)`
@@ -595,6 +639,15 @@ const CP_COLS = [
   {k:'d0c', t:'D0 cancel', kind:'pct'},
 ];
 
+/* The trial and CPT columns exist only for a brand that has a Branch feed. Dropping
+   them beats rendering "0" and "—" down the whole table: a zero is a claim that
+   nothing happened, which is not what a missing key means. */
+function colsFor(tab){
+  const base = hasTrials() ? COLS[tab]
+                           : COLS[tab].filter(c => c.k!=='trials' && c.k!=='cpt');
+  return cpOn() ? base.concat(CP_COLS) : base;
+}
+
 function rows(){
   if(TAB==='combined') return [];
   let r = DATA[TAB].map(o => Object.assign({}, o, {
@@ -646,18 +699,22 @@ function renderTable(){
   if(TAB==='combined'){
     document.getElementById('ctl').style.display='none';
     const on = cpOn();
+    const tr_ = hasTrials();
     tbl.querySelector('thead').innerHTML =
-      `<tr><th>Level</th><th>Spend</th><th>Trials</th><th>CPT</th>` +
+      `<tr><th>Level</th><th>Spend</th>` +
+      (tr_ ? `<th>Trials</th><th>CPT</th>` : `<th>Budget/day</th>`) +
       (on ? `<th>Signups</th><th>Mandates</th><th>Cost/mandate</th>` : '') +
-      `<th>Share of spend</th><th>Share of trials</th></tr>`;
+      `<th>Share of spend</th>` + (tr_ ? `<th>Share of trials</th>` : '') + `</tr>`;
     const c = DATA.combined;
     const mk = (label, o, indent) => { const sp = o.spend, tr = o[EV];
       return `<tr><td class="name" style="padding-left:${12+indent*20}px">${label}</td>
-      <td>${rs(sp)}</td><td>${num(tr)}</td><td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>` +
+      <td>${rs(sp)}</td>` +
+      (tr_ ? `<td>${num(tr)}</td><td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`
+           : `<td>${rs(o.budget||0)}</td>`) +
       (on ? `<td>${num(o.cp_signups)}</td><td>${num(o.cp_mandates)}</td>
              <td class="${cls(cpt(sp,o.cp_mandates))}">${cptTxt(sp,o.cp_mandates)}</td>` : '') +
-      `<td>${c.spend?(100*sp/c.spend).toFixed(1):0}%</td>
-       <td>${c[EV]?(100*tr/c[EV]).toFixed(1):0}%</td></tr>`; };
+      `<td>${c.spend?(100*sp/c.spend).toFixed(1):0}%</td>` +
+      (tr_ ? `<td>${c[EV]?(100*tr/c[EV]).toFixed(1):0}%</td>` : '') + `</tr>`; };
     let h = '';
     for(const a of DATA.accounts){
       h += mk(`<b>${a.name}</b>`, a, 0);
@@ -665,17 +722,20 @@ function renderTable(){
         h += mk(cm.name, cm, 1);
     }
     tbl.querySelector('tbody').innerHTML = h;
+    const nAcc = DATA.accounts.length;
     tbl.querySelector('tfoot').innerHTML =
-      `<tr><td>COMBINED — both accounts</td><td>${rs(c.spend)}</td><td>${num(c[EV])}</td>
-       <td class="${cls(cpt(c.spend,c[EV]))}">${cptTxt(c.spend,c[EV])}</td>` +
+      `<tr><td>COMBINED — all ${nAcc} ad account${nAcc===1?'':'s'}</td><td>${rs(c.spend)}</td>` +
+      (tr_ ? `<td>${num(c[EV])}</td>
+              <td class="${cls(cpt(c.spend,c[EV]))}">${cptTxt(c.spend,c[EV])}</td>`
+           : `<td>${rs(c.budget||0)}</td>`) +
       (on ? `<td>${num(c.cp_signups)}</td><td>${num(c.cp_mandates)}</td>
              <td class="${cls(cpt(c.spend,c.cp_mandates))}">${cptTxt(c.spend,c.cp_mandates)}</td>` : '') +
-      `<td>100%</td><td>100%</td></tr>`;
+      `<td>100%</td>` + (tr_ ? `<td>100%</td>` : '') + `</tr>`;
     document.getElementById('rowcount').textContent='';
     return;
   }
   document.getElementById('ctl').style.display='flex';
-  const cols = cpOn() ? COLS[TAB].concat(CP_COLS) : COLS[TAB], r = rows();
+  const cols = colsFor(TAB), r = rows();
   tbl.querySelector('thead').innerHTML = '<tr>' + cols.map(c => {
     const cls = [c.kind==='name'||c.kind==='sub' ? 'l' : '',
                  c.kind==='sub' ? 'grow' : '',
@@ -714,6 +774,8 @@ function renderTable(){
 
 function render(){
   T = DATA.cpt_target;
+  document.getElementById('bname').textContent = DATA.brand_label;
+  document.title = `${DATA.brand_label} Performance`;
   document.getElementById('win').textContent =
     DATA.since===DATA.until ? DATA.since : `${DATA.since} → ${DATA.until}`;
   stampNow();
@@ -722,17 +784,27 @@ function render(){
   document.getElementById('cpWrap').style.display =
     (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
   renderLimits(); kpis(); renderTable();
-  document.getElementById('note').innerHTML = cpNote() +
-    `CPT = Meta spend ÷ Branch trials, joined at <b>ad-name</b> level and rolled up
-     (Branch does not expose campaign or account as attribution dimensions).
-     Covers both ad accounts. ${DATA.unattributed[EV]>0
-       ? `${num(DATA.unattributed[EV])} Branch trial(s) matched no ad in either account — organic,
-          other channels, or deleted ads — so they sit outside every row above.`:''}
-     ${DATA.duplicate_ad_names ? `${DATA.duplicate_ad_names} ad name(s) are reused by more than one ad
-       (marked <i>shared name</i>); Branch cannot tell those ads apart, so their trials are split by
-       spend share — the rollups stay exact, the individual CPTs are an even assumption.`:''}
-     Today's numbers are still landing — Meta spend lags a few minutes and Branch trials
-     keep arriving through the day, so intraday CPT reads high early and settles down.`;
+  const accts = `Covers ${DATA.accounts.length === 1 ? 'one ad account' :
+    `all ${DATA.accounts.length} ${DATA.brand_label} ad accounts`}.`;
+  const dup = DATA.duplicate_ad_names ? `${DATA.duplicate_ad_names} ad name(s) are reused by
+     more than one ad (marked <i>shared name</i>); Branch cannot tell those ads apart, so their
+     trials are split by spend share — the rollups stay exact, the individual CPTs are an even
+     assumption. ` : '';
+  const lag = `Today's numbers are still landing — Meta spend lags a few minutes${
+     hasTrials() ? ' and Branch trials keep arriving through the day, so intraday CPT reads high early and settles down' : ''}.`;
+  document.getElementById('note').innerHTML = cpNote() + (hasTrials()
+    ? `CPT = Meta spend ÷ Branch trials, joined at <b>ad-name</b> level and rolled up
+       (Branch does not expose campaign or account as attribution dimensions).
+       ${accts} ${DATA.unattributed[EV]>0
+         ? `${num(DATA.unattributed[EV])} Branch trial(s) matched no ad in any of them — organic,
+            other channels, or deleted ads — so they sit outside every row above.`:''}
+       ${dup}${lag}`
+    /* No Branch app for this brand: say so plainly and name what is missing, rather
+       than leaving someone to wonder why there is no CPT on a page called CPT. */
+    : `<b>Spend, budgets and statuses only.</b> ${DATA.brand_label} has no Branch app
+       configured here, so there are no trial counts and therefore no CPT. Everything
+       above comes straight from Meta. Adding the Branch key and naming the two events
+       fills the trial and CPT columns in with no other change. ${accts} ${dup}${lag}`);
 }
 
 /* Signups and mandates come from a different system asking a different question, and
@@ -808,6 +880,23 @@ document.getElementById('tabs').onclick = e => {
    figure for up to 30 minutes, which is the opposite of what the button promises. It
    blocks, and the veil makes that legible. */
 document.getElementById('refresh').onclick = () => load(true, false, true);
+/* Switching brand replaces every figure on the page, so it is a foreground load with
+   the veil up — not a silent swap that would briefly show one brand's spend under
+   another's name. The tab is marked active immediately so the click feels answered. */
+document.getElementById('brandsw').onclick = e => {
+  const b = e.target.dataset && e.target.dataset.b;
+  if(!b || b === BRAND) return;
+  BRAND = b;
+  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.b === b));
+  document.getElementById('bname').textContent = (BRANDS[b]||{}).label || b;
+  DATA = null;                       // never render one brand's rows under another's name
+  TAB = 'combined';
+  [...document.getElementById('tabs').children].forEach(
+    x => x.classList.toggle('on', x.dataset.t === 'combined'));
+  SORT = {key:'spend', dir:-1};
+  history.replaceState(null, '', `?brand=${b}`);
+  load(true, false, false);
+};
 document.getElementById('q').oninput = renderTable;
 document.getElementById('activeOnly').onchange = renderTable;
 document.getElementById('spentOnly').onchange = renderTable;

@@ -12,10 +12,21 @@ services:
       # ── Meta ──
       - key: META_TOKEN           # system user "Krishna" via app Gsheet2, does not expire
         sync: false
-      # ── Branch.io Query API ──
+      # ── Branch.io Query API — one app per brand ──
+      # Postly keeps the unprefixed names it has always had; the others are prefixed.
+      # A brand with no pair is a supported state: its Meta side works in full and only
+      # the trial and CPT columns are hidden.
       - key: BRANCH_KEY
         sync: false
       - key: BRANCH_SECRET
+        sync: false
+      - key: SPEAKEASY_BRANCH_KEY
+        sync: false
+      - key: SPEAKEASY_BRANCH_SECRET
+        sync: false
+      - key: FUNDA_BRANCH_KEY          # not supplied yet — Funda is Meta-only until it is
+        sync: false
+      - key: FUNDA_BRANCH_SECRET
         sync: false
       # No login by design — the dashboard is open to anyone with the URL, and sends
       # noindex + robots.txt disallow so it stays out of search results. To turn a

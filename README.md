@@ -1,9 +1,35 @@
 # Postly Performance
 
 Live Meta spend × Branch trials, with CPT at every level: combined, ad account,
-campaign, active ad set, and ad. Covers **both** ad accounts (`Postly` and
-`Postly Install`). Signups and trial mandates come from the Classplus DB alongside,
-at the same levels. Read-only — nothing here writes to Meta.
+campaign, active ad set, and ad. Signups and trial mandates come from the Classplus DB
+alongside, at the same levels. Read-only — nothing here writes to Meta.
+
+## Brands
+
+One deployment serves three brands, switched from the control beside the title. They
+share everything that is hard about this — Meta's rate limits, the roster caching, the
+ad-name join, the degradation rules — and differ only in the `BRANDS` table in
+`config.py`.
+
+| brand | ad accounts | Branch events (headline / second) | CPT target | Classplus |
+|---|---|---|---|---|
+| **Postly** | `Postly`, `Postly Install` | `postly_trial_started_backend` / `postly_trial_nc_after10min_backend` | ₹150 | yes |
+| **Speakeasy** | `SpeakEasy`, `SpeakEasy Install` | `speakeasy_trial_started` / `SE_trial_nc_after_10mins` | none | no |
+| **Funda** | `Funda`, `Funda Earning App`, `Funda 3` | *(no Branch app configured)* | none | no |
+
+Two states are deliberate rather than unfinished:
+
+- **No CPT target** (`cpt_target: None`) shows the cost-per figures uncoloured. A target
+  nobody has agreed on is worse than none, because a red cell reads as an instruction.
+- **No Branch app** drops the trial and CPT columns entirely rather than filling them
+  with zeros — a zero is a claim that nothing happened, which is not what a missing key
+  means. The brand still gets its full Meta side: spend, budgets, statuses, at every
+  level. Supplying the key and naming two events in `BRANDS` is the whole change needed
+  to light the columns up.
+
+The brand is part of the cache key, not a filter applied afterwards: each brand is its
+own set of Meta and Branch calls, so one brand's throttle can never evict or stale
+another's figures.
 
 ## Run locally
 
@@ -16,8 +42,10 @@ Credentials come from `~/.anthropic/` (see [Credentials](#credentials)).
 
 ## What it shows
 
-- **Current CPT** — combined spend / trials, coloured against the ₹150 target
-  (green ≤ ₹150, amber to ₹255, red above).
+- **Current CPT** — combined spend / trials, coloured against the brand's target where
+  it has one (Postly: green ≤ ₹150, amber to ₹255, red above; the other brands show it
+  uncoloured). A brand with no Branch app leads with Spend instead, because a CPT tile
+  that could only ever read "—" would make a missing key look like zero trials.
 - **Tabs** — Combined (account → campaign tree), Ad accounts, Campaigns, Ad sets, Ads.
   The parent-name column (campaign under ad set, account under campaign, ad set under ad)
   is left-aligned header *and* cell, and takes the row's spare width so it sits beside the
@@ -279,7 +307,7 @@ Configure with `CLASSPLUS_QUERIES="19695:key"` (or a `queries` list in
 ## Access
 
 **There is no login.** Anyone with the URL sees today's spend, CPT, budgets, and
-every ad set and ad name across both accounts. `.onrender.com` hostnames are public
+every ad set and ad name across **all seven ad accounts of all three brands**. `.onrender.com` hostnames are public
 and guessable, so treat the URL itself as the only control. The app sends
 `X-Robots-Tag: noindex, nofollow, noarchive` and a disallow-all `robots.txt` to keep
 it out of search results, which stops crawlers but not anyone who has the link.
@@ -303,7 +331,8 @@ One-time setup:
    Connect the **GitHub repo**, not the "public Git URL" option — the public-URL path is
    what left `postly-insta-daily` with no webhook and no auto-deploy on push.
 2. Render reads `render.yaml`. Set the three secrets when prompted (they are `sync: false`,
-   so they are never in git): `META_TOKEN`, `BRANCH_KEY`, `BRANCH_SECRET`.
+   so they are never in git): `META_TOKEN`, `BRANCH_KEY`, `BRANCH_SECRET`, and the
+   per-brand Branch pairs listed under [Credentials](#credentials).
 3. Check `/healthz` returns `{"ok": true}` before trusting a reading.
 
 After that, **deploy = `git push origin main`** — *if* Render is connected through its
@@ -332,21 +361,29 @@ Free-plan facts worth knowing:
 | `postly_cpt.py` | data layer — Meta + Branch pulls, the join, the rollup |
 | `server.py` | Flask app: `/`, `/api/data`, `/healthz`, `/robots.txt`, cache |
 | `templates/index.html` | the whole UI, no build step, no dependencies |
-| `config.py` | ids + credential resolution |
+| `config.py` | the `BRANDS` table (accounts, events, targets) + credential resolution |
 | `Dockerfile`, `render.yaml` | deploy |
 
 ## Credentials
 
 Nothing secret is committed. `config.py` reads, first hit wins:
 
-1. env `META_TOKEN`, `BRANCH_KEY`, `BRANCH_SECRET`,
-   `CLASSPLUS_API_KEY` / `CLASSPLUS_QUERY_ID` / `CLASSPLUS_HOST` — this is what Render uses
+1. env — this is what Render uses:
+   - `META_TOKEN` — one token, all seven ad accounts across the three brands
+   - `BRANCH_KEY` / `BRANCH_SECRET` — Postly (unprefixed for backwards compatibility)
+   - `SPEAKEASY_BRANCH_KEY` / `SPEAKEASY_BRANCH_SECRET`
+   - `FUNDA_BRANCH_KEY` / `FUNDA_BRANCH_SECRET` — not yet supplied
+   - `CLASSPLUS_QUERIES` / `CLASSPLUS_HOST`
 2. `~/.anthropic/meta_token`, `~/.anthropic/branch_creds.json`,
-   `~/.anthropic/classplus_creds.json` — local runs
+   `~/.anthropic/classplus_creds.json` — local runs. The Branch file is keyed by brand:
+   `{"postly": {"branch_key": …, "branch_secret": …}, "speakeasy": {…}}`; the older flat
+   `{"branch_key": …}` form is still read and treated as Postly.
 3. `~/Desktop/Postly Ads Management/postly_config.py` — last-resort local fallback
 
-The Classplus trio is the one set that is allowed to be absent: missing it turns the
-signup and mandate columns off and changes nothing else.
+**Meta is the only hard requirement.** It is the sole source of spend, and spend is what
+every other number divides by, so a missing token is a startup error. Everything else is
+allowed to be absent and degrades in place: no Branch pair for a brand drops its trial
+and CPT columns, no Classplus key drops the signup and mandate columns.
 
 It cannot rely on (3) alone: macOS protects `~/Desktop` and a process launched as a
 server is not granted access to it, so that import fails at serve time even though it
