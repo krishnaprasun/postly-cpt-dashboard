@@ -11,6 +11,10 @@ share everything that is hard about this — Meta's rate limits, the roster cach
 ad-name join, the degradation rules — and differ only in the `BRANDS` table in
 `config.py`.
 
+**Trials means trial-started on every brand**, by instruction — one definition across
+all three so CPT is comparable between them. The no-cancel-after-10-minutes variant is
+fetched and shown beside it but never drives CPT.
+
 | brand | ad accounts | Branch events (headline / second) | CPT target | Classplus |
 |---|---|---|---|---|
 | **Postly** | `Postly`, `Postly Install` | `postly_trial_started_backend` / `postly_trial_nc_after10min_backend` | ₹150 | yes |

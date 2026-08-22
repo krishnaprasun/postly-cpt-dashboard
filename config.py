@@ -164,6 +164,10 @@ CLASSPLUS_ON = bool(CLASSPLUS_QUERIES)
 # `events` maps the page's two fixed slots to each brand's own Branch event names:
 #   t101  the headline count, the CPT numerator
 #   t10m  the secondary count shown beside it
+# t101 is TRIAL STARTED for every brand, deliberately and by the owner's instruction
+# (2026-08-22): one definition of "a trial" across all three, so CPT means the same
+# thing everywhere and the brands can be compared. The no-cancel-after-10-minutes
+# variant stays visible in t10m but never drives CPT.
 # The slot keys stay the same across brands so the page needs no per-brand branching;
 # only the labels and the underlying event names change.
 #
@@ -177,7 +181,8 @@ BRANDS = {
         "events": {"t101": "postly_trial_started_backend",
                    "t10m": "postly_trial_nc_after10min_backend"},
         "labels": {"t101": "Trials", "t10m": "NC 10m"},
-        "event_note": {"t101": "trial_started", "t10m": "nc_after10min"},
+        "event_note": {"t101": "postly_trial_started_backend",
+                       "t10m": "postly_trial_nc_after10min_backend"},
         "cpt_target": 150,
         "classplus": True,
     },
