@@ -120,6 +120,101 @@ Credentials come from `~/.anthropic/` (see [Credentials](#credentials)).
   Server-side cache is 90s (`CACHE_TTL`); past that it is served stale and refreshed
   behind the request rather than blocking it.
 
+## Testing vs trial
+
+The header carries **Trial / Testing / Blended**. They are separated because they buy
+different things: a testing campaign is looking for a creative that works and is expected
+to cost more per trial; a trial campaign scales one that already does. Averaging them
+gives a number true of neither.
+
+Postly, 30 days to 2026-08-24:
+
+| | Spend | Trials | CPT |
+|---|---|---|---|
+| trial | 92,84,003 | 49,976 | **186** |
+| testing | 12,07,976 | 1,515 | **797** |
+| blended | 1,04,91,979 | 51,491 | 204 |
+
+The ₹150 target is a *trial* target. Against blended ₹204 trial reads 36% off; it is 24%
+off. And a testing ad set judged against ₹150 is killed for doing its job, which is how
+the pipeline feeding trial dries up. Funda over 7 days: trial 196, testing 596, blended 202.
+
+**The split is decided once, on the campaign** — name matching `testing_re`, default
+`(?i)testing`, per-brand in `config.py` — and inherited by its ad sets and ads. Matching
+ad set names instead would be a second source of truth that disagrees with the first,
+because an ad set name travels with its creative when it graduates out of testing while
+the campaign it sits in is the thing that actually changed. Verified across all seven ad
+accounts: every brand names testing campaigns with the word.
+
+Anything not matching is trial, so a campaign that is neither — a retargeting or buffer
+campaign — lands on the trial side and dilutes it slightly. Change the brand's
+`testing_re` if that matters.
+
+Campaign, ad set and ad rows carry a `seg` tag and are filtered in the browser. Account
+and combined rows cannot be filtered, so both segments are rolled up server-side by
+summing campaigns per account — which reproduces the blended row exactly. Both brands
+reconcile to +0.00 on spend and trials.
+
+Two honest edges the page states rather than hides:
+
+- **Attribution stays brand-wide.** Branch attributes a trial to an ad *name*, which
+  carries no campaign, so unmatched trials belong to neither segment. The tile says so.
+- **A segment with no spend and no budget is disabled**, not shown empty. An empty table
+  reads as "nothing performed", a different claim from "no testing ran this window".
+
+## History store
+
+Settled days are served from GCS instead of being re-fetched. A 30-day window used to mean
+a full ad-level insights pull per ad account plus five Branch chunks per event, *every
+view*, for days that could no longer change — most of the cold-start latency and most of
+the exposure to Meta's code 17.
+
+- Days older than `HISTORY_SETTLE_DAYS` (3) come from the store; today and the two days
+  behind it are always live. 30 days → 27 stored + 3 live. 7 days → 4 + 3. Today → all live.
+- **A closed day is not a settled day.** Meta bills late and Branch backfills late events.
+  A day stored while still moving stays wrong forever, because nothing rechecks it.
+- **A day where both sources return nothing is refused**, never written — "no spend" and
+  "past retention" are indistinguishable from the client. Both sources answer for
+  2026-05-26; neither answers for 2026-02-24.
+- **The store is never load-bearing.** No `HISTORY_URL`, or the service down or slow, and
+  every path degrades to "nothing stored" and pulls live exactly as before.
+
+### Why a Cloud Run front door
+
+The org policy `iam.disableServiceAccountKeyCreation` forbids downloadable service-account
+keys, and Render issues no OIDC identity Google accepts — so no Google credential can live
+on Render. `history-service/` runs on Cloud Run with *ambient* credentials; Render presents
+a bearer token that is not a Google credential and reaches one bucket. The service also
+aggregates before answering, turning a 30-day reply from tens of thousands of per-day rows
+into a couple of thousand per-ad rows.
+
+Bucket `admanagementpostly-ads-history` (asia-south1, public access prevented). Service
+account `ads-history@` holds `objectAdmin` **on that bucket only** — no project-wide role.
+
+### Accuracy
+
+Verified on a fully settled window across all three brands:
+
+- **Spend reproduces the aggregate call exactly** — 0.00 delta on every brand.
+- **Trials** run 0.00%–0.37% low at brand level by day-sum. That difference is *entirely*
+  in the unattributed bucket: for Funda, trials matched to an ad name were 84,750 vs 84,772
+  (+0.026%) while trials with no ad name were −467. Every CPT is spend over *matched*
+  trials, so no ad, ad set, campaign or account figure moves.
+
+Round trip on a real day: write, read back, compare to live — spend delta 0.0000, trials
+exact, 768 of 768 ads matching, nothing pulled live.
+
+### Operating it
+
+    python3 tools/backfill_history.py --days 90          # resumable, skips stored days
+    python3 tools/backfill_history.py --dry-run          # what it would fetch
+
+Nightly, three Cloud Scheduler jobs (`ads-history-{postly,speakeasy,funda}`, 03:40/03:50/
+04:00 IST) POST `/api/snapshot?brand=X&days=5`. One job per brand so each request finishes
+well inside gunicorn's 180s timeout and a throttle on one brand cannot stop the others;
+`days=5` with stored days skipped means five missed nights heal themselves. The endpoint is
+token-gated because it *spends* rate limit, not because it is private.
+
 ## Export
 
 `Export` in the header downloads one CSV per level — **ad accounts, campaigns, ad sets,
