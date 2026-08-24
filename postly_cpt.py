@@ -345,7 +345,7 @@ def _branch(body, tries=5, url=None):
 # that reads too high, which is the direction that gets a working ad set killed. Measured
 # 2026-08-24 on a 7-day window: Funda 816 rows (82% of the cap), Postly 664, SpeakEasy 273.
 # Nothing was truncated yet; Funda was one busy week away.
-def _branch_pages(body, cap=40):
+def _branch_pages(body, cap=40, tries=5):
     """Every row for this query, following Branch's paging. Returns (rows, total_count).
 
     `cap` is a runaway guard, not a limit anyone should hit: 40 pages is 40,000 rows of
@@ -353,7 +353,7 @@ def _branch_pages(body, cap=40):
     """
     rows, total, url = [], None, BRANCH_URL
     for _ in range(cap):
-        j = _branch(body, url=url)
+        j = _branch(body, tries=tries, url=url)
         rows += j.get("results", [])
         pg = j.get("paging") or {}
         if total is None:
@@ -704,7 +704,16 @@ def meta_insights_daily(acct, since, until):
         "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend"})
 
 
-def branch_trials_daily(since, until, B):
+# Retry budget for the LIVE page vs the backfill. The long backoff that lets a backfill
+# ride out a throttle is exactly wrong in front of a person: a throttled Branch made every
+# SpeakEasy page load hang for 105 seconds and then fail, when failing in 15 and rendering
+# the Meta half would have been far more useful. The backfill has nobody waiting on it and
+# keeps the patient budget.
+BRANCH_LIVE_TRIES = int(os.environ.get("BRANCH_LIVE_TRIES", "2"))
+BRANCH_BACKFILL_TRIES = int(os.environ.get("BRANCH_BACKFILL_TRIES", "5"))
+
+
+def branch_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     """{date: {event_key: {ad_name: unique_count}}}, 7-day chunked and fully paged.
 
     Branch reports the day in `timestamp` as IST (+05:30), which is the same day boundary
@@ -740,7 +749,8 @@ def branch_trials_daily(since, until, B):
                 "start_date": d.strftime("%Y-%m-%d"), "end_date": ce.strftime("%Y-%m-%d"),
                 "dimensions": ["last_attributed_touch_data_tilde_ad_name"],
                 "granularity": "day", "aggregation": "unique_count",
-                "data_source": "eo_custom_event", "filters": {"name": [ev]}})
+                "data_source": "eo_custom_event", "filters": {"name": [ev]}},
+                tries=tries)
             for row in rows:
                 day = (row.get("timestamp") or "")[:10]
                 res = row.get("result", {})
@@ -814,10 +824,22 @@ def window_data(since, until, B, today=None):
     if live_since:
         for a in B["accounts"]:
             meta[a["id"]] += meta_insights_daily(a["id"], live_since, live_until)
-        for day, per_ev in branch_trials_daily(live_since, live_until, B).items():
-            for ev, by_name in per_ev.items():
-                for name, n in by_name.items():
-                    trials[ev][name] += n
+        # Branch failing must not take the page down with it. Spend, budgets, statuses and
+        # the whole testing/trial split come from Meta and are perfectly good without it —
+        # a Branch throttle used to 500 the entire dashboard, which is how a backfill
+        # competing for Branch quota made SpeakEasy unreachable rather than merely
+        # trial-less. Reported as an explicit failure, never as zero: a zero here would
+        # read as "no trials happened", which is a different and much worse claim.
+        try:
+            for day, per_ev in branch_trials_daily(live_since, live_until, B).items():
+                for ev, by_name in per_ev.items():
+                    for name, n in by_name.items():
+                        trials[ev][name] += n
+        except Exception as ex:
+            kind = ("Branch is rate-limiting this app"
+                    if isinstance(ex, BranchThrottled) else str(ex)[:160])
+            prov["trials_error"] = kind
+            trials = {k: defaultdict(int) for k in events}
     return meta, trials, prov
 
 
@@ -832,7 +854,7 @@ def snapshot(brand, date):
     if date > H.settled_through(today_ist()):
         return {"ok": False, "date": date, "reason": "not settled yet"}
     meta = {a["id"]: meta_insights_daily(a["id"], date, date) for a in B["accounts"]}
-    daily = branch_trials_daily(date, date, B)
+    daily = branch_trials_daily(date, date, B, tries=BRANCH_BACKFILL_TRIES)
     branch = {ev: dict(by_name) for ev, by_name in (daily.get(date) or {}).items()}
 
     # A day where BOTH sources return nothing is refused, never stored. "No spend that
@@ -1129,6 +1151,9 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         # per-account list of which roster listings Meta would not return. Spend,
         # trials and CPT stay correct regardless; only statuses and budgets are affected.
         "degraded": degraded,
+        # Set when Branch would not answer. Distinct from a brand having no Branch app:
+        # that one has no trials to show, this one has trials it could not read.
+        "trials_error": prov.get("trials_error"),
         "budgets_known": budgets_known,
         "budget_age_sec": budget_age,
         "budget_as_of": (datetime.fromtimestamp(time.time() - budget_age, IST)

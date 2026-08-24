@@ -396,7 +396,12 @@ const cls = c => (T===null || c===null) ? 'dimtxt'
 /* Whether this brand has a Branch app and named events. Without them there are no
    trials and therefore no CPT, so those columns and KPIs are removed rather than
    shown as zeros — a zero reads as "none happened", which is a different claim. */
-const hasTrials = () => !!(DATA && DATA.events && DATA.events.length);
+/* Trial columns need trials that were actually READ. A brand with no Branch app and a
+   brand whose Branch call was refused both end up without columns, but they are different
+   claims and only the second one gets a banner saying so. Showing 0 for either would
+   assert that no trials happened. */
+const hasTrials = () => !!(DATA && DATA.events && DATA.events.length
+                           && !DATA.trials_error);
 const cpt = (sp,tr) => tr>0 ? sp/tr : null;
 const cptTxt = (sp,tr) => tr>0 ? rs(sp/tr) : (sp>0 ? 'no trials' : '—');
 const pct = (n,d) => d>0 ? (100*n/d).toFixed(0)+'%' : '—';
@@ -497,6 +502,11 @@ async function load(force, silent, hard){
        Last updated ${DATA.generated_at.replace(' IST','')} IST.`);
     // When the throttle banner is up it already names the accounts, the listings and
     // the deadline; repeating it here would just be two boxes saying the same thing.
+    if(j.trials_error) notes.push(
+      `<b>Trial counts are unavailable.</b> ${j.trials_error}. Spend, budgets, statuses
+       and the testing/trial split are from Meta and are correct and current — only
+       trials and CPT are missing, and they are hidden rather than shown as zero.
+       Retried on the next refresh.`);
     if(j.degraded && j.degraded.length && !(j.rate_limit && j.rate_limit.active)) notes.push(
       `<b>Partial data.</b> Meta would not return some listings — ` +
       j.degraded.map(d=>`<b>${d.account}</b>: ${d.missing.join(' + ')}`).join('; ') +
