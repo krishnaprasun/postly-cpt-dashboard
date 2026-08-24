@@ -242,12 +242,47 @@ def api_longevity():
     since = request.args.get("since") or (
         datetime.strptime(today, "%Y-%m-%d") - timedelta(days=days - 1)).strftime("%Y-%m-%d")
     until = request.args.get("until") or today
+    force = request.args.get("force") == "1"
     try:
-        return jsonify(P.longevity(brand, since, until,
-                                   force=request.args.get("force") == "1"))
+        # The fast path serves a nightly-precomputed fold of the settled days and fetches
+        # only the unsettled tail. It is used whenever the caller asks for a plain window
+        # rather than explicit dates, which is what the page does.
+        if not (request.args.get("since") or request.args.get("until")):
+            return jsonify(P.longevity_fast(brand, days, force=force))
+        return jsonify(P.longevity(brand, since, until, force=force))
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)[:500]}), 500
+
+
+@app.route("/api/precompute", methods=["POST", "GET"])
+def api_precompute():
+    """Fold the settled days for each longevity window and store the result.
+
+    Token-gated for the same reason as /api/snapshot: it spends Meta and Branch quota.
+    Run nightly, after the snapshot jobs have written the day this depends on.
+    """
+    want = H.TOKEN
+    if not want or not hmac.compare_digest(request.headers.get("Authorization", ""),
+                                           "Bearer " + want):
+        return jsonify({"error": "unauthorized"}), 401
+    if not H.available():
+        return jsonify({"error": "no history store configured"}), 503
+    brands = [request.args.get("brand")] if request.args.get("brand") else list(C.BRANDS)
+    bad = [b for b in brands if b not in C.BRANDS]
+    if bad:
+        return jsonify({"error": f"unknown brand(s): {bad}"}), 400
+    wins = ([int(request.args["days"])] if request.args.get("days")
+            else list(P.LONG_WINDOWS))
+    out = []
+    for b in brands:
+        for w in wins:
+            try:
+                out.append(P.precompute_longevity(b, w))
+            except Exception as e:
+                traceback.print_exc()
+                out.append({"ok": False, "brand": b, "days": w, "error": str(e)[:200]})
+    return jsonify({"wrote": sum(1 for r in out if r.get("ok")), "results": out})
 
 
 @app.route("/api/snapshot", methods=["POST", "GET"])

@@ -379,7 +379,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <input type="date" id="lFrom" style="margin-left:4px"><span>→</span>
       <input type="date" id="lTo"></label>
     <label class="chk"><input type="checkbox" id="lActive"> still running only</label>
-    <button class="btn" id="lGo">Load</button>
+    <button class="btn" id="lGo">Refresh</button>
     <span class="meta" id="lcount"></span>
   </div>
 
@@ -883,9 +883,17 @@ function renderLongevity(){
     if(c.k==='days') return `<td>${num(Math.round(sum('days')/(r.length||1)))} avg</td>`;
     return '<td></td>';
   }).join('') + '</tr>';
-  document.getElementById('lcount').textContent =
-    `${r.length} of ${LONG.adsets.length} · ${LONG.covered_days} days covered from `
-    + `${LONG.covered_from}${LONG.live_days ? ` · ${LONG.live_days} pulled live` : ''}`;
+  // Freshness stated, never implied. A precomputed answer is yesterday's unless someone
+  // says otherwise, and this view is the one people will act on for creative decisions.
+  const h = LONG.stale_hours;
+  const age = (h === null || h === undefined) ? ''
+    : h < 1 ? 'just now' : h < 24 ? `${Math.round(h)}h ago` : `${(h/24).toFixed(1)}d ago`;
+  document.getElementById('lcount').innerHTML =
+    `${num(r.length)} of ${num(LONG.adsets.length)} · ${LONG.covered_days} days from `
+    + `${LONG.covered_from}`
+    + (LONG.precomputed
+        ? ` · <span class="${h > 26 ? 'warn' : ''}">computed ${age}</span>`
+        : ` · computed just now`);
 }
 
 /* ---------- table specs ---------- */
@@ -1130,7 +1138,12 @@ function longNote(){
        unknown rather than stopped, and "still running only" excludes them — unknown is
        not a yes.` : ''}
      <br><br>Daily spend is drawn for the ${num(LONG.series_top)} biggest spenders only;
-     the rest carry their totals but no sparkline.`;
+     the rest carry their totals but no sparkline.
+     ${LONG.precomputed ? `<br><br>These figures were folded ahead of time and are served
+       as they were computed — that is what makes this table appear instantly instead of
+       taking half a minute. <b>Refresh</b> re-reads Meta and Branch for the most recent
+       days and recomputes; everything older than ${LONG.covered_from ? '' : ''}the settle
+       window cannot have changed since.` : ''}`;
 }
 
 function mainNote(){

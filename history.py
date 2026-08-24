@@ -170,6 +170,51 @@ def put(brand, date, meta_by_account, branch_by_event):
         return False
 
 
+# ---- computed artifacts -----------------------------------------------------
+# The store's `brand` parameter is a path namespace, not a validated brand — so a
+# precomputed result lives under its own namespace ("postlylong90") beside the day
+# snapshots, with no change to the service. That is deliberate rather than lazy: adding a
+# dedicated endpoint means redeploying Cloud Run, and this needs none of that to be
+# correct. If the service is ever redeployed anyway, a real /v1/agg would read better.
+# Namespaces must be alphanumeric — the service rejects anything else before it touches a
+# path — so the separator is dropped rather than hyphenated.
+def agg_ns(brand, kind, n):
+    return f"{brand}{kind}{n}"
+
+
+def put_agg(ns, date, payload):
+    """Store one computed artifact. Returns True on success; never raises."""
+    global _last_error
+    if not available():
+        return False
+    try:
+        _call("PUT", "/v1/history", {"brand": ns, "date": date}, body=payload)
+        return True
+    except Exception as ex:
+        _last_error = f"{type(ex).__name__}: {str(ex)[:160]}"
+        return False
+
+
+def get_agg(ns):
+    """The most recent artifact in this namespace, or None. Never raises.
+
+    Most recent rather than "today's": a job that did not run last night should leave the
+    view a day stale and SAYING so, not empty.
+    """
+    try:
+        dates = _call("GET", "/v1/have", {"brand": ns}).get("dates") or []
+        if not dates:
+            return None
+        newest = max(dates)
+        j = _call("GET", "/v1/history", {"brand": ns, "dates": newest})
+        got = (j.get("days") or {}).get(newest)
+        if got:
+            got["_written"] = newest
+        return got
+    except Exception:
+        return None
+
+
 def have(brand):
     """Dates already stored for a brand, for the backfill to skip. [] on failure."""
     try:

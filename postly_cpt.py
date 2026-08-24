@@ -891,6 +891,10 @@ DAILY_SERIES_TOP = int(os.environ.get("DAILY_SERIES_TOP", "400"))
 _long_cache, _long_lock = {}, threading.Lock()
 
 
+def now_ist_str():
+    return datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST")
+
+
 def _adset_day(meta_rows, branch_day, events):
     """One day folded to {adset_id: {name, campaign, account, spend, t101, t10m}}.
 
@@ -1063,6 +1067,225 @@ def longevity(brand, since, until, force=False):
             "cached": False, "age_min": 0}
     with _long_lock:
         _long_cache[key] = {"at": time.time(), "data": out}
+    return out
+
+
+# ---- precomputed longevity -------------------------------------------------
+# Folding 90 stored days takes ~30s, which is a long time to sit in front of a table. The
+# fold is over SETTLED days, which by definition cannot change — so it is done once by a
+# nightly job and stored, and a request pays only for the handful of unsettled days on the
+# end. Everything the fold produces is additive, which is what makes the merge exact
+# rather than an approximation: spend and trials sum, `days` counts, `first` is a min,
+# `last` a max, and `span` is recomputed from the two.
+LONG_WINDOWS = tuple(int(x) for x in
+                     os.environ.get("LONG_WINDOWS", "30,60,90,180").split(","))
+
+
+def _fold_days(brand, dates, B):
+    """{adset_id: row} over `dates`, taking whatever the store has and nothing else."""
+    events = B["events"]
+    stored = H.fetch_raw(brand, dates) if H.available() else {}
+    per_set, series = {}, {}
+    for day in dates:
+        src = stored.get(day)
+        if not src:
+            continue
+        for sid, e in _adset_day(src.get("meta"), src.get("branch"), events).items():
+            row = per_set.get(sid)
+            if row is None:
+                row = per_set[sid] = {
+                    "id": sid, "name": e["name"], "campaign": e["campaign"],
+                    "campaign_id": e["campaign_id"], "account_id": e["account"],
+                    "first": day, "last": day, "days": 0, "spend": 0.0,
+                    **{k: 0.0 for k in events}}
+                series[sid] = {}
+            row["name"] = row["name"] or e["name"]
+            row["campaign"] = row["campaign"] or e["campaign"]
+            if e["spend"] > 0:
+                row["first"] = min(row["first"], day)
+                row["last"] = max(row["last"], day)
+                row["days"] += 1
+            row["spend"] += e["spend"]
+            for k in events:
+                row[k] += e[k]
+            series[sid][day] = round(e["spend"], 2)
+    return per_set, series, sorted(stored)
+
+
+def _tail_days(brand, B, after, today):
+    """Per-day folded rows for the days the store does not cover yet. Fetched ONCE.
+
+    This is the expensive half of longevity and the reason the first version of the
+    precompute bought nothing: measured on Postly, folding 26 stored days took 0.6s while
+    fetching the 4 unsettled days took 17.9s from Meta plus 4.5s from Branch. Optimising
+    the fold was optimising 2% of the work. So the tail is fetched once per brand and
+    shared across every window, and it goes INTO the artifact rather than being re-fetched
+    on the way out.
+    """
+    days = []
+    d = datetime.strptime(after, "%Y-%m-%d").date() + timedelta(days=1)
+    while d <= datetime.strptime(today, "%Y-%m-%d").date():
+        days.append(d.strftime("%Y-%m-%d")); d += timedelta(days=1)
+    if not days:
+        return {}
+    lo, hi = days[0], days[-1]
+    by_day = {}
+    for a in B["accounts"]:
+        for r in meta_insights_daily(a["id"], lo, hi):
+            by_day.setdefault(r.get("date_start"), {}).setdefault(a["id"], []).append(r)
+    try:
+        btrials = branch_trials_daily(lo, hi, B)
+    except Exception:
+        btrials = {}
+    return {day: _adset_day(by_day.get(day, {}), btrials.get(day, {}), B["events"])
+            for day in days if day in by_day}
+
+
+def _roster_status(B):
+    """(status, created, degraded account ids) as of now."""
+    status, created, degraded = {}, {}, set()
+    for a in B["accounts"]:
+        camps, live_sets, live_ads, ok = meta_roster(a["id"], False)
+        if not ok["adsets"]:
+            degraded.add(a["id"]); continue
+        for x in live_sets:
+            status[x["id"]] = x.get("effective_status", "ACTIVE")
+            if x.get("created_time"):
+                created[x["id"]] = x["created_time"][:10]
+    return status, created, degraded
+
+
+def precompute_longevity(brand, days, tail=None, status=None):
+    """Fold one window COMPLETE — stored days plus the live tail — and store it.
+
+    Complete on purpose. The artifact is what gets served, so anything left out of it is
+    something a request has to pay Meta for, which is the whole thing being avoided.
+    `tail` and `status` are passed in so one brand's expensive fetches are shared across
+    all four windows instead of repeated four times.
+    """
+    B = C.brand(brand)
+    today = today_ist()
+    start = (datetime.strptime(today, "%Y-%m-%d")
+             - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    end = H.settled_through(today)
+    dates = []
+    d = datetime.strptime(start, "%Y-%m-%d").date()
+    while d <= datetime.strptime(end, "%Y-%m-%d").date():
+        dates.append(d.strftime("%Y-%m-%d")); d += timedelta(days=1)
+
+    per_set, series, covered = _fold_days(brand, dates, B)
+    if tail is None:
+        tail = _tail_days(brand, B, covered[-1] if covered else end, today)
+    if status is None:
+        status = _roster_status(B)
+    st, created, degraded = status
+
+    for day in sorted(tail):
+        for sid, e in tail[day].items():
+            row = per_set.get(sid)
+            if row is None:
+                row = per_set[sid] = {
+                    "id": sid, "name": e["name"], "campaign": e["campaign"],
+                    "campaign_id": e["campaign_id"], "account_id": e["account"],
+                    "first": day, "last": day, "days": 0, "spend": 0.0,
+                    **{k: 0.0 for k in B["events"]}}
+                series[sid] = {}
+            if e["spend"] > 0:
+                row["first"] = min(row["first"], day)
+                row["last"] = max(row["last"], day)
+                row["days"] += 1
+            row["spend"] += e["spend"]
+            for k in B["events"]:
+                row[k] += e[k]
+            series[sid][day] = round(e["spend"], 2)
+
+    all_days = sorted(set(covered) | set(tail))
+    if not all_days:
+        return {"ok": False, "brand": brand, "days": days,
+                "reason": "nothing stored or fetchable for this window"}
+    floor = all_days[0]
+    span_dates = []
+    d = datetime.strptime(floor, "%Y-%m-%d").date()
+    while d <= datetime.strptime(all_days[-1], "%Y-%m-%d").date():
+        span_dates.append(d.strftime("%Y-%m-%d")); d += timedelta(days=1)
+
+    top = sorted(per_set.values(), key=lambda r: -r["spend"])[:DAILY_SERIES_TOP]
+    keep = {r["id"] for r in top}
+    for sid, row in per_set.items():
+        row["spend"] = round(row["spend"], 2)
+        for k in B["events"]:
+            row[k] = round(row[k], 1)
+        unknown = row["account_id"] in degraded
+        row["active"] = None if unknown else (st.get(sid) == "ACTIVE")
+        row["status"] = "UNKNOWN" if unknown else (st.get(sid) or "INACTIVE")
+        row["created"] = created.get(sid, "")
+        row["censored"] = row["first"] <= floor
+        row["span"] = (datetime.strptime(row["last"], "%Y-%m-%d")
+                       - datetime.strptime(row["first"], "%Y-%m-%d")).days + 1
+        row["daily"] = ([int(series[sid].get(x, 0)) for x in span_dates]
+                        if sid in keep else None)
+
+    art = {"v": 2, "brand": brand, "window_days": days,
+           "since": floor, "until": all_days[-1], "dates": span_dates,
+           "covered_from": floor, "covered_days": len(all_days),
+           "stored_days": len(covered), "live_days": len(tail), "live_runs": 1 if tail else 0,
+           "events": list(B["events"]), "cpt_target": B["cpt_target"],
+           "series_top": DAILY_SERIES_TOP,
+           "status_unknown": sorted(a["name"] for a in B["accounts"]
+                                    if a["id"] in degraded),
+           "generated_at": now_ist_str(),
+           "adsets": sorted(per_set.values(), key=lambda r: -r["spend"])}
+    ok = H.put_agg(H.agg_ns(brand, "long", days), today, art)
+    return {"ok": ok, "brand": brand, "days": days, "adsets": len(art["adsets"]),
+            "covered": len(all_days), "since": art["since"], "until": art["until"],
+            "error": None if ok else H.last_error()}
+
+
+def precompute_brand(brand, windows=None):
+    """Every window for one brand, sharing a single tail fetch and roster read."""
+    B = C.brand(brand)
+    today = today_ist()
+    tail = _tail_days(brand, B, H.settled_through(today), today)
+    status = _roster_status(B)
+    return [precompute_longevity(brand, w, tail=tail, status=status)
+            for w in (windows or LONG_WINDOWS)]
+
+
+def longevity_fast(brand, days, force=False):
+    """The precomputed artifact, served as-is. This is the fast path and it does no work.
+
+    Freshness is reported, never assumed: `generated_at` says when the numbers were
+    folded, and `stale_hours` how long ago that was. The page shows it and offers a
+    refresh rather than silently presenting yesterday as today.
+    """
+    if not force:
+        art = H.get_agg(H.agg_ns(brand, "long", days))
+        if art and art.get("adsets"):
+            age = None
+            try:
+                gen = datetime.strptime(art["generated_at"][:19], "%Y-%m-%d %H:%M:%S")
+                age = round((datetime.now(IST).replace(tzinfo=None) - gen)
+                            .total_seconds() / 3600, 1)
+            except Exception:
+                pass
+            return dict(art, precomputed=True, stale_hours=age,
+                        artifact_written=art.get("_written", ""),
+                        cached=False, age_min=0)
+
+    # No artifact yet (a brand whose first precompute has not run), or an explicit
+    # refresh. Same work the nightly job does, and it stores the result on the way out so
+    # the next reader gets it free.
+    B = C.brand(brand)
+    today = today_ist()
+    tail = _tail_days(brand, B, H.settled_through(today), today)
+    st = precompute_longevity(brand, days, tail=tail, status=_roster_status(B))
+    art = H.get_agg(H.agg_ns(brand, "long", days)) if st.get("ok") else None
+    if art:
+        return dict(art, precomputed=True, stale_hours=0.0, cached=False, age_min=0)
+    since = (datetime.strptime(today, "%Y-%m-%d")
+             - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    out = longevity(brand, since, today, force=True)
+    out["precomputed"] = False
     return out
 
 
