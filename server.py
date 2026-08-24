@@ -95,6 +95,30 @@ def protected(fn):
     return wrapper
 
 
+def _key():
+    """The link key on this request. Accepted from the query string or the path."""
+    return (request.args.get("k") or request.view_args or {}).get("k", "") \
+        if isinstance(request.view_args, dict) else (request.args.get("k") or "")
+
+
+def _allowed(key):
+    """Brands this key may see, or None if the key is not valid."""
+    return C.brands_for(key)
+
+
+def _gate(key, brand):
+    """(brand, error_response). Narrows the requested brand to what the key allows."""
+    allowed = _allowed(key)
+    if allowed is None:
+        return None, (jsonify({"error": "This link is not valid. Ask for your team's "
+                               "dashboard link."}), 403)
+    if brand not in allowed:
+        # Not an error worth explaining in detail — a wrong brand on a valid key is
+        # either a stale bookmark or someone trying it on, and both get the same answer.
+        brand = allowed[0]
+    return brand, None
+
+
 # ----------------------------------------------------------------- cache ---
 def _build_into_cache(key):
     try:
@@ -186,26 +210,51 @@ def resolve_range(rng, since, until):
 
 
 # ----------------------------------------------------------------- routes --
+@app.route("/b/<key>")
+@protected
+def branded(key):
+    """One team's link. Locks the page to that brand and hides the switcher."""
+    return index(key=key)
+
+
 @app.route("/")
 @protected
-def index():
+def index(key=None):
     # The brand list is server-rendered so the switcher and the loading veil are correct
     # on the very first paint, before any data has been fetched.
-    brand = request.args.get("brand", C.DEFAULT_BRAND)
-    if brand not in C.BRANDS:
-        brand = C.DEFAULT_BRAND
+    key = key or request.args.get("k", "")
+    allowed = _allowed(key)
+    if allowed is None:
+        # No hint about which links exist or how many — a wrong key learns nothing.
+        return Response(
+            "<!doctype html><meta charset=utf-8><title>Ads Performance</title>"
+            "<style>body{font:15px/1.6 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;"
+            "background:#FDFCF7;color:#1A1C2E;display:grid;place-items:center;height:100vh;"
+            "margin:0}div{max-width:380px;padding:0 24px}</style>"
+            "<div><h1 style='font-size:18px;margin:0 0 8px'>Ads Performance</h1>"
+            "<p style='color:#787E91'>This dashboard is reached through your team's own "
+            "link. Ask whoever set it up for yours.</p></div>", 403,
+            mimetype="text/html")
+
+    brand = request.args.get("brand", allowed[0])
+    if brand not in allowed:
+        brand = allowed[0]
     return render_template(
         "index.html",
-        brands=[{"key": k, "label": v["label"]} for k, v in C.BRANDS.items()],
+        link_key=key,
+        # Only the brands this link may see. A switcher listing brands the key cannot
+        # open would be a list of things to go looking for.
+        brands=[{"key": k, "label": C.BRANDS[k]["label"]} for k in allowed],
         default_brand=brand,
         brand_logo=C.BRANDS[brand]["logo"],
         brand_themes=[dict(t, key=k) for k, t in
                       ((k, v["theme"]) for k, v in C.BRANDS.items())],
-        brand_meta={k: {"label": v["label"], "accounts": len(v["accounts"]),
+        brand_meta={k: {"label": C.BRANDS[k]["label"],
+                        "accounts": len(C.BRANDS[k]["accounts"]),
                         "branch": bool(C.BRAND_HAS_BRANCH(k)),
-                        "classplus": bool(v["classplus"]),
-                        "logo": v["logo"]}
-                    for k, v in C.BRANDS.items()})
+                        "classplus": bool(C.BRANDS[k]["classplus"]),
+                        "logo": C.BRANDS[k]["logo"]}
+                    for k in allowed})
 
 
 @app.route("/api/data")
@@ -213,9 +262,10 @@ def index():
 def api_data():
     since, until = resolve_range(request.args.get("range", "today"),
                                  request.args.get("since"), request.args.get("until"))
-    brand = request.args.get("brand", C.DEFAULT_BRAND)
-    if brand not in C.BRANDS:
-        brand = C.DEFAULT_BRAND
+    brand, err = _gate(request.args.get("k", ""),
+                       request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
     try:
         hard = request.args.get("hard") == "1"
         return jsonify(get_data(since, until, brand,
@@ -234,9 +284,10 @@ def api_longevity():
     costs far more, so making every page load pay for it would be the wrong trade for a
     view most people open occasionally.
     """
-    brand = request.args.get("brand", C.DEFAULT_BRAND)
-    if brand not in C.BRANDS:
-        brand = C.DEFAULT_BRAND
+    brand, err = _gate(request.args.get("k", ""),
+                       request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
     today = P.today_ist()
     days = max(7, min(int(request.args.get("days", "90")), 370))
     since = request.args.get("since") or (

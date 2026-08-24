@@ -44,3 +44,16 @@ services:
         sync: false
       - key: HISTORY_TOKEN
         sync: false
+      # ── Per-brand links ──
+      # One unguessable link per brand, because each brand is a different team. The link
+      # IS the credential — this narrows "anyone with the URL" from one secret covering
+      # everything to one secret per team; it is not a login. Unset them all and the app
+      # reverts to open/all-brands with no deploy. Rotate by changing the value here.
+      - key: BRAND_LINK_POSTLY
+        sync: false
+      - key: BRAND_LINK_SPEAKEASY
+        sync: false
+      - key: BRAND_LINK_FUNDA
+        sync: false
+      - key: BRAND_LINK_ALL       # sees every brand — keep this one to yourself
+        sync: false

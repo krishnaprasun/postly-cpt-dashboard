@@ -243,6 +243,54 @@ BRANDS = {
 }
 DEFAULT_BRAND = "postly"
 
+# ---------------------------------------------------------- brand links ----
+# One unguessable link per brand, because each brand is a different team and a team
+# should land on its own numbers and not wander into another brand's spend.
+#
+# The link IS the credential. That is not a new idea here — the dashboard has always been
+# "anyone with the URL", by the owner's explicit decision — this only narrows it from one
+# secret covering everything to one secret per team. It is NOT a login: a link that gets
+# forwarded grants what it grants, and anyone holding it keeps access until it is rotated.
+# Rotating is changing one env var.
+#
+# Resolution order matches everything else here: env first, then the file, so Render can
+# hold the real values while a laptop reads them from ~/.anthropic.
+def _brand_links():
+    out = {}
+    try:
+        j = json.loads(_read("~/.anthropic/brand_links.json") or "{}")
+    except ValueError:
+        j = {}
+    for b in BRANDS:
+        v = (os.environ.get("BRAND_LINK_" + b.upper(), "").strip()
+             or (j.get(b) or "").strip())
+        if v:
+            out[v] = b
+    master = (os.environ.get("BRAND_LINK_ALL", "").strip()
+              or (j.get("all") or "").strip())
+    return out, master
+
+
+BRAND_LINKS, MASTER_LINK = _brand_links()
+# With no links configured the app behaves exactly as it always did: open, all brands.
+# So this ships dark and is switched on by setting the env vars, and switching it off is
+# unsetting them — no deploy either way.
+LINKS_ON = bool(BRAND_LINKS or MASTER_LINK)
+
+
+def brands_for(key):
+    """Which brands this link may see. None means 'not a valid link'.
+
+    An empty/absent key is only acceptable while no links are configured at all.
+    """
+    if not LINKS_ON:
+        return list(BRANDS)
+    key = (key or "").strip()
+    if MASTER_LINK and key == MASTER_LINK:
+        return list(BRANDS)
+    b = BRAND_LINKS.get(key)
+    return [b] if b else None
+
 
 def brand(name):
     """One brand's config, with its Branch pair resolved. Unknown name -> default."""

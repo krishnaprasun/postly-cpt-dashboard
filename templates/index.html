@@ -306,7 +306,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
 <header>
   <div class="hrow">
     <div class="brand"><img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt=""><h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span> <em>Performance</em> <span id="win"></span></h1></div>
-    <div class="brandsw" id="brandsw">{% for b in brands %}<button data-b="{{ b.key }}"{% if b.key == default_brand %} class="on"{% endif %}>{{ b.label }}</button>{% endfor %}</div>
+    {% if brands|length > 1 %}<div class="brandsw" id="brandsw">{% for b in brands %}<button data-b="{{ b.key }}"{% if b.key == default_brand %} class="on"{% endif %}>{{ b.label }}</button>{% endfor %}</div>{% else %}<div class="brandsw" id="brandsw" style="display:none"></div>{% endif %}
     <div class="segsw" id="segsw">
       <button data-s="trial" class="on">Trial</button>
       <button data-s="testing">Testing</button>
@@ -412,8 +412,12 @@ const MAX_SPAN = 31;                 // days; Branch is fetched in 7-day chunks,
 /* Today in IST regardless of where the browser is — shifting the epoch by +5:30 and
    reading the UTC calendar date gives the IST wall-clock date. */
 const istToday = () => new Date(Date.now() + 330*60000).toISOString().slice(0,10);
+/* The link key travels on every API call. Without it the server cannot tell a Funda
+   team's link from a Postly one, and the whole point of separate links is that it can. */
+const LINK_KEY = {{ link_key | tojson }};
+const K = LINK_KEY ? `&k=${encodeURIComponent(LINK_KEY)}` : '';
 const apiQuery = () => `brand=${BRAND}&` + (CUSTOM
-  ? `since=${CUSTOM.since}&until=${CUSTOM.until}` : `range=${RANGE}`);
+  ? `since=${CUSTOM.since}&until=${CUSTOM.until}` : `range=${RANGE}`) + K;
 const rangeLabel = () => CUSTOM
   ? (CUSTOM.since===CUSTOM.until ? CUSTOM.since : `${CUSTOM.since} → ${CUSTOM.until}`)
   : document.getElementById('range').selectedOptions[0].textContent;
@@ -763,7 +767,7 @@ async function loadLongevity(force){
   document.getElementById('lcount').textContent = 'loading…';
   document.getElementById('lGo').disabled = true;
   try{
-    const r = await fetch(`/api/longevity?brand=${BRAND}&days=${days}${force?'&force=1':''}`);
+    const r = await fetch(`/api/longevity?brand=${BRAND}&days=${days}${force?'&force=1':''}${K}`);
     const j = await r.json();
     if(j.error){ document.getElementById('lcount').textContent = 'failed: ' + j.error; return; }
     LONG = j; LONGKEY = key;
@@ -1453,7 +1457,8 @@ document.getElementById('brandsw').onclick = e => {
   [...document.getElementById('tabs').children].forEach(
     x => x.classList.toggle('on', x.dataset.t === 'combined'));
   SORT = {key:'spend', dir:-1};
-  history.replaceState(null, '', `?brand=${b}`);
+  history.replaceState(null, '', LINK_KEY
+    ? `${location.pathname}?brand=${b}` : `?brand=${b}`);
   load(true, false, false);
 };
 /* Opened on click rather than hovered: it is a menu of downloads, and one stray mouse
