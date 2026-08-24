@@ -254,25 +254,48 @@ def api_snapshot():
     if request.args.get("date"):
         dates = [request.args["date"]]
     else:
-        n = max(1, min(int(request.args.get("days", "1")), 90))
+        n = max(1, min(int(request.args.get("days", "1")), 120))
         dates = [(datetime.strptime(newest, "%Y-%m-%d") - timedelta(days=i))
                  .strftime("%Y-%m-%d") for i in range(n)][::-1]
 
-    out, wrote = [], 0
+    # `limit` caps how many days one call will actually FETCH, skips excluded. It is what
+    # lets a 90-day backfill run as many short calls instead of one long one: each stays
+    # well inside gunicorn's 180s timeout, and the gaps between calls are what stop this
+    # from crowding out the live page's Branch quota the way a continuous backfill did.
+    limit = max(1, min(int(request.args.get("limit", "365")), 365))
+
+    out, wrote, fetched = [], 0, 0
     for b in brands:
         have = set(H.have(b))
         for d in dates:
             if d in have:
-                out.append({"brand": b, "date": d, "ok": True, "skipped": "already stored"})
-                continue
+                continue                       # silent: a full listing helps nobody here
+            if fetched >= limit:
+                out.append({"brand": b, "date": d, "ok": True,
+                            "skipped": "limit reached — next call continues"})
+                break
+            fetched += 1
             try:
                 r = P.snapshot(b, d)
+            except P.BranchThrottled as e:
+                # Same rule as the CLI backfill: stop, do not keep knocking. Every extra
+                # attempt feeds the limiter that is holding the door shut.
+                out.append({"brand": b, "ok": False, "date": d,
+                            "error": "Branch rate-limiting — stopped", "stopped": True})
+                break
             except Exception as e:
                 traceback.print_exc()
                 r = {"ok": False, "brand": b, "date": d, "error": str(e)[:200]}
+                out.append(r)
+                continue
             wrote += 1 if r.get("ok") else 0
             out.append(r)
-    return jsonify({"wrote": wrote, "results": out})
+    remaining = {}
+    for b in brands:
+        have = set(H.have(b))
+        remaining[b] = len([d for d in dates if d not in have])
+    return jsonify({"wrote": wrote, "fetched": fetched,
+                    "remaining": remaining, "results": out})
 
 
 @app.after_request
