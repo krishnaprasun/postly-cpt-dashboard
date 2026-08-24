@@ -45,6 +45,30 @@ ADMIN_PASS = os.environ.get("ADMIN_PASS", "")
 _cache, _lock = {}, threading.Lock()
 _refreshing = set()
 _last_error = {}
+# Don't write the payload to GCS on every build. A build happens whenever the 90s cache
+# expires and someone is looking, and persisting each one would be a steady stream of
+# multi-megabyte writes to buy nothing — what matters is that SOMETHING recent survives
+# the instance sleeping.
+PERSIST_EVERY = int(os.environ.get("PERSIST_EVERY", "600"))
+_persisted = {}
+
+
+def _persist(key, data):
+    """Save this payload for the next cold start. Best effort, never blocks a response."""
+    if not H.available():
+        return
+    since, until, brand = key
+    now = time.time()
+    with _lock:
+        if now - _persisted.get(key, 0) < PERSIST_EVERY:
+            return
+        _persisted[key] = now
+    try:
+        H.put_payload(brand, since, until, dict(data, _saved_at=now), P.today_ist())
+    except Exception:
+        # A cache that cannot be saved is not an error anyone needs to hear about; the
+        # request already has its numbers.
+        traceback.print_exc()
 
 
 def _friendly(exc):
@@ -131,6 +155,7 @@ def _build_into_cache(key):
         with _lock:
             _cache[key] = {"at": time.time(), "data": data}
             _last_error.pop(key, None)
+        _persist(key, data)
     except Exception as e:
         traceback.print_exc()
         with _lock:
@@ -178,6 +203,25 @@ def get_data(since, until, brand, force=False, hard=False):
             out["warning_kind"] = warn["kind"]
         return out
 
+    # Cold in this process — but the last instance may have left a payload behind. Serving
+    # that immediately and rebuilding behind the request is the whole point: a woken
+    # instance should show real numbers at once, not spend half a minute proving it can.
+    if not (force or hard):
+        saved = H.get_payload(brand, since, until)
+        if saved and saved.get("combined"):
+            age = int(max(0, time.time() - (saved.get("_saved_at") or 0)))
+            with _lock:
+                if key not in _refreshing:
+                    _refreshing.add(key)
+                    start = True
+                else:
+                    start = False
+            if start:
+                threading.Thread(target=_build_into_cache, args=(key,),
+                                 daemon=True).start()
+            return _with_live_limits(dict(saved, cached=True, age=age, stale=True,
+                                          restored=True))
+
     try:
         data = P.build(since, until, brand, force=hard)
     except Exception as e:
@@ -196,6 +240,7 @@ def get_data(since, until, brand, force=False, hard=False):
     with _lock:
         _cache[key] = {"at": time.time(), "data": data}
         _last_error.pop(key, None)
+    _persist(key, data)
     return dict(data, cached=False, age=0, stale=False)
 
 

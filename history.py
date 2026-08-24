@@ -215,6 +215,29 @@ def get_agg(ns):
         return None
 
 
+# ---- persisted payload cache ------------------------------------------------
+# The result cache lives in the gunicorn process, so a free instance that has slept loses
+# it and the next person pays a full Meta+Branch build — 8 to 30s, on top of the 15-30s
+# wake. Persisting the last good payload turns that into "serve the last numbers instantly
+# and refresh behind the request", which is what the in-process cache already does within
+# a process. This just makes it survive the process dying.
+#
+# The window goes in the namespace as digits (alphanumeric, which the service requires)
+# rather than in the date slot, so the date slot can stay a real date and the newest write
+# wins on read.
+def payload_ns(brand, since, until):
+    return f"{brand}pay{since.replace('-', '')}{until.replace('-', '')}"
+
+
+def put_payload(brand, since, until, payload, today):
+    return put_agg(payload_ns(brand, since, until), today, payload)
+
+
+def get_payload(brand, since, until):
+    """Last persisted payload for this window, or None. Never raises."""
+    return get_agg(payload_ns(brand, since, until))
+
+
 def have(brand):
     """Dates already stored for a brand, for the backfill to skip. [] on failure."""
     try:
