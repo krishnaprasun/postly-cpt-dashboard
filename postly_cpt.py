@@ -302,9 +302,9 @@ def meta_roster(acct, force=False):
 
 
 # -------------------------------------------------------------- Branch -----
-def _branch(body, tries=5):
+def _branch(body, tries=5, url=None):
     for i in range(tries):
-        req = urllib.request.Request(BRANCH_URL, data=json.dumps(body).encode(),
+        req = urllib.request.Request(url or BRANCH_URL, data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json"},
                                      method="POST")
         try:
@@ -319,6 +319,33 @@ def _branch(body, tries=5):
             if i < tries - 1:
                 time.sleep(6 * (i + 1)); continue
             raise RuntimeError(f"Branch: {ex}")
+
+
+# Branch caps a response at 1000 rows and reports the real size in
+# `paging.total_count`, with `paging.next_url` carrying the offset. Taking the first page
+# only is a SILENT under-count — no error, no flag, just fewer trials and therefore a CPT
+# that reads too high, which is the direction that gets a working ad set killed. Measured
+# 2026-08-24 on a 7-day window: Funda 816 rows (82% of the cap), Postly 664, SpeakEasy 273.
+# Nothing was truncated yet; Funda was one busy week away.
+def _branch_pages(body, cap=40):
+    """Every row for this query, following Branch's paging. Returns (rows, total_count).
+
+    `cap` is a runaway guard, not a limit anyone should hit: 40 pages is 40,000 rows of
+    distinct ad names in one window.
+    """
+    rows, total, url = [], None, BRANCH_URL
+    for _ in range(cap):
+        j = _branch(body, url=url)
+        rows += j.get("results", [])
+        pg = j.get("paging") or {}
+        if total is None:
+            total = pg.get("total_count")
+        nxt = pg.get("next_url")
+        if not nxt or len(rows) >= (total or 0):
+            break
+        # next_url is a path on the same host, e.g. /v1/query/analytics?limit=1000&after=1000
+        url = urllib.parse.urljoin(BRANCH_URL, nxt)
+    return rows, (total if total is not None else len(rows))
 
 
 def branch_trials_by_ad(since, until, B):
@@ -338,13 +365,13 @@ def branch_trials_by_ad(since, until, B):
     while d <= endd:
         ce = min(d + timedelta(days=BRANCH_MAX_SPAN - 1), endd)
         for key, ev in events.items():
-            j = _branch({
+            rows, _tc = _branch_pages({
                 "branch_key": bkey, "branch_secret": bsecret,
                 "start_date": d.strftime("%Y-%m-%d"), "end_date": ce.strftime("%Y-%m-%d"),
                 "dimensions": ["last_attributed_touch_data_tilde_ad_name"],
                 "granularity": "all", "aggregation": "unique_count",
                 "data_source": "eo_custom_event", "filters": {"name": [ev]}})
-            for row in j.get("results", []):
+            for row in rows:
                 res = row.get("result", {})
                 out[key][res.get("last_attributed_touch_data_tilde_ad_name")] += \
                     res.get("unique_count", 0)
