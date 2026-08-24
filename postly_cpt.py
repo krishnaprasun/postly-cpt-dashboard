@@ -303,6 +303,11 @@ def meta_roster(acct, force=False):
 
 
 # -------------------------------------------------------------- Branch -----
+class BranchThrottled(RuntimeError):
+    """Branch is refusing on rate limit. Distinct from a generic failure because the
+    caller's right response is to STOP, not to move on to the next day."""
+
+
 def _branch(body, tries=5, url=None):
     for i in range(tries):
         req = urllib.request.Request(url or BRANCH_URL, data=json.dumps(body).encode(),
@@ -314,7 +319,19 @@ def _branch(body, tries=5, url=None):
         except urllib.error.HTTPError as e:
             b = e.read().decode()
             if e.code in (429, 500, 502, 503) and i < tries - 1:
-                time.sleep(10 * (i + 1)); continue
+                # 10/20/30/40s totalled 100s, which was not enough: a backfill hit a 429
+                # that outlasted it and then lost eight consecutive days, each attempt
+                # feeding the limiter that caused the last one. Back off properly, and
+                # believe Retry-After when Branch sends it.
+                wait = 15 * (2 ** i)                      # 15, 30, 60, 120
+                try:
+                    ra = int(e.headers.get("Retry-After") or 0)
+                except (TypeError, ValueError):
+                    ra = 0
+                time.sleep(max(wait, min(ra, 300)))
+                continue
+            if e.code == 429:
+                raise BranchThrottled(f"Branch 429 after {tries} attempts")
             raise RuntimeError(f"Branch {e.code}: {b[:300]}")
         except Exception as ex:
             if i < tries - 1:

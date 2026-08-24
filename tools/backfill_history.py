@@ -70,6 +70,16 @@ def main():
             t0 = time.time()
             try:
                 r = P.snapshot(brand, day)
+            except P.BranchThrottled as ex:
+                # Ploughing on is what turned one throttle into an eight-day hole: every
+                # further day is another request against the limiter holding the door
+                # shut. Stop this brand, say exactly what is missing, and let a re-run
+                # pick it up — the backfill skips whatever is already stored.
+                left = todo[i - 1:]
+                print(f"  {day}  Branch is rate-limiting — STOPPING {brand}. {ex}")
+                print(f"  {len(left)} day(s) still missing for {brand}: "
+                      f"{left[0]} → {left[-1]}. Re-run this command later to fill them.")
+                break
             except Exception as ex:
                 print(f"  {day}  FAILED  {type(ex).__name__}: {str(ex)[:120]}")
                 continue
