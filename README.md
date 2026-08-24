@@ -467,6 +467,32 @@ Configure with `CLASSPLUS_QUERIES="19695:key"` (or a `queries` list in
 `~/.anthropic/classplus_creds.json`). The older single-source `CLASSPLUS_QUERY_ID` /
 `CLASSPLUS_API_KEY` pair still works and is appended to the list.
 
+## Per-brand links
+
+Each brand has its own unguessable link — `/b/<value>` — because each brand is a different
+team. Opening one locks the page to that brand, hides the brand switcher, and every API
+call carries the key so the server can tell one team's link from another's.
+
+Separate URLs alone would have been theatre: the switcher was still on the page and
+`?brand=` accepted anything, so a Funda link reached Postly's spend in two clicks. The key
+is what makes it real.
+
+- A **valid key asking for another brand** is served its own brand, not an error. A stale
+  bookmark and someone trying it on deserve the same answer.
+- An **invalid key** gets a 403 that names no brands and reveals no count.
+- The **bare `/` URL requires a key too** — it is the URL everybody already has, so leaving
+  it open would defeat the purpose. `BRAND_LINK_ALL` is the all-brands link; keep it to
+  yourself.
+
+**This is not a login, and should not be described as one.** The dashboard has always been
+"anyone with the URL" by the owner's decision; this narrows that from one secret covering
+three brands to one secret per team. A forwarded link works until it is rotated, and
+rotating is changing one env var — no deploy.
+
+Values live in `~/.anthropic/brand_links.json` (mode 600) and as `BRAND_LINK_*` on Render.
+With none set, `LINKS_ON` is false and the app is open to all brands exactly as before, so
+this can be switched on and off without deploying.
+
 ## Access
 
 **There is no login.** Anyone with the URL sees today's spend, CPT, budgets, and
