@@ -204,6 +204,30 @@ Verified on a fully settled window across all three brands:
 Round trip on a real day: write, read back, compare to live — spend delta 0.0000, trials
 exact, 768 of 768 ads matching, nothing pulled live.
 
+### Surviving a sleep
+
+The result cache lives in the gunicorn process, and the free instance sleeps after 15
+minutes idle — so that cache died with it and the next person paid a full Meta+Branch
+build on top of the 15-30s wake. The last good payload is now persisted to the same
+bucket, and a woken instance serves it immediately (marked `stale`, with its real age)
+while rebuilding behind the request.
+
+    first build            17.0s   (and saved)
+    cold after restart      0.5s   restored, rebuilding behind
+    cold, no saved copy    10.9s   what every wake used to cost
+
+Writes are throttled to one per ten minutes per window — a build runs whenever the 90s
+cache expires and someone is looking, and persisting each one would be a stream of
+multi-megabyte writes buying nothing. Saving never blocks a response, and a failed write
+is swallowed: the request already has its numbers.
+
+**Note the asymmetry this leaves.** Settled days come from the store, so a 30- or 90-day
+window is mostly served from storage. A 3-day window is *entirely* inside the settle
+window and therefore 100% live — it is the slowest view, not the fastest. Persisting the
+payload cache hides that on repeat visits; it does not change it. The remaining lever is
+storing unsettled days provisionally and overwriting them until they settle, which would
+change what yesterday's spend means and has deliberately not been done.
+
 ### Operating it
 
     python3 tools/backfill_history.py --days 90          # resumable, skips stored days
