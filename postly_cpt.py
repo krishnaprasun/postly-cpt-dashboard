@@ -291,7 +291,8 @@ def meta_roster(acct, force=False):
         f"{acct}/campaigns", {"fields": "id,name,effective_status,daily_budget"},
         rl_retries=0), ROSTER_TTL, force)
     sets, ok_s = _part(acct, "adsets", lambda: _graph(
-        f"{acct}/adsets", {"fields": "id,name,effective_status,daily_budget,campaign_id",
+        f"{acct}/adsets", {"fields": "id,name,effective_status,daily_budget,campaign_id,"
+                                     "created_time",
                            "effective_status": json.dumps(["ACTIVE"])},
         rl_retries=0), ROSTER_TTL, force)
     ads_, ok_a = _part(acct, "ads", lambda: _graph(
@@ -879,6 +880,190 @@ def snapshot(brand, date):
                                for v in meta.values() for r in v), 2),
             "trials": {ev: sum(v.values()) for ev, v in branch.items()},
             "error": H.last_error() if not ok else None}
+
+
+# ---------------------------------------------------------- longevity ------
+# "Which creatives keep spending, and for how long" is a different question from every
+# other one this app answers, and the only one that needs history rather than a window.
+# It is also the question the store was worth building for.
+LONGEVITY_TTL = int(os.environ.get("LONGEVITY_TTL", "1800"))
+DAILY_SERIES_TOP = int(os.environ.get("DAILY_SERIES_TOP", "400"))
+_long_cache, _long_lock = {}, threading.Lock()
+
+
+def _adset_day(meta_rows, branch_day, events):
+    """One day folded to {adset_id: {name, campaign, account, spend, t101, t10m}}.
+
+    The ad-name join is the same one build() does and for the same reason: Branch knows
+    an ad NAME and nothing else, so a name shared by several ad sets has its trials split
+    by that day's spend share. Splitting by the window's share instead would put trials
+    on a day the ad set did not spend.
+    """
+    sets, by_name = {}, defaultdict(list)
+    for acct, rows in (meta_rows or {}).items():
+        for r in rows:
+            sid = r.get("adset_id")
+            if not sid:
+                continue
+            e = sets.get(sid)
+            if e is None:
+                e = sets[sid] = {"name": r.get("adset_name", ""),
+                                 "campaign": r.get("campaign_name", ""),
+                                 "campaign_id": r.get("campaign_id", ""),
+                                 "account": acct, "spend": 0.0,
+                                 **{k: 0.0 for k in events}}
+            e["spend"] += float(r.get("spend") or 0)
+            if r.get("ad_name"):
+                by_name[r["ad_name"]].append((sid, float(r.get("spend") or 0)))
+    for ev in events:
+        for name, n in ((branch_day or {}).get(ev) or {}).items():
+            group = by_name.get(name)
+            if not group:
+                continue
+            tot = sum(sp for _, sp in group)
+            for sid, sp in group:
+                if sid in sets:
+                    sets[sid][ev] += n * (sp / tot) if tot else n / len(group)
+    return sets
+
+
+def longevity(brand, since, until, force=False):
+    """Per ad set across the whole window: when it first spent, how long it kept going.
+
+    Deliberately NOT built from build() per day — that would be one Meta and Branch pull
+    per day and defeat the store entirely. Stored days come back raw and are folded here.
+    """
+    key = (brand, since, until)
+    with _long_lock:
+        hit = _long_cache.get(key)
+        if hit and not force and time.time() - hit["at"] < LONGEVITY_TTL:
+            return dict(hit["data"], cached=True,
+                        age_min=int((time.time() - hit["at"]) // 60))
+
+    B = C.brand(brand)
+    events = B["events"]
+    today = today_ist()
+    dates = []
+    d = datetime.strptime(since, "%Y-%m-%d").date()
+    endd = datetime.strptime(min(until, today), "%Y-%m-%d").date()
+    while d <= endd:
+        dates.append(d.strftime("%Y-%m-%d")); d += timedelta(days=1)
+
+    stored = H.fetch_raw(brand, dates) if H.available() else {}
+    live_days = [x for x in dates if x not in stored]
+    # The unstored tail is normally today plus the settle window. If the store is empty
+    # this becomes the whole range, which is legitimate but slow — the caller is told how
+    # many days had to be fetched live so a long wait is explained rather than mysterious.
+    live = {}
+    # Fetch the unstored days as CONTIGUOUS RUNS, not as one min..max span. A single gap
+    # in the middle of the store — eight days lost to a Branch throttle, in the case that
+    # found this — would otherwise stretch the live range from that gap all the way to
+    # today and re-pull two months from Meta and Branch, which is precisely what the
+    # store exists to avoid. Measured: 59 live days instead of 3.
+    runs = []
+    for day in live_days:
+        if runs and (datetime.strptime(day, "%Y-%m-%d")
+                     - datetime.strptime(runs[-1][-1], "%Y-%m-%d")).days == 1:
+            runs[-1].append(day)
+        else:
+            runs.append([day])
+    for run in runs:
+        lo, hi = run[0], run[-1]
+        by_day = {}
+        for a in B["accounts"]:
+            for r in meta_insights_daily(a["id"], lo, hi):
+                by_day.setdefault(r.get("date_start"), {}).setdefault(a["id"], []).append(r)
+        try:
+            btrials = branch_trials_daily(lo, hi, B)
+        except Exception:
+            btrials = {}
+        for day in run:
+            live[day] = {"meta": by_day.get(day, {}), "branch": btrials.get(day, {})}
+
+    per_set, series = {}, {}
+    for day in dates:
+        src = stored.get(day) or live.get(day)
+        if not src:
+            continue
+        for sid, e in _adset_day(src.get("meta"), src.get("branch"), events).items():
+            row = per_set.get(sid)
+            if row is None:
+                row = per_set[sid] = {
+                    "id": sid, "name": e["name"], "campaign": e["campaign"],
+                    "campaign_id": e["campaign_id"], "account_id": e["account"],
+                    "first": day, "last": day, "days": 0, "spend": 0.0,
+                    **{k: 0.0 for k in events}}
+                series[sid] = {}
+            row["name"] = row["name"] or e["name"]
+            row["campaign"] = row["campaign"] or e["campaign"]
+            if e["spend"] > 0:
+                row["first"] = min(row["first"], day)
+                row["last"] = max(row["last"], day)
+                row["days"] += 1
+            row["spend"] += e["spend"]
+            for k in events:
+                row[k] += e[k]
+            series[sid][day] = round(e["spend"], 2)
+
+    # Current status and creation date, for the two things history cannot answer: whether
+    # an ad set is live RIGHT NOW, and when it was made if it predates the store.
+    # An account whose ad set listing Meta refused tells us nothing about what is live in
+    # it. Reporting those ad sets as "not active" would be asserting something false — the
+    # same trap build() already sidesteps by labelling them UNKNOWN — and here it would be
+    # worse, because the whole view is a list of what is still running. Ad sets in a
+    # degraded account get active=None, which the page renders as "unknown", not "paused".
+    status, created, degraded_accts = {}, {}, set()
+    for a in B["accounts"]:
+        camps, live_sets, live_ads, ok = meta_roster(a["id"], False)
+        if not ok["adsets"]:
+            degraded_accts.add(a["id"])
+            continue
+        for x in live_sets:
+            status[x["id"]] = x.get("effective_status", "ACTIVE")
+            if x.get("created_time"):
+                created[x["id"]] = x["created_time"][:10]
+
+    covered = sorted(set(stored) | set(live))
+    floor = covered[0] if covered else since
+    # Daily series only for the heaviest spenders. All 4,403 ad sets by 51 days is a
+    # quarter of a million numbers to ship so a sparkline can be drawn on the handful of
+    # rows anyone actually reads; the summary for every ad set costs a fraction of that.
+    top = sorted(per_set.values(), key=lambda r: -r["spend"])[:DAILY_SERIES_TOP]
+    with_series = {r["id"] for r in top}
+    for sid, row in per_set.items():
+        row["spend"] = round(row["spend"], 2)
+        for k in events:
+            row[k] = round(row[k], 1)
+        unknown = row["account_id"] in degraded_accts
+        row["active"] = None if unknown else (status.get(sid) == "ACTIVE")
+        row["status"] = "UNKNOWN" if unknown else (status.get(sid) or "INACTIVE")
+        row["created"] = created.get(sid, "")
+        # An ad set already spending on the first day we can see did not necessarily
+        # start there. Saying "went live on the earliest day I happen to have" would be a
+        # made-up launch date, and the whole point of this view is launch dates.
+        row["censored"] = row["first"] <= floor
+        row["span"] = (datetime.strptime(row["last"], "%Y-%m-%d")
+                       - datetime.strptime(row["first"], "%Y-%m-%d")).days + 1
+        # Aligned to `dates` rather than a date->spend map: the map repeats a 10-character
+        # key for every value and is several times the size for the same information.
+        row["daily"] = ([int(series[sid].get(d, 0)) for d in dates]
+                        if sid in with_series else None)
+
+    out = {"brand": brand, "since": since, "until": until, "dates": dates,
+            "covered_from": floor, "covered_days": len(covered),
+            "stored_days": len(stored), "live_days": len(live_days),
+            "live_runs": len(runs),
+            "events": list(events), "cpt_target": B["cpt_target"],
+            "series_top": DAILY_SERIES_TOP,
+            # Named so the page can say WHICH accounts' live/paused state is unknown,
+            # rather than leaving a column of "unknown" unexplained.
+            "status_unknown": sorted(
+                a["name"] for a in B["accounts"] if a["id"] in degraded_accts),
+            "adsets": sorted(per_set.values(), key=lambda r: -r["spend"]),
+            "cached": False, "age_min": 0}
+    with _long_lock:
+        _long_cache[key] = {"at": time.time(), "data": out}
+    return out
 
 
 def build(since, until, brand=C.DEFAULT_BRAND, force=False):

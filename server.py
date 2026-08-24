@@ -225,6 +225,31 @@ def api_data():
         return jsonify({"error": str(e)[:500]}), 500
 
 
+@app.route("/api/longevity")
+@protected
+def api_longevity():
+    """Per ad set: when it went live, how long it ran, what it spent and returned.
+
+    Separate from /api/data rather than folded into it: it reads a much wider window and
+    costs far more, so making every page load pay for it would be the wrong trade for a
+    view most people open occasionally.
+    """
+    brand = request.args.get("brand", C.DEFAULT_BRAND)
+    if brand not in C.BRANDS:
+        brand = C.DEFAULT_BRAND
+    today = P.today_ist()
+    days = max(7, min(int(request.args.get("days", "90")), 370))
+    since = request.args.get("since") or (
+        datetime.strptime(today, "%Y-%m-%d") - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    until = request.args.get("until") or today
+    try:
+        return jsonify(P.longevity(brand, since, until,
+                                   force=request.args.get("force") == "1"))
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)[:500]}), 500
+
+
 @app.route("/api/snapshot", methods=["POST", "GET"])
 def api_snapshot():
     """Write settled days to the history store. For the nightly job, not for browsers.

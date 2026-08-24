@@ -62,6 +62,20 @@ h1 span{color:var(--faint);font-weight:400;margin-left:5px;font-size:13px}
 .btn:hover{border-color:var(--accent);color:var(--accent-dk);background:var(--accent-lt)}
 .btn[disabled]{opacity:.45;cursor:default}
 
+/* Sparkline. Sized to a table row and drawn without a library — the shape of daily
+   spend over the window is the whole question ("did it sustain?"), and a number cannot
+   show a creative that spent hard for three days and died. */
+.spark{display:block;width:110px;height:20px}
+.spark path{fill:none;stroke:var(--accent);stroke-width:1.4;
+  stroke-linejoin:round;stroke-linecap:round}
+.spark .fill{fill:color-mix(in srgb, var(--accent) 13%, transparent);stroke:none}
+td.sparkcell{padding:4px 13px;width:126px}
+/* Ad set names run to 60+ characters and would otherwise set the table's width on their
+   own, pushing everything to the right of them out of view. */
+#tbl td.name{max-width:330px;overflow:hidden;text-overflow:ellipsis}
+#tbl td.sub{max-width:210px;overflow:hidden;text-overflow:ellipsis}
+.censor{font-size:9.5px;color:var(--faint);margin-right:3px}
+
 /* Export menu. A popover rather than another <select>, because every item needs a row
    count beside it: how many rows are about to land in the file is the one thing worth
    knowing before clicking, and a <select> has nowhere to put it. */
@@ -342,6 +356,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <button data-t="campaigns">Campaigns <i id="n-campaigns"></i></button>
     <button data-t="adsets">Ad sets <i id="n-adsets"></i></button>
     <button data-t="ads">Ads <i id="n-ads"></i></button>
+    <button data-t="longevity">Longevity <i id="n-longevity"></i></button>
   </div>
 
   <div class="ctl" id="ctl">
@@ -350,6 +365,22 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <label class="chk"><input type="checkbox" id="spentOnly"> spent &gt; 0 only</label>
     <label class="chk" id="cpWrap" style="display:none"><input type="checkbox" id="cpCols" checked> signups &amp; mandates</label>
     <span class="meta" id="rowcount"></span>
+  </div>
+
+  <div class="ctl" id="lctl" style="display:none">
+    <select class="sel" id="lWin">
+      <option value="30">Last 30 days</option>
+      <option value="60">Last 60 days</option>
+      <option value="90" selected>Last 90 days</option>
+      <option value="180">Last 180 days</option>
+    </select>
+    <input type="search" id="lq" placeholder="Filter by ad set or campaign…">
+    <label class="chk">went live
+      <input type="date" id="lFrom" style="margin-left:4px"><span>→</span>
+      <input type="date" id="lTo"></label>
+    <label class="chk"><input type="checkbox" id="lActive"> still running only</label>
+    <button class="btn" id="lGo">Load</button>
+    <span class="meta" id="lcount"></span>
   </div>
 
   <div class="wrap"><table id="tbl"><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
@@ -696,6 +727,154 @@ function cpKpis(c, sp){
        Classplus ${p.age_min===null?'':p.age_min+' min old'}</div></div>`;
 }
 
+/* ---------- longevity ---------- */
+/* Its own fetch, its own cache, loaded on demand. It reads a far wider window than the
+   rest of the page and costs ~30s cold, so making every page load pay for a view most
+   people open occasionally would be the wrong trade. */
+let LONG = null, LONGKEY = null, LONGBUSY = false;
+
+function sparkline(daily){
+  if(!daily || !daily.length) return '';
+  const max = Math.max(...daily, 1), n = daily.length, W = 110, Hh = 20;
+  const x = i => (n === 1 ? W/2 : (i * W) / (n - 1));
+  const y = v => Hh - 1.5 - (v / max) * (Hh - 3);
+  const pts = daily.map((v,i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' L');
+  return `<svg class="spark" viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none">
+    <path class="fill" d="M0,${Hh} L${pts} L${W},${Hh} Z"/><path d="M${pts}"/></svg>`;
+}
+
+async function loadLongevity(force){
+  const days = document.getElementById('lWin').value;
+  const key = `${BRAND}|${days}`;
+  if(LONG && LONGKEY === key && !force) return;
+  LONGBUSY = true;
+  document.getElementById('lcount').textContent = 'loading…';
+  document.getElementById('lGo').disabled = true;
+  try{
+    const r = await fetch(`/api/longevity?brand=${BRAND}&days=${days}${force?'&force=1':''}`);
+    const j = await r.json();
+    if(j.error){ document.getElementById('lcount').textContent = 'failed: ' + j.error; return; }
+    LONG = j; LONGKEY = key;
+  }catch(e){
+    document.getElementById('lcount').textContent = 'failed: ' + e;
+  }finally{
+    LONGBUSY = false;
+    document.getElementById('lGo').disabled = false;
+    renderTable(); noteFor();
+  }
+}
+
+function longRows(){
+  if(!LONG) return [];
+  let r = LONG.adsets.map(o => Object.assign({}, o, {
+    trials: o[EV], cpt: o[EV] > 0 ? o.spend / o[EV] : null,
+    perday: o.days > 0 ? o.spend / o.days : 0,
+    gaps: o.span - o.days}));
+  const q = document.getElementById('lq').value.trim().toLowerCase();
+  if(q) r = r.filter(o => (o.name||'').toLowerCase().includes(q) ||
+                          (o.campaign||'').toLowerCase().includes(q));
+  const f = document.getElementById('lFrom').value, t = document.getElementById('lTo').value;
+  if(f) r = r.filter(o => o.first >= f);
+  if(t) r = r.filter(o => o.first <= t);
+  // "still running" means Meta said ACTIVE. An ad set whose account would not answer is
+  // NOT counted as running — unknown is not a yes.
+  if(document.getElementById('lActive').checked) r = r.filter(o => o.active === true);
+  const k = SORT.key, d = SORT.dir;
+  r.sort((a,b) => {
+    let x = a[k], y = b[k];
+    if(k === 'cpt'){ x = x===null ? (a.spend>0?Infinity:-1) : x;
+                     y = y===null ? (b.spend>0?Infinity:-1) : y; }
+    if(typeof x === 'string') return d * x.localeCompare(y||'');
+    return d * ((x??0) - (y??0));
+  });
+  return r;
+}
+
+/* Order matters here more than on the other tabs. The sparkline sits immediately after
+   the duration columns because "did it sustain?" is read from the two together, and in
+   the first draft it was the last column — pushed off the right edge on a 1600px screen,
+   which is the one thing this view exists to show. Campaign moved to the end: it is
+   almost always the same value down the whole table. */
+const LONG_COLS = [
+  {k:'name', t:'Ad set', kind:'name'},
+  {k:'first', t:'Went live', kind:'live'},
+  {k:'last', t:'Last spend', kind:'date'},
+  {k:'days', t:'Days spent', kind:'num'},
+  {k:'span', t:'Span', kind:'num'},
+  {k:'daily', t:'Daily spend', kind:'spark'},
+  {k:'spend', t:'Spend', kind:'rs'},
+  {k:'perday', t:'Per day', kind:'rs'},
+  {k:'trials', t:'Trials', kind:'num'},
+  {k:'cpt', t:'CPT', kind:'cpt'},
+  {k:'status', t:'Status', kind:'status'},
+  {k:'campaign', t:'Campaign', kind:'sub'},
+];
+
+function longCell(o, c){
+  if(c.kind === 'name')
+    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">${o.name||'—'}</td>`;
+  if(c.kind === 'sub') return `<td class="sub" title="${o.campaign||''}">${o.campaign||'—'}</td>`;
+  if(c.kind === 'live')
+    // "<=" is not decoration: the store starts somewhere, and an ad set already spending
+    // on its first day did not necessarily start there. An exact date would be invented.
+    return `<td class="sub">${o.censored
+      ? `<span class="censor" title="Already spending on the earliest day in the store — it started on or before this">≤</span>${o.first}`
+      : o.first}${o.censored && o.created ? `<span class="pill">made ${o.created}</span>` : ''}</td>`;
+  if(c.kind === 'date') return `<td class="sub">${o.last}</td>`;
+  if(c.kind === 'status')
+    return `<td class="sub">${o.active === null
+      ? '<span class="dimtxt">unknown</span>'
+      : (o.active ? '<span class="pill live">running</span>' : 'stopped')}</td>`;
+  if(c.kind === 'spark')
+    return `<td class="sparkcell">${o.daily ? sparkline(o.daily)
+      : '<span class="dimtxt">—</span>'}</td>`;
+  if(c.kind === 'rs')  return `<td>${o[c.k] ? rs(o[c.k]) : '—'}</td>`;
+  if(c.kind === 'num') return `<td>${o[c.k] ? num(o[c.k]) : '<span class="dimtxt">0</span>'}</td>`;
+  if(c.kind === 'cpt') return `<td class="${cls(o.cpt)}">${cptTxt(o.spend, o.trials)}</td>`;
+  return `<td>${o[c.k]??'—'}</td>`;
+}
+
+function renderLongevity(){
+  const tbl = document.getElementById('tbl');
+  const cols = hasTrials() ? LONG_COLS
+                           : LONG_COLS.filter(c => c.k!=='trials' && c.k!=='cpt');
+  if(!LONG){
+    tbl.querySelector('thead').innerHTML = '';
+    tbl.querySelector('tbody').innerHTML =
+      `<tr><td class="name">${LONGBUSY ? 'Loading…'
+        : 'Choose a window and press Load.'}</td></tr>`;
+    tbl.querySelector('tfoot').innerHTML = '';
+    return;
+  }
+  const r = longRows();
+  tbl.querySelector('thead').innerHTML = '<tr>' + cols.map(c => {
+    const cl = [c.kind==='name'||c.kind==='sub'||c.kind==='live'||c.kind==='date' ? 'l' : '',
+                c.kind==='sub' ? 'grow' : '', SORT.key===c.k ? 'sorted' : ''
+               ].filter(Boolean).join(' ');
+    return `<th data-k="${c.k}" class="${cl}">${c.t}${
+      SORT.key===c.k?(SORT.dir<0?' ↓':' ↑'):''}</th>`; }).join('') + '</tr>';
+  tbl.querySelector('thead').querySelectorAll('th').forEach(th => th.onclick = () => {
+    const k = th.dataset.k;
+    SORT = {key:k, dir: SORT.key===k ? -SORT.dir : (k==='name'||k==='first'?1:-1)};
+    renderTable();
+  });
+  tbl.querySelector('tbody').innerHTML = r.map(o =>
+    '<tr>' + cols.map(c => longCell(o,c)).join('') + '</tr>').join('');
+  const sum = k => r.reduce((s,o)=>s+(o[k]||0),0);
+  const sp = sum('spend'), tr = sum('trials');
+  tbl.querySelector('tfoot').innerHTML = '<tr>' + cols.map(c => {
+    if(c.kind==='name') return `<td>${r.length} ad sets</td>`;
+    if(c.k==='spend') return `<td>${rs(sp)}</td>`;
+    if(c.k==='trials') return `<td>${num(tr)}</td>`;
+    if(c.kind==='cpt') return `<td class="${cls(sp&&tr?sp/tr:null)}">${cptTxt(sp,tr)}</td>`;
+    if(c.k==='days') return `<td>${num(Math.round(sum('days')/(r.length||1)))} avg</td>`;
+    return '<td></td>';
+  }).join('') + '</tr>';
+  document.getElementById('lcount').textContent =
+    `${r.length} of ${LONG.adsets.length} · ${LONG.covered_days} days covered from `
+    + `${LONG.covered_from}${LONG.live_days ? ` · ${LONG.live_days} pulled live` : ''}`;
+}
+
 /* ---------- table specs ---------- */
 const COLS = {
   accounts: [
@@ -810,6 +989,12 @@ function cell(o, c){
 
 function renderTable(){
   const tbl = document.getElementById('tbl');
+  document.getElementById('lctl').style.display = TAB==='longevity' ? 'flex' : 'none';
+  if(TAB==='longevity'){
+    document.getElementById('ctl').style.display='none';
+    renderLongevity();
+    return;
+  }
   if(TAB==='combined'){
     document.getElementById('ctl').style.display='none';
     const on = cpOn();
@@ -903,16 +1088,48 @@ function render(){
   renderLimits(); kpis(); renderTable();
   document.getElementById('expBtn').disabled = false;
   if(expWrap.classList.contains('on')) expCounts();
+  noteFor();
+}
+
+/* The footnote belongs to the view, not to the page: the longevity table is answering a
+   different question and its caveats are different ones. */
+function noteFor(){
+  if(TAB === 'longevity'){ document.getElementById('note').innerHTML = longNote(); return; }
+  mainNote();
+}
+
+function longNote(){
+  if(!LONG) return '';
+  const cens = LONG.adsets.filter(a => a.censored).length;
+  const unk = (LONG.status_unknown || []);
+  return `<b>Went live</b> is the first day an ad set actually <i>spent</i>, not the day it
+     was created — an ad set built and left paused never ran. <b>Days spent</b> counts days
+     with spend; <b>Span</b> is first to last. The two differing is the interesting case:
+     it means the ad set stopped and restarted.
+     ${cens ? `<br><br><b>${num(cens)} ad set(s) show ≤ a date.</b> They were already
+       spending on the earliest day in the store (${LONG.covered_from}), so they started
+       on or before it and the true date is not knowable from here — an exact date would be
+       invented. Where Meta still holds the ad set, its creation date is shown beside it.
+       Backfilling further back turns these into real dates.` : ''}
+     ${unk.length ? `<br><br><b>Status is unknown for ${unk.join(' and ')}.</b> Meta would
+       not return the ad set listing for ${unk.length>1?'those accounts':'that account'},
+       so whether those ad sets are running right now cannot be read. They are shown as
+       unknown rather than stopped, and "still running only" excludes them — unknown is
+       not a yes.` : ''}
+     <br><br>Daily spend is drawn for the ${num(LONG.series_top)} biggest spenders only;
+     the rest carry their totals but no sparkline.`;
+}
+
+function mainNote(){
   const accts = `Covers ${DATA.accounts.length === 1 ? 'one ad account' :
     `all ${DATA.accounts.length} ${DATA.brand_label} ad accounts`}.`;
   const dup = DATA.duplicate_ad_names ? `${DATA.duplicate_ad_names} ad name(s) are reused by
      more than one ad (marked <i>shared name</i>); Branch cannot tell those ads apart, so their
      trials are split by spend share — the rollups stay exact, the individual CPTs are an even
      assumption. ` : '';
-  const src = srcNote();
   const lag = `Today's numbers are still landing — Meta spend lags a few minutes${
      hasTrials() ? ' and Branch trials keep arriving through the day, so intraday CPT reads high early and settles down' : ''}.`;
-  document.getElementById('note').innerHTML = src + segNote() + cpNote() + (hasTrials()
+  document.getElementById('note').innerHTML = srcNote() + segNote() + cpNote() + (hasTrials()
     ? `CPT = Meta spend ÷ Branch trials, joined at <b>ad-name</b> level and rolled up
        (Branch does not expose campaign or account as attribution dimensions).
        ${accts} ${DATA.unattributed[EV]>0
@@ -1163,8 +1380,16 @@ document.getElementById('tabs').onclick = e => {
   if(!e.target.dataset.t) return;
   [...e.currentTarget.children].forEach(b=>b.classList.remove('on'));
   e.target.classList.add('on'); TAB = e.target.dataset.t;
-  SORT = {key:'spend', dir:-1}; renderTable();
+  SORT = {key:'spend', dir:-1};
+  renderTable(); noteFor();
+  // Opening the tab is the request. Anything else means looking at an empty table and
+  // wondering what to press.
+  if(TAB==='longevity' && !LONG && !LONGBUSY) loadLongevity(false);
 };
+document.getElementById('lGo').onclick = () => loadLongevity(true);
+document.getElementById('lWin').onchange = () => loadLongevity(false);
+for(const id of ['lq','lFrom','lTo','lActive'])
+  document.getElementById(id)[id==='lActive'?'onchange':'oninput'] = renderLongevity;
 /* Refresh is a deliberate act, so it forces everything the automatic pull will not:
    the server payload cache AND Meta's roster, which is where budgets and paused/active
    status come from. Without the second, pressing Refresh could never move a budget

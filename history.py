@@ -131,6 +131,29 @@ def fetch(brand, dates):
             j.get("days") or [], j.get("missing") or list(dates))
 
 
+def fetch_raw(brand, dates):
+    """{date: {"meta": {...}, "branch": {...}}} — the days as stored, unaggregated.
+
+    The aggregated form collapses the per-day detail, which is exactly what longevity
+    needs: when an ad set first spent, and whether it kept spending. {} on any failure.
+    """
+    global _last_error
+    if not (available() and dates):
+        return {}
+    out = {}
+    # Chunked because a raw 90-day answer is tens of thousands of rows; several smaller
+    # replies stream better through a free instance than one very large one.
+    for i in range(0, len(dates), 15):
+        part = dates[i:i + 15]
+        try:
+            j = _call("GET", "/v1/history", {"brand": brand, "dates": ",".join(part)})
+        except Exception as ex:
+            _last_error = f"{type(ex).__name__}: {str(ex)[:160]}"
+            continue
+        out.update(j.get("days") or {})
+    return out
+
+
 def put(brand, date, meta_by_account, branch_by_event):
     """Store one settled day. Returns True on success; never raises."""
     global _last_error
