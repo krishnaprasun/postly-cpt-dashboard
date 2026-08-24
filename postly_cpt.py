@@ -1258,6 +1258,7 @@ def longevity_fast(brand, days, force=False):
     folded, and `stale_hours` how long ago that was. The page shows it and offers a
     refresh rather than silently presenting yesterday as today.
     """
+    B = C.brand(brand)
     if not force:
         art = H.get_agg(H.agg_ns(brand, "long", days))
         if art and art.get("adsets"):
@@ -1268,6 +1269,22 @@ def longevity_fast(brand, days, force=False):
                             .total_seconds() / 3600, 1)
             except Exception:
                 pass
+            # Whether an ad set is running is a property of NOW, not of the window that
+            # was folded — so it is applied here, never taken from the artifact. Freezing
+            # it was a real bug: a precompute that ran while Meta was throttling one
+            # account baked UNKNOWN into 2,529 rows, and they stayed unknown for hours
+            # after the throttle cleared. Everything else in the artifact describes a
+            # closed period and cannot change; this one field can, so it is re-read.
+            # meta_roster is cached for 25 minutes, so this is usually free.
+            st, created, degraded = _roster_status(B)
+            for row in art["adsets"]:
+                unknown = row.get("account_id") in degraded
+                row["active"] = None if unknown else (st.get(row["id"]) == "ACTIVE")
+                row["status"] = ("UNKNOWN" if unknown
+                                 else (st.get(row["id"]) or "INACTIVE"))
+                row["created"] = created.get(row["id"], row.get("created", ""))
+            art["status_unknown"] = sorted(a["name"] for a in B["accounts"]
+                                           if a["id"] in degraded)
             return dict(art, precomputed=True, stale_hours=age,
                         artifact_written=art.get("_written", ""),
                         cached=False, age_min=0)
@@ -1275,7 +1292,6 @@ def longevity_fast(brand, days, force=False):
     # No artifact yet (a brand whose first precompute has not run), or an explicit
     # refresh. Same work the nightly job does, and it stores the result on the way out so
     # the next reader gets it free.
-    B = C.brand(brand)
     today = today_ist()
     tail = _tail_days(brand, B, H.settled_through(today), today)
     st = precompute_longevity(brand, days, tail=tail, status=_roster_status(B))
