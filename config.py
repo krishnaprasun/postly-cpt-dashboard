@@ -272,24 +272,40 @@ def _brand_links():
 
 
 BRAND_LINKS, MASTER_LINK = _brand_links()
+# Whether the bare URL still works. Default ON, and that default is not laziness: gating
+# it is what takes the link everybody already has and turns it into a 403, which is fine
+# only AFTER every team is holding its own link. Doing it before — as this first shipped —
+# locks out the people it is meant to serve. Set ROOT_OPEN=0 the day the handover is done;
+# until then the bare URL behaves exactly as it always has, all brands and full controls.
+ROOT_OPEN = os.environ.get("ROOT_OPEN", "1").strip() not in ("0", "false", "no")
 # With no links configured the app behaves exactly as it always did: open, all brands.
 # So this ships dark and is switched on by setting the env vars, and switching it off is
 # unsetting them — no deploy either way.
 LINKS_ON = bool(BRAND_LINKS or MASTER_LINK)
 
 
-def brands_for(key):
-    """Which brands this link may see. None means 'not a valid link'.
+def link_caps(key):
+    """What this link may do. None means the key is not valid at all.
 
-    An empty/absent key is only acceptable while no links are configured at all.
+    Two capabilities, deliberately not a permission system: `brands` is what it may see,
+    `full` is whether it may make the app SPEND — force a hard Meta roster re-read, or
+    recompute longevity. A team link is read-only in that sense; the master link is not.
     """
     if not LINKS_ON:
-        return list(BRANDS)
+        return {"brands": list(BRANDS), "full": True}
     key = (key or "").strip()
+    if not key and ROOT_OPEN:
+        return {"brands": list(BRANDS), "full": True}
     if MASTER_LINK and key == MASTER_LINK:
-        return list(BRANDS)
+        return {"brands": list(BRANDS), "full": True}
     b = BRAND_LINKS.get(key)
-    return [b] if b else None
+    return {"brands": [b], "full": False} if b else None
+
+
+def brands_for(key):
+    """Which brands this link may see. None means 'not a valid link'."""
+    caps = link_caps(key)
+    return caps["brands"] if caps else None
 
 
 def brand(name):

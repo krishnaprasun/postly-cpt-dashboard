@@ -107,16 +107,21 @@ def _allowed(key):
 
 
 def _gate(key, brand):
-    """(brand, error_response). Narrows the requested brand to what the key allows."""
-    allowed = _allowed(key)
-    if allowed is None:
+    """(brand, error_response, full). Narrows the request to what the key allows.
+
+    `full` gates the two things that make the app SPEND — a hard roster re-read and a
+    longevity recompute. Hiding those buttons in the page is presentation; this is the
+    part that actually holds, because a hidden button is one edited URL away.
+    """
+    caps = C.link_caps(key)
+    if caps is None:
         return None, (jsonify({"error": "This link is not valid. Ask for your team's "
-                               "dashboard link."}), 403)
-    if brand not in allowed:
+                               "dashboard link."}), 403), False
+    if brand not in caps["brands"]:
         # Not an error worth explaining in detail — a wrong brand on a valid key is
         # either a stale bookmark or someone trying it on, and both get the same answer.
-        brand = allowed[0]
-    return brand, None
+        brand = caps["brands"][0]
+    return brand, None, caps["full"]
 
 
 # ----------------------------------------------------------------- cache ---
@@ -223,7 +228,8 @@ def index(key=None):
     # The brand list is server-rendered so the switcher and the loading veil are correct
     # on the very first paint, before any data has been fetched.
     key = key or request.args.get("k", "")
-    allowed = _allowed(key)
+    caps = C.link_caps(key)
+    allowed = caps["brands"] if caps else None
     if allowed is None:
         # No hint about which links exist or how many — a wrong key learns nothing.
         return Response(
@@ -242,6 +248,7 @@ def index(key=None):
     return render_template(
         "index.html",
         link_key=key,
+        can_act=caps["full"],
         # Only the brands this link may see. A switcher listing brands the key cannot
         # open would be a list of things to go looking for.
         brands=[{"key": k, "label": C.BRANDS[k]["label"]} for k in allowed],
@@ -262,14 +269,17 @@ def index(key=None):
 def api_data():
     since, until = resolve_range(request.args.get("range", "today"),
                                  request.args.get("since"), request.args.get("until"))
-    brand, err = _gate(request.args.get("k", ""),
-                       request.args.get("brand", C.DEFAULT_BRAND))
+    brand, err, full = _gate(request.args.get("k", ""),
+                             request.args.get("brand", C.DEFAULT_BRAND))
     if err:
         return err
     try:
-        hard = request.args.get("hard") == "1"
-        return jsonify(get_data(since, until, brand,
-                                force=hard or request.args.get("force") == "1", hard=hard))
+        # A read-only link cannot force a hard roster re-read. Ignored rather than
+        # refused: the request is a perfectly good read, it just does not get to spend
+        # Meta's request-time budget, and the page still refreshes on its own cadence.
+        hard = full and request.args.get("hard") == "1"
+        force = full and (hard or request.args.get("force") == "1")
+        return jsonify(get_data(since, until, brand, force=force, hard=hard))
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)[:500]}), 500
@@ -284,8 +294,8 @@ def api_longevity():
     costs far more, so making every page load pay for it would be the wrong trade for a
     view most people open occasionally.
     """
-    brand, err = _gate(request.args.get("k", ""),
-                       request.args.get("brand", C.DEFAULT_BRAND))
+    brand, err, full = _gate(request.args.get("k", ""),
+                             request.args.get("brand", C.DEFAULT_BRAND))
     if err:
         return err
     today = P.today_ist()
@@ -293,7 +303,9 @@ def api_longevity():
     since = request.args.get("since") or (
         datetime.strptime(today, "%Y-%m-%d") - timedelta(days=days - 1)).strftime("%Y-%m-%d")
     until = request.args.get("until") or today
-    force = request.args.get("force") == "1"
+    # Recomputing longevity is a ~30s Meta and Branch pull. Read-only links get the
+    # precomputed artifact and nothing else.
+    force = full and request.args.get("force") == "1"
     try:
         # The fast path serves a nightly-precomputed fold of the settled days and fetches
         # only the unsettled tail. It is used whenever the caller asks for a plain window

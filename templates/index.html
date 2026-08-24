@@ -326,7 +326,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     </div>
     <div class="spacer"></div>
     <div class="meta" id="stamp"></div>
-    <div class="expwrap" id="expwrap">
+    {% if can_act %}<div class="expwrap" id="expwrap">
       <button class="btn" id="expBtn" disabled>Export ▾</button>
       <div class="expmenu" id="expMenu">
         <div class="exph">Download CSV</div>
@@ -342,6 +342,12 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       </div>
     </div>
     <button class="btn" id="refresh">Refresh</button>
+    {% else %}
+    <!-- Read-only link: the two controls that make the app spend Meta's budget are not
+         rendered. The server refuses them regardless — see _gate — so this is about not
+         offering a button that would not work, not about security. -->
+    <span class="meta" id="viewonly" title="This link is view-only">view-only</span>
+    {% endif %}
   </div>
 </header>
 
@@ -379,7 +385,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <input type="date" id="lFrom" style="margin-left:4px"><span>→</span>
       <input type="date" id="lTo"></label>
     <label class="chk"><input type="checkbox" id="lActive"> still running only</label>
-    <button class="btn" id="lGo">Refresh</button>
+    {% if can_act %}<button class="btn" id="lGo">Refresh</button>{% endif %}
     <span class="meta" id="lcount"></span>
   </div>
 
@@ -415,6 +421,10 @@ const istToday = () => new Date(Date.now() + 330*60000).toISOString().slice(0,10
 /* The link key travels on every API call. Without it the server cannot tell a Funda
    team's link from a Postly one, and the whole point of separate links is that it can. */
 const LINK_KEY = {{ link_key | tojson }};
+/* Whether this link may make the app spend — a hard Meta roster re-read, or a longevity
+   recompute. The server enforces it; the page only avoids offering buttons that would be
+   ignored. */
+const CAN_ACT = {{ can_act | tojson }};
 const K = LINK_KEY ? `&k=${encodeURIComponent(LINK_KEY)}` : '';
 const apiQuery = () => `brand=${BRAND}&` + (CUSTOM
   ? `since=${CUSTOM.since}&until=${CUSTOM.until}` : `range=${RANGE}`) + K;
@@ -518,8 +528,8 @@ async function load(force, silent, hard){
   clearTimeout(staleTimer);
   BUSY = true;
   document.getElementById('bar').classList.add('on');
-  document.getElementById('refresh').disabled = true;
-  document.getElementById('refresh').textContent = 'Refreshing…';
+  const rb = document.getElementById('refresh');
+  if(rb){ rb.disabled = true; rb.textContent = 'Refreshing…'; }
   showSkeleton();
   if(!silent) veil(true);
   stampNow();
@@ -561,8 +571,7 @@ async function load(force, silent, hard){
     BUSY = false;
     veil(false);
     document.getElementById('bar').classList.remove('on');
-    document.getElementById('refresh').disabled = false;
-    document.getElementById('refresh').textContent = 'Refresh';
+    if(rb){ rb.disabled = false; rb.textContent = 'Refresh'; }
     stampNow();
   }
 }
@@ -765,7 +774,8 @@ async function loadLongevity(force){
   LONG = null; LONGKEY = null;
   LONGBUSY = true;
   document.getElementById('lcount').textContent = 'loading…';
-  document.getElementById('lGo').disabled = true;
+  const lb = document.getElementById('lGo');
+  if(lb) lb.disabled = true;
   try{
     const r = await fetch(`/api/longevity?brand=${BRAND}&days=${days}${force?'&force=1':''}${K}`);
     const j = await r.json();
@@ -775,7 +785,7 @@ async function loadLongevity(force){
     document.getElementById('lcount').textContent = 'failed: ' + e;
   }finally{
     LONGBUSY = false;
-    document.getElementById('lGo').disabled = false;
+    if(lb) lb.disabled = false;
     renderTable(); noteFor();
   }
 }
@@ -1111,8 +1121,10 @@ function render(){
   document.getElementById('cpWrap').style.display =
     (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
   renderLimits(); kpis(); renderTable();
-  document.getElementById('expBtn').disabled = false;
-  if(expWrap.classList.contains('on')) expCounts();
+  if(CAN_ACT){
+    document.getElementById('expBtn').disabled = false;
+    if(expWrap.classList.contains('on')) expCounts();
+  }
   noteFor();
 }
 
@@ -1416,7 +1428,7 @@ document.getElementById('tabs').onclick = e => {
   // wondering what to press.
   if(TAB==='longevity' && !longFresh() && !LONGBUSY) loadLongevity(false);
 };
-document.getElementById('lGo').onclick = () => loadLongevity(true);
+if(CAN_ACT) document.getElementById('lGo').onclick = () => loadLongevity(true);
 document.getElementById('lWin').onchange = () => loadLongevity(false);
 for(const id of ['lq','lFrom','lTo','lActive'])
   document.getElementById(id)[id==='lActive'?'onchange':'oninput'] = renderLongevity;
@@ -1425,7 +1437,7 @@ for(const id of ['lq','lFrom','lTo','lActive'])
    status come from. Without the second, pressing Refresh could never move a budget
    figure for up to 30 minutes, which is the opposite of what the button promises. It
    blocks, and the veil makes that legible. */
-document.getElementById('refresh').onclick = () => load(true, false, true);
+if(CAN_ACT) document.getElementById('refresh').onclick = () => load(true, false, true);
 /* Name, logo, favicon and accent all move together. Doing it in one place means the
    page can never end up wearing one brand's colour under another's name — and it runs
    before the fetch, so the switch feels instant even though the numbers take seconds. */
@@ -1463,7 +1475,9 @@ document.getElementById('brandsw').onclick = e => {
 };
 /* Opened on click rather than hovered: it is a menu of downloads, and one stray mouse
    path across the header should not put four files in someone's Downloads folder. */
-const expWrap = document.getElementById('expwrap');
+const expWrap = document.getElementById('expwrap') || {classList:{contains:()=>false,
+  toggle:()=>{}, remove:()=>{}}};
+if(CAN_ACT){
 document.getElementById('expBtn').onclick = e => {
   e.stopPropagation();
   const open = !expWrap.classList.contains('on');
@@ -1485,6 +1499,7 @@ document.getElementById('expMenu').onclick = e => {
   expWrap.classList.remove('on');
 };
 document.getElementById('expFilters').onchange = expCounts;
+}
 document.addEventListener('click', () => expWrap.classList.remove('on'));
 document.addEventListener('keydown', e => {
   if(e.key === 'Escape') expWrap.classList.remove('on');
