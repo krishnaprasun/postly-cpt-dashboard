@@ -732,6 +732,15 @@ function cpKpis(c, sp){
    rest of the page and costs ~30s cold, so making every page load pay for a view most
    people open occasionally would be the wrong trade. */
 let LONG = null, LONGKEY = null, LONGBUSY = false;
+/* What the loaded longevity payload MUST match to be shown. Clearing LONG on brand switch
+   would also fix the bug that prompted this, but only until the next place that forgets;
+   checking at the point of USE cannot be forgotten, because nothing renders without it.
+   The bug it fixes: switching brand left LONG holding the previous brand's ad sets, and
+   the tab-open guard tested `!LONG`, so it never reloaded — SpeakEasy's ad sets rendered
+   under Postly's name. That is the exact thing `DATA = null` two hundred lines below
+   exists to prevent, and this view had quietly opted out of it. */
+const longKey = () => `${BRAND}|${document.getElementById('lWin').value}`;
+const longFresh = () => !!(LONG && LONGKEY === longKey());
 
 function sparkline(daily){
   if(!daily || !daily.length) return '';
@@ -745,8 +754,11 @@ function sparkline(daily){
 
 async function loadLongevity(force){
   const days = document.getElementById('lWin').value;
-  const key = `${BRAND}|${days}`;
-  if(LONG && LONGKEY === key && !force) return;
+  const key = longKey();
+  if(longFresh() && !force) return;
+  // Drop the old payload BEFORE awaiting, so a slow fetch cannot leave another brand's
+  // rows on screen while it runs.
+  LONG = null; LONGKEY = null;
   LONGBUSY = true;
   document.getElementById('lcount').textContent = 'loading…';
   document.getElementById('lGo').disabled = true;
@@ -838,12 +850,13 @@ function renderLongevity(){
   const tbl = document.getElementById('tbl');
   const cols = hasTrials() ? LONG_COLS
                            : LONG_COLS.filter(c => c.k!=='trials' && c.k!=='cpt');
-  if(!LONG){
+  if(!longFresh()){
     tbl.querySelector('thead').innerHTML = '';
     tbl.querySelector('tbody').innerHTML =
       `<tr><td class="name">${LONGBUSY ? 'Loading…'
         : 'Choose a window and press Load.'}</td></tr>`;
     tbl.querySelector('tfoot').innerHTML = '';
+    document.getElementById('lcount').textContent = LONGBUSY ? 'loading…' : '';
     return;
   }
   const r = longRows();
@@ -1099,7 +1112,7 @@ function noteFor(){
 }
 
 function longNote(){
-  if(!LONG) return '';
+  if(!longFresh()) return '';
   const cens = LONG.adsets.filter(a => a.censored).length;
   const unk = (LONG.status_unknown || []);
   return `<b>Went live</b> is the first day an ad set actually <i>spent</i>, not the day it
@@ -1384,7 +1397,7 @@ document.getElementById('tabs').onclick = e => {
   renderTable(); noteFor();
   // Opening the tab is the request. Anything else means looking at an empty table and
   // wondering what to press.
-  if(TAB==='longevity' && !LONG && !LONGBUSY) loadLongevity(false);
+  if(TAB==='longevity' && !longFresh() && !LONGBUSY) loadLongevity(false);
 };
 document.getElementById('lGo').onclick = () => loadLongevity(true);
 document.getElementById('lWin').onchange = () => loadLongevity(false);
@@ -1422,6 +1435,7 @@ document.getElementById('brandsw').onclick = e => {
   [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.b === b));
   applyBrand(b);
   DATA = null;                       // never render one brand's rows under another's name
+  LONG = null; LONGKEY = null;       // the longevity payload is per-brand too
   TAB = 'combined';
   [...document.getElementById('tabs').children].forEach(
     x => x.classList.toggle('on', x.dataset.t === 'combined'));
