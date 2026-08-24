@@ -173,9 +173,19 @@ CLASSPLUS_ON = bool(CLASSPLUS_QUERIES)
 #
 # `cpt_target` may be None, which means "show the number, do not colour it" — a target
 # nobody has agreed on is worse than no target, because a red cell is an instruction.
+#
+# `testing_re` splits spend into the two things it is actually buying. A testing campaign
+# is looking for a creative that works and is expected to cost more per trial; a trial
+# campaign is scaling one that already does. Blending them produces a CPT that describes
+# neither, and judging a testing ad set against the trial target would kill the pipeline
+# that feeds it. Every brand names testing campaigns with the word "testing" — verified
+# 2026-08-24 across all seven ad accounts — and everything else is trial. Per-brand so a
+# brand that renames its campaigns can be corrected without touching the others.
+TESTING_RE_DEFAULT = r"(?i)testing"
 BRANDS = {
     "postly": {
         "label": "Postly",
+        "testing_re": TESTING_RE_DEFAULT,
         "accounts": [{"id": AD_ACCOUNT, "name": "Postly"},
                      {"id": INSTALL_ACCOUNT, "name": "Postly Install"}],
         "events": {"t101": "postly_trial_started_backend",
@@ -193,6 +203,7 @@ BRANDS = {
     },
     "speakeasy": {
         "label": "Speakeasy",
+        "testing_re": TESTING_RE_DEFAULT,
         "accounts": [{"id": "act_874500498817876", "name": "SpeakEasy"},
                      {"id": "act_909676394829541", "name": "SpeakEasy Install"}],
         "events": {"t101": "speakeasy_trial_started",
@@ -210,6 +221,7 @@ BRANDS = {
     },
     "funda": {
         "label": "Funda",
+        "testing_re": TESTING_RE_DEFAULT,
         "accounts": [{"id": "act_1415034359774559", "name": "Funda"},
                      {"id": "act_1662727118397158", "name": "Funda Earning App"},
                      {"id": "act_826851770432701", "name": "Funda 3"}],

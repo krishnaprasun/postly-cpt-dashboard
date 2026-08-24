@@ -192,6 +192,19 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 .brandsw button:hover{color:var(--ink)}
 .brandsw button.on{background:var(--white);color:var(--ink);box-shadow:var(--shadow)}
 
+/* Testing vs trial. Same segmented shape as the brand switcher because it does the same
+   kind of thing — it changes which numbers you are looking at, not how they are filtered.
+   Deliberately NOT a checkbox in the filter bar: a filter narrows a list, while this
+   changes what the CPT in the hero tile means, and those must not look alike. */
+.segsw{display:flex;gap:2px;background:var(--line2);border:1px solid var(--line);
+  border-radius:10px;padding:2px;box-shadow:var(--shadow)}
+.segsw button{border:0;background:transparent;color:var(--muted);font:inherit;
+  font-size:12px;font-weight:600;padding:5px 11px;border-radius:8px;cursor:pointer}
+.segsw button:hover:not(.on){color:var(--ink)}
+.segsw button.on{background:var(--accent);color:#fff}
+.segsw button[disabled]{opacity:.4;cursor:default}
+.segsw button[disabled]:hover{color:var(--muted)}
+
 /* Range picker. A select rather than a button row: five fixed spans plus a custom range
    do not fit in the header as buttons, and the chosen range must stay readable at a
    glance rather than being one highlighted item in a strip. */
@@ -280,6 +293,11 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   <div class="hrow">
     <div class="brand"><img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt=""><h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span> <em>Performance</em> <span id="win"></span></h1></div>
     <div class="brandsw" id="brandsw">{% for b in brands %}<button data-b="{{ b.key }}"{% if b.key == default_brand %} class="on"{% endif %}>{{ b.label }}</button>{% endfor %}</div>
+    <div class="segsw" id="segsw">
+      <button data-s="trial" class="on">Trial</button>
+      <button data-s="testing">Testing</button>
+      <button data-s="blended">Blended</button>
+    </div>
     <select class="sel" id="range">
       <option value="today" selected>Today</option>
       <option value="yesterday">Yesterday</option>
@@ -346,6 +364,10 @@ let BRAND = '{{ default_brand }}';
 /* Enough about each brand to paint the loading veil honestly before any data has been
    fetched. The authoritative values still come from the payload. */
 const BRANDS = {{ brand_meta | tojson }};
+/* Which slice of spend is on screen. 'trial' is the default because it is what the
+   CPT target is set against — a testing ad set judged against Rs150 would be killed for
+   doing its job. */
+let SEG = 'trial';
 let DATA=null, RANGE='today', TAB='combined',
     /* The headline slot. Each brand maps it to its own Branch event in config.py —
        Postly's postly_trial_started_backend, Speakeasy's speakeasy_trial_started — so
@@ -577,9 +599,23 @@ function renderLimits(){
   box.innerHTML = '';
 }
 
+/* ---------- segment ---------- */
+/* One place decides what "the totals" and "the accounts" mean for the segment on screen.
+   Blended keeps the server's own rollups; a segment uses the per-segment ones. Every
+   caller goes through these two, so a view can never mix one segment's spend with
+   another's trials. */
+const totals = () => (SEG === 'blended' || !DATA.segments)
+  ? DATA.combined : DATA.segments[SEG];
+const acctRows = () => (SEG === 'blended' || !DATA.accounts_by_seg)
+  ? DATA.accounts : DATA.accounts_by_seg[SEG];
+/* Campaign, ad set and ad rows carry their own tag and are filtered, not recomputed. */
+const inSeg = o => SEG === 'blended' || !o.seg || o.seg === SEG;
+const segHas = sg => !!(DATA && DATA.segments && DATA.segments[sg]
+                        && (DATA.segments[sg].spend > 0 || DATA.segments[sg].budget > 0));
+
 /* ---------- KPIs ---------- */
 function kpis(){
-  const c = DATA.combined, tr = c[EV], sp = c.spend, k = cpt(sp,tr);
+  const c = totals(), tr = c[EV], sp = c.spend, k = cpt(sp,tr);
   const trials = hasTrials();
   const cov = trials && DATA.branch_totals[EV]
     ? 100*DATA.matched[EV]/DATA.branch_totals[EV] : 0;
@@ -594,9 +630,10 @@ function kpis(){
     : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`;
   /* Spend leads instead when the brand has no trial feed: promoting a CPT tile that
      could only ever read "—" would make a missing Branch key look like zero trials. */
+  const segLbl = SEG === 'blended' ? 'blended' : SEG;
   document.getElementById('kpis').innerHTML =
    (trials ? `
-   <div class="kpi hero"><div class="k">Current CPT</div>
+   <div class="kpi hero"><div class="k">Current CPT · ${segLbl}</div>
      <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
      <div class="s">${heroSub}</div></div>` : '') + `
    <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend</div><div class="v">${rs(sp)}</div>
@@ -605,9 +642,12 @@ function kpis(){
              : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
    (trials ? `
    <div class="kpi"><div class="k">Trials</div><div class="v">${num(tr)}</div>
-     <div class="s">${DATA.event_note[EV]||EV} · Branch ${num(DATA.branch_totals[EV])} total</div></div>
+     <div class="s">${DATA.event_note[EV]||EV}${SEG==='blended'
+       ? ` · Branch ${num(DATA.branch_totals[EV])} total`
+       : ` · ${segLbl} campaigns only`}</div></div>
    <div class="kpi"><div class="k">Attribution</div><div class="v">${cov.toFixed(1)}%</div>
-     <div class="s">${num(DATA.unattributed[EV])} trials not matched to an ad</div></div>`
+     <div class="s">${num(DATA.unattributed[EV])} trials not matched to an ad${
+       SEG==='blended' ? '' : ' · brand-wide, not per segment'}</div></div>`
    : `
    <div class="kpi"><div class="k">Budget/day</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) + `
@@ -710,7 +750,8 @@ function rows(tab, filtered){
   tab = tab || TAB;
   filtered = filtered !== false;
   if(tab==='combined') return [];
-  let r = DATA[tab].map(o => Object.assign({}, o, {
+  const base = tab === 'accounts' ? acctRows() : DATA[tab];
+  let r = base.filter(inSeg).map(o => Object.assign({}, o, {
       trials: o[EV], cpt: cpt(o.spend, o[EV]),
       cps: cpt(o.spend, o.cp_signups), cpm: cpt(o.spend, o.cp_mandates),
       d0a: o.cp_mandates > 0 ? 100*o.cp_d0a/o.cp_mandates : null,
@@ -768,7 +809,7 @@ function renderTable(){
       (tr_ ? `<th>Trials</th><th>CPT</th>` : `<th>Budget/day</th>`) +
       (on ? `<th>Signups</th><th>Mandates</th><th>Cost/mandate</th>` : '') +
       `<th>Share of spend</th>` + (tr_ ? `<th>Share of trials</th>` : '') + `</tr>`;
-    const c = DATA.combined;
+    const c = totals();
     const mk = (label, o, indent) => { const sp = o.spend, tr = o[EV];
       return `<tr><td class="name" style="padding-left:${12+indent*20}px">${label}</td>
       <td>${rs(sp)}</td>` +
@@ -779,15 +820,17 @@ function renderTable(){
       `<td>${c.spend?(100*sp/c.spend).toFixed(1):0}%</td>` +
       (tr_ ? `<td>${c[EV]?(100*tr/c[EV]).toFixed(1):0}%</td>` : '') + `</tr>`; };
     let h = '';
-    for(const a of DATA.accounts){
+    for(const a of acctRows()){
       h += mk(`<b>${a.name}</b>`, a, 0);
-      for(const cm of DATA.campaigns.filter(x=>x.account_id===a.id && (x.spend>0||x.status==='ACTIVE')))
+      for(const cm of DATA.campaigns.filter(
+            x => x.account_id===a.id && inSeg(x) && (x.spend>0||x.status==='ACTIVE')))
         h += mk(cm.name, cm, 1);
     }
     tbl.querySelector('tbody').innerHTML = h;
-    const nAcc = DATA.accounts.length;
+    const nAcc = acctRows().length;
+    const segWord = SEG === 'blended' ? '' : ` · ${SEG} only`;
     tbl.querySelector('tfoot').innerHTML =
-      `<tr><td>COMBINED — all ${nAcc} ad account${nAcc===1?'':'s'}</td><td>${rs(c.spend)}</td>` +
+      `<tr><td>COMBINED — ${nAcc} ad account${nAcc===1?'':'s'}${segWord}</td><td>${rs(c.spend)}</td>` +
       (tr_ ? `<td>${num(c[EV])}</td>
               <td class="${cls(cpt(c.spend,c[EV]))}">${cptTxt(c.spend,c[EV])}</td>`
            : `<td>${rs(c.budget||0)}</td>`) +
@@ -838,11 +881,13 @@ function renderTable(){
 function render(){
   T = DATA.cpt_target;
   applyBrand(DATA.brand);
+  segAvail();
   document.getElementById('win').textContent =
     DATA.since===DATA.until ? DATA.since : `${DATA.since} → ${DATA.until}`;
   stampNow();
   for(const t of ['accounts','campaigns','adsets','ads'])
-    document.getElementById('n-'+t).textContent = DATA[t].length;
+    document.getElementById('n-'+t).textContent =
+      (t === 'accounts' ? acctRows() : DATA[t].filter(inSeg)).length;
   document.getElementById('cpWrap').style.display =
     (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
   renderLimits(); kpis(); renderTable();
@@ -857,7 +902,7 @@ function render(){
   const src = srcNote();
   const lag = `Today's numbers are still landing — Meta spend lags a few minutes${
      hasTrials() ? ' and Branch trials keep arriving through the day, so intraday CPT reads high early and settles down' : ''}.`;
-  document.getElementById('note').innerHTML = src + cpNote() + (hasTrials()
+  document.getElementById('note').innerHTML = src + segNote() + cpNote() + (hasTrials()
     ? `CPT = Meta spend ÷ Branch trials, joined at <b>ad-name</b> level and rolled up
        (Branch does not expose campaign or account as attribution dimensions).
        ${accts} ${DATA.unattributed[EV]>0
@@ -870,6 +915,33 @@ function render(){
        configured here, so there are no trial counts and therefore no CPT. Everything
        above comes straight from Meta. Adding the Branch key and naming the two events
        fills the trial and CPT columns in with no other change. ${accts} ${dup}${lag}`);
+}
+
+/* What the testing/trial split is, and which campaigns fell on each side. Named rather
+   than described: a split nobody can check is a split nobody should trust, and a campaign
+   renamed tomorrow could move between the two without anyone noticing. */
+function segNote(){
+  if(!DATA.segments) return '';
+  const t = DATA.segment_campaigns || {trial:[], testing:[]};
+  const s = DATA.segments;
+  const line = sg => {
+    const d = s[sg], k = cpt(d.spend, d[EV]);
+    return `<b>${sg}</b> ${rs(d.spend)}${hasTrials()
+      ? ` · ${num(d[EV])} trials · ${k===null ? 'no trials' : rs(k)+' CPT'}` : ''}`;
+  };
+  const names = (t.testing||[]).length
+    ? `Testing here is ${t.testing.map(n=>`<i>${n}</i>`).join(', ')}; everything else counts
+       as trial.`
+    : `No campaign matched the testing rule in this window, so everything counts as trial.`;
+  return `<b>Testing vs trial</b> is decided on the CAMPAIGN — name matching
+     <code>${DATA.segment_rule}</code> — and inherited by its ad sets and ads. ${names}
+     ${line('trial')} &nbsp;·&nbsp; ${line('testing')}.
+     They are separated because they buy different things: testing is looking for a
+     creative that works and is expected to cost more per trial, and judging it against
+     the trial target would kill the pipeline that feeds trial.
+     ${hasTrials() ? `Branch attributes a trial to an <b>ad name</b>, which carries no
+       campaign, so the ${num(DATA.unattributed[EV])} unmatched trials cannot be assigned
+       to either side and sit outside both.` : ''}<br><br>`;
 }
 
 /* Where the figures came from. A number read from storage and a number just fetched are
@@ -989,7 +1061,8 @@ function toCsv(level, r){
 function expName(level){
   const win = DATA.since === DATA.until ? DATA.since : `${DATA.since}_to_${DATA.until}`;
   const now = new Date(Date.now() + 330*60000).toISOString().slice(11,16).replace(':','');
-  return `${DATA.brand}_${level}_${win}_${now}IST.csv`;
+  const sg = SEG === 'blended' ? '' : SEG + '_';
+  return `${DATA.brand}_${sg}${level}_${win}_${now}IST.csv`;
 }
 
 function download(name, text){
@@ -1034,7 +1107,8 @@ function expCounts(){
   }
   document.querySelector('#expMenu button[data-x="all"]').disabled = !total;
   document.getElementById('expNote').innerHTML = DATA
-    ? `${rangeLabel()} · ${DATA.brand_label} · ${expFilterNote()}.<br>
+    ? `${rangeLabel()} · ${DATA.brand_label} · ${SEG === 'blended' ? 'trial + testing'
+         : SEG + ' only'} · ${expFilterNote()}.<br>
        Raw figures plus the Meta ids, so a row can be acted on as it stands.`
     : '';
 }
@@ -1148,6 +1222,33 @@ document.addEventListener('click', () => expWrap.classList.remove('on'));
 document.addEventListener('keydown', e => {
   if(e.key === 'Escape') expWrap.classList.remove('on');
 });
+
+/* Switching segment is a pure re-render — the payload already carries both. No fetch,
+   so it is instant, and it cannot go stale against the numbers beside it. */
+document.getElementById('segsw').onclick = e => {
+  const sg = e.target.dataset && e.target.dataset.s;
+  if(!sg || sg === SEG || e.target.disabled) return;
+  SEG = sg;
+  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.s === sg));
+  render();
+};
+/* A segment with no spend and no budget is disabled rather than shown empty: an empty
+   table reads as "nothing performed", which is a different claim from "this brand ran
+   no testing in this window". */
+function segAvail(){
+  const sw = document.getElementById('segsw');
+  for(const b of sw.children){
+    const sg = b.dataset.s;
+    const on = sg === 'blended' || segHas(sg);
+    b.disabled = !on;
+    b.title = on ? '' : `No ${sg} spend or budget in this window`;
+  }
+  if(SEG !== 'blended' && !segHas(SEG)){
+    // fall back rather than showing a blank page for a segment that did not run
+    SEG = segHas('trial') ? 'trial' : 'blended';
+    [...sw.children].forEach(x => x.classList.toggle('on', x.dataset.s === SEG));
+  }
+}
 
 document.getElementById('q').oninput = renderTable;
 document.getElementById('activeOnly').onchange = renderTable;

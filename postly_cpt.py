@@ -940,6 +940,20 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         if not x["campaign"] and x["campaign_id"] in campaigns:
             x["campaign"] = campaigns[x["campaign_id"]]["name"]
 
+    # ---- testing vs trial ---------------------------------------------------
+    # The split is decided ONCE, on the campaign, and inherited downwards. Matching the
+    # pattern against ad set or ad names instead would be a second source of truth that
+    # could disagree with the first — and it would, because ad set names travel with a
+    # creative when it graduates from testing into trial, while the campaign it sits in
+    # is the thing that actually changed.
+    testing_re = re.compile(B.get("testing_re") or C.TESTING_RE_DEFAULT)
+    for c in campaigns.values():
+        c["seg"] = "testing" if testing_re.search(c["name"] or "") else "trial"
+    for x in adsets.values():
+        x["seg"] = (campaigns.get(x["campaign_id"]) or {}).get("seg", "trial")
+    for x in ads.values():
+        x["seg"] = (campaigns.get(x["campaign_id"]) or {}).get("seg", "trial")
+
     for coll in (ads, adsets, campaigns, accounts):
         for o in coll.values():
             for k in CP_KEYS:
@@ -1023,6 +1037,32 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     for k in CP_KEYS:
         combined[k] = sum(a[k] for a in accounts.values())
 
+    # Per-segment account and combined rows. Campaigns already carry everything rolled up
+    # from their ad sets and ads, so summing campaigns per account reproduces the account
+    # row exactly — for spend, budget, trials and Classplus alike. The campaign/ad set/ad
+    # tables are filtered client-side by the `seg` tag instead, because those rows exist
+    # already and shipping three copies of them would treble the payload.
+    NUM = ("spend", "budget", "t101", "t10m", "active_adsets", "active_ads") + CP_KEYS
+
+    def _acct_rows(seg):
+        out = {}
+        for c in campaigns.values():
+            if c["seg"] != seg:
+                continue
+            a = accounts.get(c["account_id"])
+            if not a:
+                continue
+            row = out.setdefault(c["account_id"], {
+                "id": a["id"], "name": a["name"], "seg": seg,
+                **{k: 0.0 for k in NUM}})
+            for k in NUM:
+                row[k] += c.get(k, 0) or 0
+        return sorted(out.values(), key=lambda r: -r["spend"])
+
+    accounts_by_seg = {sg: _acct_rows(sg) for sg in ("trial", "testing")}
+    segments = {sg: {k: sum(r[k] for r in rows) for k in NUM}
+                for sg, rows in accounts_by_seg.items()}
+
     # Budgets and statuses come off the cached ad set listing, not off the insights call
     # that runs every refresh — so they can legitimately be up to ROSTER_TTL old while
     # spend beside them is a minute old. Report that age instead of letting the two look
@@ -1055,6 +1095,16 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         "campaigns": sorted(campaigns.values(), key=lambda r: -r["spend"]),
         "adsets": sorted(adsets.values(), key=lambda r: -r["spend"]),
         "ads": sorted(ads.values(), key=lambda r: -r["spend"]),
+        # Testing and trial buy different things and must not share a CPT. Campaign,
+        # ad set and ad rows carry a `seg` tag and are filtered in the browser; account
+        # and combined totals cannot be filtered, so both segments are computed here.
+        "segments": segments,
+        "accounts_by_seg": accounts_by_seg,
+        "segment_rule": B.get("testing_re") or C.TESTING_RE_DEFAULT,
+        "segment_campaigns": {
+            sg: sorted((c["name"] for c in campaigns.values()
+                        if c["seg"] == sg and c["spend"] > 0))
+            for sg in ("trial", "testing")},
         "branch_totals": branch_totals,
         "matched": {k: round(v, 1) for k, v in matched.items()},
         "unattributed": {k: round(v, 1) for k, v in unattributed.items()},
