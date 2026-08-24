@@ -854,9 +854,10 @@ function render(){
      more than one ad (marked <i>shared name</i>); Branch cannot tell those ads apart, so their
      trials are split by spend share — the rollups stay exact, the individual CPTs are an even
      assumption. ` : '';
+  const src = srcNote();
   const lag = `Today's numbers are still landing — Meta spend lags a few minutes${
      hasTrials() ? ' and Branch trials keep arriving through the day, so intraday CPT reads high early and settles down' : ''}.`;
-  document.getElementById('note').innerHTML = cpNote() + (hasTrials()
+  document.getElementById('note').innerHTML = src + cpNote() + (hasTrials()
     ? `CPT = Meta spend ÷ Branch trials, joined at <b>ad-name</b> level and rolled up
        (Branch does not expose campaign or account as attribution dimensions).
        ${accts} ${DATA.unattributed[EV]>0
@@ -869,6 +870,25 @@ function render(){
        configured here, so there are no trial counts and therefore no CPT. Everything
        above comes straight from Meta. Adding the Branch key and naming the two events
        fills the trial and CPT columns in with no other change. ${accts} ${dup}${lag}`);
+}
+
+/* Where the figures came from. A number read from storage and a number just fetched are
+   not the same claim, and the difference is invisible unless the page says so. Silent
+   when nothing was stored — which is every "today" view, and every view at all until the
+   store is switched on. */
+function srcNote(){
+  const p = DATA && DATA.source;
+  if(!p || p.store !== 'on' || !p.stored_days) return p && p.note
+    ? `<span class="dimtxt">${p.note}</span><br><br>` : '';
+  const live = p.live_since
+    ? `${p.live_since}${p.live_until !== p.live_since ? ' → ' + p.live_until : ''} pulled live`
+    : 'nothing pulled live';
+  return `<b>${p.stored_days} settled day(s)</b> came from the history store rather than
+     from Meta and Branch — those numbers stopped moving before they were stored, and
+     ${live}. Spend reproduces a live pull exactly. Trial counts summed from stored days
+     differ from one multi-day Branch query by up to 0.4% at brand level — but that
+     difference sits entirely in trials Branch could not match to an ad name, so every
+     CPT above, which is spend over matched trials, is unaffected.<br><br>`;
 }
 
 /* Signups and mandates come from a different system asking a different question, and

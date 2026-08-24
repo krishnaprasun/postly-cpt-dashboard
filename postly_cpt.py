@@ -24,6 +24,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 import config as C
+import history as H
 
 IST = timezone(timedelta(minutes=330))
 BRANCH_URL = "https://api2.branch.io/v1/query/analytics"
@@ -653,6 +654,194 @@ def rate_limit_report(accounts):
     }
 
 
+# ------------------------------------------------------- window assembly ----
+# Everything below exists so that a closed day is asked for once, ever, instead of on
+# every view. See history.py for why a day is only stored once it has settled.
+_have_cache, _have_lock = {}, threading.Lock()
+HAVE_TTL = int(os.environ.get("HAVE_TTL", "300"))
+
+
+def _have(brand):
+    """Dates already in the store, cached briefly — one listing per brand, not per view."""
+    with _have_lock:
+        hit = _have_cache.get(brand)
+        if hit and time.time() - hit["at"] < HAVE_TTL:
+            return hit["dates"]
+    dates = set(H.have(brand))
+    with _have_lock:
+        _have_cache[brand] = {"at": time.time(), "dates": dates}
+    return dates
+
+
+def meta_insights_daily(acct, since, until):
+    """Ad-level spend, ONE ROW PER AD PER DAY.
+
+    build() accumulates spend per ad (`+=`) and takes names off whichever row it sees, so
+    per-day rows drop straight into it with no change. Verified against the aggregate
+    call it replaces: 933 aggregate rows and 1697 per-day rows over the same 3 days both
+    total 828,048.30 exactly.
+    """
+    return _graph(f"{acct}/insights", {
+        "level": "ad", "time_increment": 1,
+        "time_range": json.dumps({"since": since, "until": until}),
+        "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend"})
+
+
+def branch_trials_daily(since, until, B):
+    """{date: {event_key: {ad_name: unique_count}}}, 7-day chunked and fully paged.
+
+    Branch reports the day in `timestamp` as IST (+05:30), which is the same day boundary
+    Meta uses for these accounts, so no shifting is needed.
+
+    One honest caveat: summing days does not exactly reproduce a single multi-day query.
+    Measured across all three brands over a fully settled week (2026-08-15 → 21), the
+    brand total came out 0.00% to 0.37% LOW by day-sum.
+
+    Where that difference sits is the part that matters, and it is not spread evenly.
+    Broken down for Funda, the worst case:
+
+        trials matched to an ad name   84,750 window  vs  84,772 day-sum   +0.026%
+        trials with no ad name         99,768 window  vs  99,301 day-sum     -467
+
+    The whole discrepancy is in the unattributed bucket. Every CPT on the page is spend
+    over MATCHED trials, so no ad, ad set, campaign or account figure moves; only the
+    brand-level "not matched to an ad" count does, which the page already shows on its
+    own. Meta spend, by contrast, reproduces exactly — 0.00 on every brand.
+    """
+    events, creds = B["events"], B["branch"]
+    out = {}
+    if not (events and creds):
+        return out
+    bkey, bsecret = creds
+    d = datetime.strptime(since, "%Y-%m-%d").date()
+    endd = datetime.strptime(until, "%Y-%m-%d").date()
+    while d <= endd:
+        ce = min(d + timedelta(days=BRANCH_MAX_SPAN - 1), endd)
+        for key, ev in events.items():
+            rows, _tc = _branch_pages({
+                "branch_key": bkey, "branch_secret": bsecret,
+                "start_date": d.strftime("%Y-%m-%d"), "end_date": ce.strftime("%Y-%m-%d"),
+                "dimensions": ["last_attributed_touch_data_tilde_ad_name"],
+                "granularity": "day", "aggregation": "unique_count",
+                "data_source": "eo_custom_event", "filters": {"name": [ev]}})
+            for row in rows:
+                day = (row.get("timestamp") or "")[:10]
+                res = row.get("result", {})
+                name = res.get("last_attributed_touch_data_tilde_ad_name")
+                if not day:
+                    continue
+                out.setdefault(day, {}).setdefault(key, {})
+                out[day][key][name] = out[day][key].get(name, 0) + \
+                    res.get("unique_count", 0)
+        d = ce + timedelta(days=1)
+    return out
+
+
+def _stored_prefix(brand, dates):
+    """The longest run of `dates`, from the start, that the store actually holds.
+
+    A prefix and not a subset: the live half is fetched as ONE range because Meta and
+    Branch both cost more per call than per day, so a gap in the middle is cheaper to
+    re-fetch than to work around. Backfill closes the gaps; this just refuses to
+    pretend one is not there.
+    """
+    if not (H.available() and dates):
+        return []
+    got = _have(brand)
+    out = []
+    for d in dates:
+        if d not in got:
+            break
+        out.append(d)
+    return out
+
+
+def window_data(since, until, B, today=None):
+    """({account_id: insight rows}, {event: {ad_name: n}}, provenance) for the window.
+
+    Settled days come from the store, the rest from Meta and Branch live. The shapes
+    returned are exactly what build() already consumed, which is why build() barely
+    changes.
+    """
+    brand, events = B["key"], B["events"]
+    today = today or today_ist()
+    meta = defaultdict(list)
+    trials = {k: defaultdict(int) for k in events}
+    prov = {"stored_days": 0, "live_since": since, "live_until": until,
+            "store": "off" if not H.available() else "on", "note": ""}
+
+    dates, live_since, live_until = (H.split(since, until, today)
+                                     if H.available() else ([], since, until))
+    use = _stored_prefix(brand, dates)
+    if len(use) < len(dates):
+        # Everything from the first gap onwards has to come live, so the window stays
+        # one contiguous range.
+        live_since = dates[len(use)] if use or dates else since
+        live_until = until
+        if H.available() and dates:
+            prov["note"] = (f"{len(dates) - len(use)} settled day(s) not in the store yet"
+                            " — fetched live; run the backfill to stop paying for them.")
+
+    if use:
+        m, b, got, missing = H.fetch(brand, use)
+        for acct, rows in m.items():
+            meta[acct] += rows
+        for ev, by_name in b.items():
+            if ev not in trials:
+                continue
+            for name, n in by_name.items():
+                trials[ev][name] += n
+        prov["stored_days"] = len(got)
+
+    prov["live_since"], prov["live_until"] = live_since, live_until
+    if live_since:
+        for a in B["accounts"]:
+            meta[a["id"]] += meta_insights_daily(a["id"], live_since, live_until)
+        for day, per_ev in branch_trials_daily(live_since, live_until, B).items():
+            for ev, by_name in per_ev.items():
+                for name, n in by_name.items():
+                    trials[ev][name] += n
+    return meta, trials, prov
+
+
+def snapshot(brand, date):
+    """Fetch one settled day from source and write it to the store. Returns a status dict.
+
+    Deliberately NOT called from a page view. A view that discovers a missing day and
+    stops to fetch it turns one slow page into a rate-limit incident on a 30-day window;
+    the backfill and the nightly job own writing, and views only ever read.
+    """
+    B = C.brand(brand)
+    if date > H.settled_through(today_ist()):
+        return {"ok": False, "date": date, "reason": "not settled yet"}
+    meta = {a["id"]: meta_insights_daily(a["id"], date, date) for a in B["accounts"]}
+    daily = branch_trials_daily(date, date, B)
+    branch = {ev: dict(by_name) for ev, by_name in (daily.get(date) or {}).items()}
+
+    # A day where BOTH sources return nothing is refused, never stored. "No spend that
+    # day" and "that day is past the source's retention" look identical from here, and
+    # the second one written down becomes a permanent zero that nothing ever rechecks —
+    # the exact failure the settle window exists to prevent, arriving from the other end.
+    # Meta and Branch both answer for 2026-05-26 and neither answers for 2026-02-24, so
+    # the boundary is real and somewhere in between.
+    spend = sum(float(r.get("spend") or 0) for v in meta.values() for r in v)
+    trials = sum(sum(v.values()) for v in branch.values())
+    if not spend and not trials:
+        return {"ok": False, "date": date, "brand": brand,
+                "reason": "both sources returned nothing — refusing to store a zero "
+                          "that may just be past retention"}
+
+    ok = H.put(brand, date, meta, branch)
+    with _have_lock:
+        _have_cache.pop(brand, None)
+    return {"ok": ok, "date": date, "brand": brand,
+            "ads": sum(len(v) for v in meta.values()),
+            "spend": round(sum(float(r.get("spend") or 0)
+                               for v in meta.values() for r in v), 2),
+            "trials": {ev: sum(v.values()) for ev, v in branch.items()},
+            "error": H.last_error() if not ok else None}
+
+
 def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     started = time.time()
     B = C.brand(brand)
@@ -660,12 +849,14 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     ACCOUNTS = B["accounts"]
     degraded = []
     budgets_known = True
-    trials = branch_trials_by_ad(since, until, B)
+    # Settled days out of the store, the rest live. The shapes are identical to what the
+    # two direct fetches used to return, which is why nothing below this line changed.
+    insights_by_acct, trials, prov = window_data(since, until, B)
 
     ads, adsets, campaigns, accounts = {}, {}, {}, {}
 
     for a in ACCOUNTS:
-        insights = meta_insights(a["id"], since, until)
+        insights = insights_by_acct.get(a["id"], [])
         camps, live_sets, live_ads, ok = meta_roster(a["id"], force)
         missing = [lbl for lbl, k in (("campaigns", "campaigns"), ("ad sets", "adsets"),
                                       ("ads", "ads")) if not ok[k]]
@@ -876,6 +1067,10 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         "budget_as_of": (datetime.fromtimestamp(time.time() - budget_age, IST)
                          .strftime("%H:%M") if budget_age is not None else ""),
         "rate_limit": rate_limit_report({a["id"]: a["name"] for a in ACCOUNTS}),
+        # Where these numbers came from. Shown rather than kept internal: "27 of 30 days
+        # from the store" is the difference between a figure that was just checked and
+        # one that was checked days ago, and the reader is entitled to know which.
+        "source": prov,
         # Signups / trial mandates per ad from the Classplus DB, or why they are absent.
         # `unmatched` is Classplus signups whose ad name is organic or matches no live
         # Meta ad — kept visible so the per-ad columns are never mistaken for the total.

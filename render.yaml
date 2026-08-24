@@ -35,3 +35,12 @@ services:
       # minutes anyway, so anything under ~60 just burns API quota.
       - key: CACHE_TTL
         value: "90"
+      # ── History store ──
+      # Settled days are served from GCS through a Cloud Run front door instead of being
+      # re-pulled from Meta and Branch on every view. Blank HISTORY_URL = the old
+      # behaviour, every day fetched live, so this can be switched on independently of
+      # the deploy that adds it.
+      - key: HISTORY_URL
+        sync: false
+      - key: HISTORY_TOKEN
+        sync: false

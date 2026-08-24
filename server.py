@@ -22,6 +22,7 @@ from functools import wraps
 from flask import Flask, Response, jsonify, render_template, request
 
 import config as C
+import history as H
 import postly_cpt as P
 
 app = Flask(__name__)
@@ -222,6 +223,56 @@ def api_data():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)[:500]}), 500
+
+
+@app.route("/api/snapshot", methods=["POST", "GET"])
+def api_snapshot():
+    """Write settled days to the history store. For the nightly job, not for browsers.
+
+    Token-gated even though the rest of the app is open, and for a different reason than
+    privacy: this endpoint SPENDS. It pulls Meta and Branch for every brand, so leaving it
+    open on a public URL would hand anyone a button that burns the request-time budget
+    this app is already rate-limited against.
+
+    ?date=YYYY-MM-DD  one specific settled day (default: the newest settled day)
+    ?brand=postly     one brand (default: all of them)
+    ?days=N           N days back from the newest settled day, skipping stored ones
+    """
+    want = H.TOKEN
+    got = request.headers.get("Authorization", "")
+    if not want or not hmac.compare_digest(got, "Bearer " + want):
+        return jsonify({"error": "unauthorized"}), 401
+    if not H.available():
+        return jsonify({"error": "no history store configured"}), 503
+
+    brands = [request.args.get("brand")] if request.args.get("brand") else list(C.BRANDS)
+    bad = [b for b in brands if b not in C.BRANDS]
+    if bad:
+        return jsonify({"error": f"unknown brand(s): {bad}"}), 400
+
+    newest = H.settled_through(P.today_ist())
+    if request.args.get("date"):
+        dates = [request.args["date"]]
+    else:
+        n = max(1, min(int(request.args.get("days", "1")), 90))
+        dates = [(datetime.strptime(newest, "%Y-%m-%d") - timedelta(days=i))
+                 .strftime("%Y-%m-%d") for i in range(n)][::-1]
+
+    out, wrote = [], 0
+    for b in brands:
+        have = set(H.have(b))
+        for d in dates:
+            if d in have:
+                out.append({"brand": b, "date": d, "ok": True, "skipped": "already stored"})
+                continue
+            try:
+                r = P.snapshot(b, d)
+            except Exception as e:
+                traceback.print_exc()
+                r = {"ok": False, "brand": b, "date": d, "error": str(e)[:200]}
+            wrote += 1 if r.get("ok") else 0
+            out.append(r)
+    return jsonify({"wrote": wrote, "results": out})
 
 
 @app.after_request
