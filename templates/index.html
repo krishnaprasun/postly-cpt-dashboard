@@ -31,7 +31,18 @@ body{margin:0;background:var(--cream);color:var(--navy);
 
 header{position:sticky;top:0;z-index:20;background:rgba(253,252,247,.93);
   backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:11px 22px}
-.hrow{display:flex;gap:13px;align-items:center;flex-wrap:wrap}
+.hrow{display:flex;gap:13px;align-items:center;flex-wrap:wrap;row-gap:9px}
+/* The timestamp, Export and Refresh belong together. Previously they were separate flex
+   items after a spacer, so on a narrow window the spacer ate row one and they wrapped
+   onto row two individually, left-aligned under the logo. As one group with margin-left
+   auto they stay right-aligned whether they wrap or not. */
+.acts{display:flex;gap:13px;align-items:center;margin-left:auto}
+/* Only the genuinely redundant part is dropped when space is tight: the window dates are
+   already stated by the range picker sitting beside them. The scope pill stays at every
+   width — it is the one label that changes how every number on the page should be read,
+   and hiding it on a narrow window would hide it from exactly the people most likely to
+   misread the page. */
+@media (max-width:1180px){ h1 span#win{display:none} }
 .brand{display:flex;align-items:center;gap:10px;margin-right:4px}
 /* The logo carries the brand, so it is sized to be recognised rather than decorative.
    A fixed square box with object-fit keeps a 512px app icon and a wordmark SVG on the
@@ -80,7 +91,7 @@ td.sparkcell{padding:4px 13px;width:126px}
    count beside it: how many rows are about to land in the file is the one thing worth
    knowing before clicking, and a <select> has nowhere to put it. */
 .expwrap{position:relative}
-.expmenu{position:absolute;right:0;top:calc(100% + 7px);z-index:30;display:none;
+.expmenu{position:fixed;top:0;left:0;z-index:30;display:none;
   width:282px;background:var(--white);border:1px solid var(--line);border-radius:12px;
   box-shadow:0 12px 34px rgba(26,28,46,.13);padding:7px}
 .expwrap.on .expmenu{display:block}
@@ -332,7 +343,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <input type="date" id="cSince"><span>→</span><input type="date" id="cUntil">
       <button class="btn" id="cGo">Apply</button>
     </div>
-    <div class="spacer"></div>
+    <div class="acts">
     <div class="meta" id="stamp"></div>
     {% if can_act %}<div class="expwrap" id="expwrap">
       <button class="btn" id="expBtn" disabled>Export ▾</button>
@@ -356,6 +367,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
          offering a button that would not work, not about security. -->
     <span class="meta" id="viewonly" title="This link is view-only">view-only</span>
     {% endif %}
+    </div>
   </div>
 </header>
 
@@ -1499,8 +1511,25 @@ document.getElementById('expBtn').onclick = e => {
   e.stopPropagation();
   const open = !expWrap.classList.contains('on');
   expWrap.classList.toggle('on', open);
-  if(open) expCounts();
+  if(open){ expCounts(); placeExpMenu(); }
 };
+/* Positioned against the viewport rather than the button's box. The menu used to be
+   absolutely placed at right:0 of its wrapper, which is correct only while that wrapper
+   sits on the right of the header — once the header wrapped onto two rows the button
+   moved to the left edge and the menu rendered off-screen. Measuring at open time works
+   wherever the button has ended up. */
+function placeExpMenu(){
+  const btn = document.getElementById('expBtn'), menu = document.getElementById('expMenu');
+  if(!btn || !menu) return;
+  const r = btn.getBoundingClientRect(), w = menu.offsetWidth || 282, pad = 10;
+  let left = r.right - w;                       // prefer right-aligned to the button
+  left = Math.min(Math.max(left, pad), window.innerWidth - w - pad);
+  menu.style.left = Math.round(left) + 'px';
+  menu.style.top = Math.round(r.bottom + 7) + 'px';
+}
+window.addEventListener('resize', () => {
+  if(expWrap.classList.contains('on')) placeExpMenu();
+});
 document.getElementById('expMenu').onclick = e => {
   e.stopPropagation();
   const x = e.target.closest && e.target.closest('button');
