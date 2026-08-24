@@ -159,6 +159,14 @@ td.sub{text-align:left;color:var(--faint);font-size:11.5px;max-width:260px;
   overflow:hidden;text-overflow:ellipsis;font-weight:400}
 tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color:var(--navy);
   border-top:1px solid var(--line);border-bottom:0}
+/* Scope label. Sits in the title, not in a footnote, because the single most damaging
+   misreading of this page is taking it for total performance — for two of the three
+   brands a large share of trials come from Google Ads and appear nowhere here. A
+   caveat that only exists at the bottom of the page is a caveat most people never read. */
+.scope{font-size:10px;font-weight:650;letter-spacing:.02em;padding:2px 8px;
+  border-radius:20px;border:1px solid var(--line);background:var(--panel2);
+  color:var(--muted);white-space:nowrap;align-self:center}
+
 .pill{font-size:9.5px;padding:1.5px 7px;border-radius:20px;border:1px solid var(--line);
   color:var(--muted);margin-left:7px;background:var(--panel2);font-weight:600;
   text-transform:uppercase;letter-spacing:.4px}
@@ -305,7 +313,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
 </div></div>
 <header>
   <div class="hrow">
-    <div class="brand"><img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt=""><h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span> <em>Performance</em> <span id="win"></span></h1></div>
+    <div class="brand"><img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt=""><h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span> <em>Performance</em> <span class="scope" title="Meta ad accounts only — Google Ads and other channels are not included in any figure on this page">Meta ads only</span> <span id="win"></span></h1></div>
     {% if brands|length > 1 %}<div class="brandsw" id="brandsw">{% for b in brands %}<button data-b="{{ b.key }}"{% if b.key == default_brand %} class="on"{% endif %}>{{ b.label }}</button>{% endfor %}</div>{% else %}<div class="brandsw" id="brandsw" style="display:none"></div>{% endif %}
     <div class="segsw" id="segsw">
       <button data-s="trial" class="on">Trial</button>
@@ -1137,9 +1145,11 @@ function noteFor(){
 
 function longNote(){
   if(!longFresh()) return '';
+  const scope = `<b>Meta ads only</b> — ad sets in ${DATA ? DATA.brand_label : 'this brand'}'s
+     Meta ad accounts. Creatives run on other channels do not appear here at all.<br><br>`;
   const cens = LONG.adsets.filter(a => a.censored).length;
   const unk = (LONG.status_unknown || []);
-  return `<b>Went live</b> is the first day an ad set actually <i>spent</i>, not the day it
+  return scope + `<b>Went live</b> is the first day an ad set actually <i>spent</i>, not the day it
      was created — an ad set built and left paused never ran. <b>Days spent</b> counts days
      with spend; <b>Span</b> is first to last. The two differing is the interesting case:
      it means the ad set stopped and restarted.
@@ -1169,9 +1179,16 @@ function mainNote(){
      more than one ad (marked <i>shared name</i>); Branch cannot tell those ads apart, so their
      trials are split by spend share — the rollups stay exact, the individual CPTs are an even
      assumption. ` : '';
+  const scope = `<b>Meta ads only.</b> Every figure on this page comes from
+     ${DATA.brand_label}'s Meta ad accounts. Spend, trials and CPT from Google Ads or any
+     other channel are <i>not</i> included and are not netted off — so this is the
+     performance of Meta buying, not of the brand.
+     ${hasTrials() ? `Branch attributes trials across every channel, which is part of why
+       ${num(DATA.unattributed[EV])} trial(s) here match no Meta ad: some of them were
+       bought somewhere else.` : ''}<br><br>`;
   const lag = `Today's numbers are still landing — Meta spend lags a few minutes${
      hasTrials() ? ' and Branch trials keep arriving through the day, so intraday CPT reads high early and settles down' : ''}.`;
-  document.getElementById('note').innerHTML = srcNote() + segNote() + cpNote() + (hasTrials()
+  document.getElementById('note').innerHTML = scope + srcNote() + segNote() + cpNote() + (hasTrials()
     ? `CPT = Meta spend ÷ Branch trials, joined at <b>ad-name</b> level and rolled up
        (Branch does not expose campaign or account as attribution dimensions).
        ${accts} ${DATA.unattributed[EV]>0
