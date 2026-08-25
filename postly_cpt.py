@@ -1729,6 +1729,68 @@ def _roster_status(B):
     return status, created, degraded
 
 
+def _roster_names(B):
+    """{adset_id: {name, campaign, campaign_id, account_id, created}} from the cache.
+
+    Only so an ad set that started spending TODAY, and therefore appears in no folded
+    window yet, can still be named on the Longevity tab instead of being absent from it.
+    """
+    out = {}
+    for a in B["accounts"]:
+        camps, live_sets, live_ads, ok = meta_roster(a["id"], False)
+        if not ok["adsets"]:
+            continue
+        cname = {c["id"]: c.get("name", "") for c in camps}
+        for x in live_sets:
+            out[x["id"]] = {
+                "name": x.get("name", ""), "campaign_id": x.get("campaign_id", ""),
+                "campaign": cname.get(x.get("campaign_id"), ""),
+                "account_id": a["id"],
+                "created": (x.get("created_time") or "")[:10]}
+    return out
+
+
+# How long today's spend may be reused before it is re-read. Today's figure moves all day,
+# so this is short -- but not so short that opening the tab repeatedly costs a Meta call
+# each time. The roster beside it is cached for 25 minutes and this is deliberately
+# tighter, because "did it spend today" changes faster than "does it still exist".
+TODAY_SPEND_TTL = int(os.environ.get("TODAY_SPEND_TTL", "600"))
+_today_spend_cache, _today_spend_lock = {}, threading.Lock()
+
+
+def today_adset_spend(B, today=None, force=False):
+    """{adset_id: spend} for today, per brand. {} if Meta will not answer.
+
+    Deliberately level=adset and two fields wide: the ad-level pull this file uses
+    everywhere else returns hundreds of rows per account, and nothing here needs them.
+    """
+    today = today or today_ist()
+    key = (B["key"], today)
+    with _today_spend_lock:
+        hit = _today_spend_cache.get(key)
+        if hit and not force and time.time() - hit[0] < TODAY_SPEND_TTL:
+            return hit[1]
+    out = {}
+    for a in B["accounts"]:
+        try:
+            rows = _graph(f"{a['id']}/insights", {
+                "level": "adset", "fields": "adset_id,spend",
+                "time_range": json.dumps({"since": today, "until": today})},
+                rl_retries=0)
+        except Exception:
+            # A throttled account means "unknown", never "spent nothing" -- the whole
+            # point of this overlay is to stop the tab asserting a stale last-spend date,
+            # and asserting a wrong one instead would be worse.
+            continue
+        for r in rows:
+            sp = float(r.get("spend") or 0)
+            if sp > 0 and r.get("adset_id"):
+                out[r["adset_id"]] = out.get(r["adset_id"], 0.0) + sp
+    with _today_spend_lock:
+        _today_spend_cache[key] = (time.time(), out)
+    return out
+
+
 def precompute_longevity(brand, days, tail=None, status=None):
     """Fold one window COMPLETE — stored days plus the live tail — and store it.
 
@@ -1825,6 +1887,65 @@ def precompute_brand(brand, windows=None):
             for w in (windows or LONG_WINDOWS)]
 
 
+def _overlay_today(art, B):
+    """Bring `last` and `days` up to today from a live read. Mutates `art`.
+
+    Last-spend is a property of NOW, exactly like status, and for the same reason it
+    cannot be taken from the artifact: the artifact is folded twice a day, so between
+    folds it says an ad set last spent yesterday even while it is spending. Worse, the
+    early fold runs at 04:15 -- before most ad sets have spent anything today -- so for
+    most of the day the answer would be yesterday no matter how fresh the artifact was.
+
+    What is NOT overlaid is `spend`, and therefore CPT. Today's trials are not fetched
+    here (that is the Branch pull this precompute exists to avoid), and adding today's
+    spend without today's trials would inflate every CPT on the tab for exactly the ad
+    sets that are running now -- the direction that gets a working ad set killed. Today's
+    spend is carried in its own field instead, and the note says which columns cover
+    what. `days` IS incremented, because otherwise `span` grows while `days` does not and
+    the tab reads that as an ad set that stopped and restarted.
+    """
+    today = today_ist()
+    sp = today_adset_spend(B, today)
+    if not sp:
+        art["today_known"] = False
+        return art
+    art["today_known"] = True
+    art["today"] = today
+    seen, moved = set(), 0
+    for row in art.get("adsets") or []:
+        seen.add(row["id"])
+        amt = sp.get(row["id"])
+        if not amt:
+            continue
+        row["today_spend"] = round(amt, 2)
+        if row.get("last", "") < today:
+            row["last"] = today
+            row["days"] = (row.get("days") or 0) + 1
+            moved += 1
+    # An ad set that first spent today is in no folded window yet. Absent is the one
+    # answer that is certainly wrong on a tab whose question is "what is running".
+    names = _roster_names(B)
+    fresh = 0
+    for sid, amt in sp.items():
+        if sid in seen:
+            continue
+        n = names.get(sid) or {}
+        art.setdefault("adsets", []).append({
+            "id": sid, "name": n.get("name", ""), "campaign": n.get("campaign", ""),
+            "campaign_id": n.get("campaign_id", ""),
+            "account_id": n.get("account_id", ""),
+            "first": today, "last": today, "days": 1, "spend": 0.0,
+            "today_spend": round(amt, 2), "new_today": True, "censored": False,
+            "created": n.get("created", ""),
+            "active": True, "status": "ACTIVE",
+            **{k: 0.0 for k in B["events"]}})
+        fresh += 1
+    art["today_moved"] = moved
+    art["today_new"] = fresh
+    art["today_spending"] = len(sp)
+    return art
+
+
 def longevity_fast(brand, days, force=False):
     """The precomputed artifact, served as-is. This is the fast path and it does no work.
 
@@ -1859,6 +1980,7 @@ def longevity_fast(brand, days, force=False):
                 row["created"] = created.get(row["id"], row.get("created", ""))
             art["status_unknown"] = sorted(a["name"] for a in B["accounts"]
                                            if a["id"] in degraded)
+            _overlay_today(art, B)
             return dict(art, precomputed=True, stale_hours=age,
                         artifact_written=art.get("_written", ""),
                         cached=False, age_min=0)

@@ -483,6 +483,28 @@ null key; each day's totals come out identical, because the stored nameless coun
 redistributed across partners rather than replaced by the second query's own total.
 Run on 2026-08-25: 284 days across all three brands, 0 failed.
 
+### Longevity: today is read live
+
+The fold behind the Longevity tab runs twice a day (04:15 / 13:15 IST per brand). Between
+runs it would report that every ad set last spent *yesterday* while it was spending — and
+the early run happens before most ad sets have spent anything, so for most of the day that
+would be the answer however fresh the fold was.
+
+So **Last spend, Days spent and Status are brought up to today** from a live read: one
+`level=adset` insights call per account, cached 10 minutes. Ad sets that first spent today
+appear in no folded window at all, so they are added from the roster and marked *new
+today* — SpeakEasy had 75 of them on 2026-08-26, absent from the tab entirely before this.
+
+**Spend, Per day, Trials and CPT still cover through the fold**, and the note says so.
+Today's trials are not fetched here — that is the Branch pull the precompute exists to
+avoid — and adding today's spend without them would inflate the CPT of exactly the ad sets
+that are running now, which is the direction that gets a working ad set killed. Today's
+spend is shown on its own beside the date instead.
+
+`Span` is derived from the dates in the browser rather than read from the artifact: `last`
+moves and the artifact's span does not, and `gaps` (span minus days) would go negative and
+render as a stop-and-restart that never happened.
+
 ### Pro rata — the modelled second reading
 
 `Measured | Pro rata` in the header. **Measured** is the default and is what Branch

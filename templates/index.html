@@ -1198,10 +1198,18 @@ async function loadLongevity(force){
 
 function longRows(){
   if(!LONG) return [];
-  let r = LONG.adsets.map(o => Object.assign({}, o, {
-    trials: o[EV], cpt: o[EV] > 0 ? o.spend / o[EV] : null,
-    perday: o.days > 0 ? o.spend / o.days : 0,
-    gaps: o.span - o.days}));
+  /* Span is derived from the dates rather than read from the artifact. `last` is brought
+     up to today by a live read, so an artifact span folded this morning would disagree
+     with the dates beside it — and `gaps`, which is span minus days, would go negative
+     and be rendered as a stop-and-restart that never happened. */
+  const spanOf = o => (!o.first || !o.last) ? 0 : Math.round(
+    (new Date(o.last + 'T00:00:00') - new Date(o.first + 'T00:00:00')) / 864e5) + 1;
+  let r = LONG.adsets.map(o => { const span = spanOf(o);
+    return Object.assign({}, o, {
+      span,
+      trials: o[EV], cpt: o[EV] > 0 ? o.spend / o[EV] : null,
+      perday: o.days > 0 ? o.spend / o.days : 0,
+      gaps: span - o.days}); });
   const q = document.getElementById('lq').value.trim().toLowerCase();
   if(q) r = r.filter(o => (o.name||'').toLowerCase().includes(q) ||
                           (o.campaign||'').toLowerCase().includes(q));
@@ -1244,7 +1252,8 @@ const LONG_COLS = [
 
 function longCell(o, c){
   if(c.kind === 'name')
-    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">${o.name||'—'}</td>`;
+    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">${o.name||'—'}${
+      o.new_today ? `<span class="pill" title="First spent today, so it is in no folded window yet — it has no history to show and its Spend and CPT read zero until tonight's fold.">new today</span>` : ''}</td>`;
   if(c.kind === 'sub') return `<td class="sub" title="${o.campaign||''}">${o.campaign||'—'}</td>`;
   if(c.kind === 'live')
     // "<=" is not decoration: the store starts somewhere, and an ad set already spending
@@ -1252,7 +1261,8 @@ function longCell(o, c){
     return `<td class="sub">${o.censored
       ? `<span class="censor" title="Already spending on the earliest day in the store — it started on or before this">≤</span>${o.first}`
       : o.first}${o.censored && o.created ? `<span class="pill">made ${o.created}</span>` : ''}</td>`;
-  if(c.kind === 'date') return `<td class="sub">${o.last}</td>`;
+  if(c.kind === 'date') return `<td class="sub">${o.last}${
+    o.today_spend ? `<span class="pill live" title="Spending today — ${rs(o.today_spend)} so far. Read live; the Spend and CPT columns cover through the fold above.">today ${rs(o.today_spend)}</span>` : ''}</td>`;
   if(c.kind === 'status')
     return `<td class="sub">${o.active === null
       ? '<span class="dimtxt">unknown</span>'
@@ -1446,6 +1456,10 @@ function renderTable(){
   }
   if(TAB==='longevity'){
     document.getElementById('ctl').style.display='none';
+    // Opening the tab is the request, however it was opened — a click, a deep link, or a
+    // brand switch. Without this, ?tab=longevity renders "press Load" at someone who
+    // just asked for it by name.
+    if(!longFresh() && !LONGBUSY) loadLongevity(false);
     renderLongevity();
     return;
   }
@@ -1618,7 +1632,23 @@ function longNote(){
        tab is for.<br>` : ''}<br>`;
   const cens = LONG.adsets.filter(a => a.censored).length;
   const unk = (LONG.status_unknown || []);
-  return scope + `<b>Went live</b> is the first day an ad set actually <i>spent</i>, not the day it
+  const t = LONG.today_known === false
+    ? `<b>Today could not be read</b> — Meta would not answer for today's spend, so
+       <b>Last spend</b> may be a day behind for anything running right now.<br><br>`
+    : (LONG.today_spending ? `<b>Today is read live.</b> The fold behind this tab runs
+       twice a day (04:15 and 13:15 IST), so between runs it would say every ad set last
+       spent <i>yesterday</i> while it was spending — and the early run happens before
+       most ad sets have spent anything, so for most of the day that would be the answer
+       however fresh the fold was. So <b>Last spend</b>, <b>Days spent</b> and
+       <b>Status</b> are brought up to today from a live read:
+       ${num(LONG.today_spending)} ad set(s) have spent today${LONG.today_new
+         ? `, ${num(LONG.today_new)} of which are new enough to appear in no fold yet and
+            are marked <i>new today</i>` : ''}.
+       <b>Spend, Per day, Trials and CPT still cover through the fold</b> — today's
+       trials are not fetched here, and adding today's spend without them would inflate
+       the CPT of exactly the ad sets that are running now. Today's spend is shown on its
+       own beside the date instead.<br><br>` : '');
+  return scope + t + `<b>Went live</b> is the first day an ad set actually <i>spent</i>, not the day it
      was created — an ad set built and left paused never ran. <b>Days spent</b> counts days
      with spend; <b>Span</b> is first to last. The two differing is the interesting case:
      it means the ad set stopped and restarted.
