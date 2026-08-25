@@ -233,6 +233,12 @@ change what yesterday's spend means and has deliberately not been done.
     python3 tools/backfill_history.py --days 90          # resumable, skips stored days
     python3 tools/backfill_history.py --dry-run          # what it would fetch
 
+    python3 tools/backfill_channels.py --dry-run         # one-off: split the nameless
+    python3 tools/backfill_channels.py                   # pool by channel on stored days
+
+`backfill_channels.py` is a repair pass, not a routine job — days written from now on
+carry their channel already. See *Which channel earned a trial* below.
+
 Nightly, three Cloud Scheduler jobs (`ads-history-{postly,speakeasy,funda}`, 03:40/03:50/
 04:00 IST) POST `/api/snapshot?brand=X&days=5`. One job per brand so each request finishes
 well inside gunicorn's 180s timeout and a throttle on one brand cannot stop the others;
@@ -430,11 +436,64 @@ Verified 2026-08-20 against Branch's own `~ad_set_name` dimension: of 164 ad set
 Both ad accounts are set to Asia/Kolkata, so Meta's day boundary and Branch's
 IST day boundary are the same — no timezone skew in the join.
 
+### Which channel earned a trial
+
+Branch attributes trials across **every** channel, not just Meta, so a large part of
+what the Attribution KPI used to call "not matched to an ad" was never a data problem
+at all — it was Google's.
+
+Branch fills in `~ad_name` for Facebook ads and leaves it empty for Google, which
+populates the channel and campaign fields instead. Cross-tabbing `~ad_name` against
+`~advertising_partner_name` on 2026-08-20 showed the pattern is clean in both
+directions — every named trial was Facebook's, and not one nameless trial was:
+
+| brand     | named (has `~ad_name`) | nameless | of which Google | organic |
+|-----------|-----------------------:|---------:|----------------:|--------:|
+| postly    |                  1,552 |       40 |              14 |      26 |
+| funda     |                 13,628 |   17,070 |          16,322 |     748 |
+| speakeasy |                  1,180 |      747 |             689 |      58 |
+
+So each trial is tagged with the partner Branch names for it, and the page reports
+Meta / Google Ads / Organic / Other as **measured** counts.
+
+**These are not apportioned between Meta and Google pro rata**, and that is the whole
+point. Splitting the nameless pool in proportion to each channel's attributed trials
+would have handed Meta roughly 7,700 of Funda's 17,070 nameless trials on that one
+day, and printed a Meta CPT of ₹134 where the measured figure was ₹209 — a 36% error,
+in the direction that keeps a losing ad set alive against a ₹150 target. The
+dashboard prints that counterfactual next to the breakdown so the claim can be
+checked on whatever window is on screen.
+
+Google **spend** is not read by this dashboard, so Google's trials appear as a count
+with no CPT beside them until the Google Ads pull lands.
+
+#### How the tag is stored
+
+Inside the ad-name key, under the prefix `~none~`, followed by Branch's partner name
+(empty = organic). That means the store, its aggregator and the persisted payload
+cache needed no format change and no migration — a key under the prefix is a nameless
+row, and everything else is an ad name exactly as before.
+
+Days written before this existed carry a bare `null` key and are reported as *channel
+not recorded* rather than guessed at. `tools/backfill_channels.py` resolves them using
+a one-dimension partner query — four or five rows a day instead of hundreds, because
+re-running the full ad-name pull across a hundred stored days is what exhausted
+Branch's burst limit and took SpeakEasy off the air once already. It rewrites only the
+null key; each day's totals come out identical, because the stored nameless count is
+redistributed across partners rather than replaced by the second query's own total.
+Run on 2026-08-25: 284 days across all three brands, 0 failed.
+
 ### Caveats the UI states on every view
 
 - **Attribution coverage.** Branch trials whose ad name matches no ad in either
-  account — organic, other channels, deleted ads — sit outside every row. The
-  Attribution KPI shows what fraction is covered (~95% on a normal day).
+  account sit outside every row, and the Attribution KPI shows what fraction is
+  covered. On Postly that is ~95%; on Funda it is ~43%, because more than half of
+  Funda's trials are bought on Google. The channel breakdown above the tables says
+  which, so a low number is read as "Google is big here" rather than "the pipeline
+  is broken".
+- **Meta ads no longer in the account.** A trial naming a real ad that has since
+  been deleted is Meta's — named means Facebook — but has no row left to attach to.
+  Counted under Meta in the breakdown, excluded from every CPT. Tens per day.
 - **Shared ad names.** Where several ads share one name, Branch cannot tell them
   apart. Their trials are split by spend share, so rollups stay exact while the
   individual per-ad CPTs are an even-CPT assumption. Those rows are tagged
@@ -530,6 +589,17 @@ To turn on a password later, set `ADMIN_PASS` (and optionally `ADMIN_USER`, defa
 by itself when the variable is present. No redeploy needed beyond the restart Render
 does when you save an env var.
 
+## Pre-deploy checks
+
+    ./tools/check.sh
+
+Python syntax across every module, then `node --check` over the page's inline
+`<script>`. The second one earns its place: the entire front end is one inline script
+in a Jinja template, nothing compiles it, Flask serves a broken one happily, and a
+stray newline inside a quoted string produces a page with a perfectly good header and
+no data underneath. `import server` cannot see that, and neither can any test that
+only exercises the API.
+
 ## Deploy (Render)
 
 Docker → Render, configured by `render.yaml`. Plan is **free**, so the instance sleeps
@@ -576,6 +646,11 @@ Free-plan facts worth knowing:
 | `templates/index.html` | the whole UI, no build step, no dependencies |
 | `config.py` | the `BRANDS` table (accounts, events, targets) + credential resolution |
 | `static/brand/` | one logo per brand — swap a file here to change a logo |
+| `history.py` | client for the settled-day store (degrades to "nothing stored") |
+| `history-service/` | the Cloud Run front door to the GCS bucket |
+| `tools/backfill_history.py` | fill the store with settled days |
+| `tools/backfill_channels.py` | one-off: tag stored nameless trials with their channel |
+| `tools/check.sh` | pre-deploy syntax checks, including the page's inline JS |
 | `Dockerfile`, `render.yaml` | deploy |
 
 ## Credentials

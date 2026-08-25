@@ -687,6 +687,25 @@ const inSeg = o => SEG === 'blended' || !o.seg || o.seg === SEG;
 const segHas = sg => !!(DATA && DATA.segments && DATA.segments[sg]
                         && (DATA.segments[sg].spend > 0 || DATA.segments[sg].budget > 0));
 
+/* ---------- trials by channel ---------- */
+/* Branch fills in `~ad_name` for Meta ads and leaves it empty for Google, so a trial with
+   no ad name is a Google or an organic trial — and Branch names which one. That is why
+   this is a measured split and not a share-out: apportioning the nameless pool between
+   Meta and Google by their attributed trials would move tens of thousands of Google's
+   trials onto Meta's spend and halve a CPT the kill rules act on. */
+function chanOf(){ return (DATA && DATA.channels && DATA.channels[EV]) || null; }
+
+function chanBits(){
+  const c = chanOf(); if(!c) return [];
+  const out = [];
+  if(c.google)      out.push(`${num(c.google)} Google Ads`);
+  if(c.organic)     out.push(`${num(c.organic)} organic`);
+  if(c.other)       out.push(`${num(c.other)} other partners`);
+  if(c.meta_orphan) out.push(`${num(c.meta_orphan)} Meta, ad removed`);
+  if(c.unknown)     out.push(`${num(c.unknown)} channel not recorded`);
+  return out;
+}
+
 /* ---------- KPIs ---------- */
 function kpis(){
   const c = totals(), tr = c[EV], sp = c.spend, k = cpt(sp,tr);
@@ -720,8 +739,9 @@ function kpis(){
        ? ` · Branch ${num(DATA.branch_totals[EV])} total`
        : ` · ${segLbl} campaigns only`}</div></div>
    <div class="kpi"><div class="k">Attribution</div><div class="v">${cov.toFixed(1)}%</div>
-     <div class="s">${num(DATA.unattributed[EV])} trials not matched to an ad${
-       SEG==='blended' ? '' : ' · brand-wide, not per segment'}</div></div>`
+     <div class="s">${chanBits().length ? chanBits().join(' · ')
+       : `${num(DATA.unattributed[EV])} trials not matched to an ad`}${
+       SEG==='blended' ? '' : ' · brand-wide'}</div></div>`
    : `
    <div class="kpi"><div class="k">Budget/day</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) + `
@@ -1184,6 +1204,44 @@ function longNote(){
        window cannot have changed since.` : ''}`;
 }
 
+/* The breakdown behind the attribution figure. Written out in full because "44%
+   attributed" reads as a broken pipeline when what it actually means is "56% of these
+   trials were bought on Google" — a completely different fact, with a completely
+   different response. */
+function chanNote(){
+  const c = chanOf(); const tot = DATA && DATA.branch_totals ? DATA.branch_totals[EV] : 0;
+  if(!c || !tot) return '';
+  const pct = v => `${(100*v/tot).toFixed(1)}%`;
+  const row = (lab, v, extra) => v ? `<br>&nbsp;&nbsp;&nbsp;<b>${num(v)}</b> ${lab}
+     <span class="dimtxt">${pct(v)}${extra ? ' — ' + extra : ''}</span>` : '';
+  /* The counterfactual, computed live for whatever window is on screen, because it is
+     the whole argument for not doing it and an abstract one would not land. */
+  const pool = c.google + c.organic + c.other;
+  const denom = c.meta + c.google;
+  const sp = DATA.combined.spend;
+  let counter = '';
+  if(pool && denom && c.meta_matched && sp){
+    const would = c.meta + pool * (c.meta / denom);
+    counter = `Splitting that pool between Meta and Google in proportion to their
+      attributed trials would credit Meta with ${num(would - c.meta)} trials it did not
+      earn here, and print a brand-wide CPT of ${rs(sp/would)} where the measured figure
+      is ${rs(sp/c.meta_matched)}. (Brand-wide: this breakdown covers every campaign, so
+      it does not split by testing and trial the way the tiles above do.)`;
+  }
+  return `<b>Which channel earned these trials.</b> Branch fills in an ad name for Meta ads
+     and leaves it empty for Google — so a trial with no ad name is not an untraceable one,
+     it is a Google or organic trial, and Branch says which. Measured over this window:
+     ${row('Meta', c.meta, c.meta_orphan ? `${num(c.meta_orphan)} of them name an ad no
+        longer in the account, so they are Meta's but sit outside every row above` : '')}
+     ${row('Google Ads', c.google, `counted here; this dashboard does not read Google
+        spend, so there is no CPT beside it yet`)}
+     ${row('Organic / direct', c.organic)}
+     ${row('Other partners', c.other)}
+     ${row('channel not recorded', c.unknown, `stored before trials carried their partner —
+        run the channel backfill to resolve these`)}
+     <br>${counter}<br><br>`;
+}
+
 function mainNote(){
   const accts = `Covers ${DATA.accounts.length === 1 ? 'one ad account' :
     `all ${DATA.accounts.length} ${DATA.brand_label} ad accounts`}.`;
@@ -1195,17 +1253,18 @@ function mainNote(){
      ${DATA.brand_label}'s Meta ad accounts. Spend, trials and CPT from Google Ads or any
      other channel are <i>not</i> included and are not netted off — so this is the
      performance of Meta buying, not of the brand.
-     ${hasTrials() ? `Branch attributes trials across every channel, which is part of why
-       ${num(DATA.unattributed[EV])} trial(s) here match no Meta ad: some of them were
-       bought somewhere else.` : ''}<br><br>`;
+     ${hasTrials() ? `Branch attributes trials across every channel, which is why
+       ${num(DATA.unattributed[EV])} trial(s) here match no Meta ad${chanOf()
+         ? ` — most of them were bought on Google. They are broken out by channel below.`
+         : `: some of them were bought somewhere else.`}` : ''}<br><br>`;
   const lag = `Today's numbers are still landing — Meta spend lags a few minutes${
      hasTrials() ? ' and Branch trials keep arriving through the day, so intraday CPT reads high early and settles down' : ''}.`;
-  document.getElementById('note').innerHTML = scope + srcNote() + segNote() + cpNote() + (hasTrials()
+  document.getElementById('note').innerHTML = scope + srcNote() + chanNote() + segNote() + cpNote() + (hasTrials()
     ? `CPT = Meta spend ÷ Branch trials, joined at <b>ad-name</b> level and rolled up
        (Branch does not expose campaign or account as attribution dimensions).
        ${accts} ${DATA.unattributed[EV]>0
-         ? `${num(DATA.unattributed[EV])} Branch trial(s) matched no ad in any of them — organic,
-            other channels, or deleted ads — so they sit outside every row above.`:''}
+         ? `${num(DATA.unattributed[EV])} Branch trial(s) matched no ad in any of them, so they
+            sit outside every row above${chanOf() ? ' — see the channel breakdown above for who earned them' : ' — organic, other channels, or deleted ads'}.`:''}
        ${dup}${lag}`
     /* No Branch app for this brand: say so plainly and name what is missing, rather
        than leaving someone to wonder why there is no CPT on a page called CPT. */
@@ -1238,8 +1297,9 @@ function segNote(){
      creative that works and is expected to cost more per trial, and judging it against
      the trial target would kill the pipeline that feeds trial.
      ${hasTrials() ? `Branch attributes a trial to an <b>ad name</b>, which carries no
-       campaign, so the ${num(DATA.unattributed[EV])} unmatched trials cannot be assigned
-       to either side and sit outside both.` : ''}<br><br>`;
+       campaign, so the ${num(DATA.unattributed[EV])} unmatched trials${chanOf()
+         ? " — Google's included —" : ''} cannot be assigned to either side and sit outside
+       both.` : ''}<br><br>`;
 }
 
 /* Where the figures came from. A number read from storage and a number just fetched are

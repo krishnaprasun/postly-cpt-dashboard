@@ -367,6 +367,55 @@ def _branch_pages(body, cap=40, tries=5):
     return rows, (total if total is not None else len(rows))
 
 
+# ------------------------------------- where a nameless trial came from -----
+# Branch fills in `~ad_name` for Facebook ads and, in practice, for nothing else: Google
+# populates the channel and campaign fields but leaves the ad name empty. So the pool this
+# dashboard used to lump together as "not matched to an ad" was never a pool of
+# untraceable trials -- Branch knows exactly which partner earned every one of them.
+# Cross-tabbed on 2026-08-20, not one nameless trial belonged to Facebook:
+#
+#              named (has ~ad_name)      nameless
+#   postly       1,552  all Facebook          40  =     14 Google AdWords +  26 organic
+#   funda       13,628  all Facebook      17,070  = 16,322 Google AdWords + 748 organic
+#   speakeasy    1,180  all Facebook         747  =    689 Google AdWords +  58 organic
+#
+# Which is why these rows are tagged with the partner Branch names, and NOT divided
+# between Meta and Google in proportion to their attributed trials. A proportional split
+# would have credited Meta with about 7,700 of Funda's 17,070 nameless trials that day and
+# printed a Meta CPT of Rs 133 where the measured figure was Rs 209 -- an error in the
+# direction that keeps a losing ad set alive, against a Rs 150 target.
+#
+# The tag rides inside the ad-name key so the store, its aggregator and the payload cache
+# need no format change and no migration: a key under this prefix is a nameless row, and
+# whatever follows the prefix is Branch's partner name ("" = no partner at all, organic).
+# Days stored before this existed carry a bare None/"null" key and are reported as
+# "channel not recorded" rather than guessed at; tools/backfill_channels.py fills them in.
+NONE_PREFIX = "~none~"
+
+# Meta is "meta" and not "facebook" because the dashboard's own vocabulary is Meta, and
+# Branch's is Facebook. Anything Branch names that is neither is kept as "other" rather
+# than folded into organic: an unrecognised paid partner is a fact worth seeing, and
+# calling it organic would quietly credit it to nobody.
+CHANNELS = ("meta", "google", "organic", "other")
+CHANNEL_LABELS = {"meta": "Meta", "google": "Google Ads",
+                  "organic": "Organic / direct", "other": "Other partners"}
+
+
+def _nameless_key(partner):
+    return NONE_PREFIX + (partner or "")
+
+
+def partner_slug(raw):
+    p = (raw or "").strip().lower()
+    if not p:
+        return "organic"
+    if "facebook" in p or "meta" in p or "instagram" in p:
+        return "meta"
+    if "google" in p or "adwords" in p or "youtube" in p or "doubleclick" in p:
+        return "google"
+    return "other"
+
+
 def branch_trials_by_ad(since, until, B):
     """{event_key: {ad_name_or_None: unique_count}} over the window, 7-day chunked.
 
@@ -387,13 +436,17 @@ def branch_trials_by_ad(since, until, B):
             rows, _tc = _branch_pages({
                 "branch_key": bkey, "branch_secret": bsecret,
                 "start_date": d.strftime("%Y-%m-%d"), "end_date": ce.strftime("%Y-%m-%d"),
-                "dimensions": ["last_attributed_touch_data_tilde_ad_name"],
+                "dimensions": ["last_attributed_touch_data_tilde_ad_name",
+                               "last_attributed_touch_data_tilde_advertising_partner_name"],
                 "granularity": "all", "aggregation": "unique_count",
                 "data_source": "eo_custom_event", "filters": {"name": [ev]}})
             for row in rows:
                 res = row.get("result", {})
-                out[key][res.get("last_attributed_touch_data_tilde_ad_name")] += \
-                    res.get("unique_count", 0)
+                name = res.get("last_attributed_touch_data_tilde_ad_name")
+                if not name:
+                    name = _nameless_key(res.get(
+                        "last_attributed_touch_data_tilde_advertising_partner_name"))
+                out[key][name] += res.get("unique_count", 0)
         d = ce + timedelta(days=1)
     return out
 
@@ -748,7 +801,8 @@ def branch_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
             rows, _tc = _branch_pages({
                 "branch_key": bkey, "branch_secret": bsecret,
                 "start_date": d.strftime("%Y-%m-%d"), "end_date": ce.strftime("%Y-%m-%d"),
-                "dimensions": ["last_attributed_touch_data_tilde_ad_name"],
+                "dimensions": ["last_attributed_touch_data_tilde_ad_name",
+                               "last_attributed_touch_data_tilde_advertising_partner_name"],
                 "granularity": "day", "aggregation": "unique_count",
                 "data_source": "eo_custom_event", "filters": {"name": [ev]}},
                 tries=tries)
@@ -756,6 +810,10 @@ def branch_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
                 day = (row.get("timestamp") or "")[:10]
                 res = row.get("result", {})
                 name = res.get("last_attributed_touch_data_tilde_ad_name")
+                if not name:
+                    # Nameless, but not unknown: keep the partner Branch names for it.
+                    name = _nameless_key(res.get(
+                        "last_attributed_touch_data_tilde_advertising_partner_name"))
                 if not day:
                     continue
                 out.setdefault(day, {}).setdefault(key, {})
@@ -763,6 +821,83 @@ def branch_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
                     res.get("unique_count", 0)
         d = ce + timedelta(days=1)
     return out
+
+
+def branch_partners_daily(since, until, B, tries=BRANCH_BACKFILL_TRIES):
+    """{date: {event_key: {branch_partner_name_or_None: unique_count}}}.
+
+    The cheap query: one dimension, a handful of rows a day rather than one per ad name.
+    It exists for repairing days that were stored before trials carried their partner —
+    re-running the full ad-name pull for a hundred days is the thing that took SpeakEasy
+    off the air once already, and this asks for a hundredth of the data.
+    """
+    events, creds = B["events"], B["branch"]
+    out = {}
+    if not (events and creds):
+        return out
+    bkey, bsecret = creds
+    d = datetime.strptime(since, "%Y-%m-%d").date()
+    endd = datetime.strptime(until, "%Y-%m-%d").date()
+    while d <= endd:
+        ce = min(d + timedelta(days=BRANCH_MAX_SPAN - 1), endd)
+        for key, ev in events.items():
+            rows, _tc = _branch_pages({
+                "branch_key": bkey, "branch_secret": bsecret,
+                "start_date": d.strftime("%Y-%m-%d"), "end_date": ce.strftime("%Y-%m-%d"),
+                "dimensions": [
+                    "last_attributed_touch_data_tilde_advertising_partner_name"],
+                "granularity": "day", "aggregation": "unique_count",
+                "data_source": "eo_custom_event", "filters": {"name": [ev]}},
+                tries=tries)
+            for row in rows:
+                day = (row.get("timestamp") or "")[:10]
+                if not day:
+                    continue
+                res = row.get("result", {})
+                par = res.get(
+                    "last_attributed_touch_data_tilde_advertising_partner_name")
+                out.setdefault(day, {}).setdefault(key, {})
+                out[day][key][par] = out[day][key].get(par, 0) + \
+                    res.get("unique_count", 0)
+        d = ce + timedelta(days=1)
+    return out
+
+
+def legacy_nameless(by_name):
+    """Trials stored under a bare null key — nameless, and from before partners were kept."""
+    return sum(n for k, n in (by_name or {}).items()
+               if not isinstance(k, str) or not k or k == "null")
+
+
+def named_total(by_name):
+    """Trials stored against a real ad name (so, per Branch's behaviour, Meta's)."""
+    return sum(n for k, n in (by_name or {}).items()
+               if isinstance(k, str) and k and k != "null"
+               and not k.startswith(NONE_PREFIX))
+
+
+def apportion(total, weights):
+    """Split integer `total` across {key: weight} so the parts sum to it exactly.
+
+    Largest remainder. The weights come from a SECOND Branch query whose unique_count
+    dedupes very slightly differently from the first (0.2% on the days measured), so the
+    shape of the split is measured and only the rounding is imposed. Normalising to the
+    stored total rather than replacing it keeps every day's total exactly what it was
+    when it was written, which is the one property a repair pass must not break.
+    """
+    total = int(round(total))
+    tot_w = sum(weights.values())
+    if total <= 0 or tot_w <= 0:
+        return {}
+    raw = {k: total * w / tot_w for k, w in weights.items() if w > 0}
+    out = {k: int(v) for k, v in raw.items()}
+    left = total - sum(out.values())
+    for k, _ in sorted(raw.items(), key=lambda kv: -(kv[1] - int(kv[1]))):
+        if left <= 0:
+            break
+        out[k] += 1
+        left -= 1
+    return {k: v for k, v in out.items() if v}
 
 
 def _stored_prefix(brand, dates):
@@ -1429,12 +1564,33 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     dup_names = sum(1 for v in by_name.values() if len(v) > 1)
 
     matched = {k: 0.0 for k in EVENTS}
+    # Every Branch row lands in exactly one channel bucket, and the buckets sum back to
+    # the Branch total. Three of them are worth naming:
+    #   meta_matched  a named ad that is still live in one of our accounts -- the only
+    #                 bucket any CPT on this page is allowed to divide by
+    #   meta_orphan   a named ad that is not. Named means Facebook (see NONE_PREFIX), so
+    #                 the trial is Meta's; there is simply no ad row left to hang it on
+    #   unknown       stored before trials carried their partner. Reported as unknown,
+    #                 never apportioned -- run tools/backfill_channels.py to resolve it
+    chan = {k: {c: 0.0 for c in CHANNELS} for k in EVENTS}
+    orphan = {k: 0.0 for k in EVENTS}
+    unknown_chan = {k: 0.0 for k in EVENTS}
     for key in EVENTS:
         for name, n in trials[key].items():
-            if not name or name not in by_name:
+            nm = name if isinstance(name, str) else ""
+            if nm.startswith(NONE_PREFIX):
+                chan[key][partner_slug(nm[len(NONE_PREFIX):])] += n
+                continue
+            if not nm or nm == "null":
+                unknown_chan[key] += n
+                continue
+            if nm not in by_name:
+                chan[key]["meta"] += n
+                orphan[key] += n
                 continue
             group = by_name[name]
             matched[key] += n
+            chan[key]["meta"] += n
             if len(group) == 1:
                 group[0][key] += n
                 continue
@@ -1535,10 +1691,17 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     budget_age = int(max(ages)) if ages else None
 
     branch_totals = {k: sum(trials[k].values()) for k in EVENTS}
-    # Branch trials whose ad name matches nothing in either account: organic, other
-    # channels, or ads deleted out of Meta. Shown so the combined CPT is honest about
-    # what it does and does not cover.
+    # Everything the per-ad CPT does not cover. Kept as a single figure because that is
+    # what "attribution %" is measured against, but no longer the end of the story --
+    # `channels` below says which partner each of these trials actually belongs to.
     unattributed = {k: branch_totals[k] - matched[k] for k in EVENTS}
+    channels = {k: {"meta_matched": round(matched[k], 1),
+                    "meta_orphan": round(orphan[k], 1),
+                    "meta": round(chan[k]["meta"], 1),
+                    "google": round(chan[k]["google"], 1),
+                    "organic": round(chan[k]["organic"], 1),
+                    "other": round(chan[k]["other"], 1),
+                    "unknown": round(unknown_chan[k], 1)} for k in EVENTS}
 
     return {
         "since": since, "until": until,
@@ -1571,6 +1734,11 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         "branch_totals": branch_totals,
         "matched": {k: round(v, 1) for k, v in matched.items()},
         "unattributed": {k: round(v, 1) for k, v in unattributed.items()},
+        # Which partner earned each trial, straight out of Branch rather than modelled.
+        # Meta spend is the only spend this dashboard reads, so Google's trials are shown
+        # as a count with no CPT beside them until the Google Ads pull lands.
+        "channels": channels,
+        "channel_labels": CHANNEL_LABELS,
         "duplicate_ad_names": dup_names,
         # per-account list of which roster listings Meta would not return. Spend,
         # trials and CPT stay correct regardless; only statuses and budgets are affected.
