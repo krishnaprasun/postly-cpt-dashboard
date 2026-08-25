@@ -515,8 +515,33 @@ read-only team link, opens straight into it.
 Per-day channel totals for stored days live in the `{brand}chan0` store namespace —
 four integers per event per day, none of which depend on the current ad roster, so they
 are computed once and reused. `snapshot()` folds each new day in as it is written, so
-the index cannot fall behind the store. Rebuild with
-`python3 tools/backfill_channels.py --index-only`.
+the index cannot fall behind the store.
+
+    python3 tools/backfill_channels.py --audit                  # reads only
+    python3 tools/backfill_channels.py --index-only             # fill what is missing
+    python3 tools/backfill_channels.py --index-only --reindex   # recompute every day
+
+#### Why the index is written the way it is
+
+The index is one artifact holding every day, so updating it is a read-modify-write — and
+the first version of that was unsafe in two ways, both silent.
+
+`history.get_agg()` returns `None` both when nothing is stored **and** when the store
+could not be reached. A writer that cannot tell those apart treats a failed read as an
+empty index, writes back the single entry it was adding, and destroys the rest — and
+because it stamps the artifact with today's date, the truncated one is then the *newest*
+and wins every subsequent read. `get_agg_raw()` returns `(artifact, ok)` so writers can
+refuse; `chan_index_add()` and `chan_index_build()` both do.
+
+The install backfill also did one read-modify-write **per day** — 286 round trips — and
+ignored every return value. It lost one: Postly's `2026-06-01` kept its trial rows but
+never gained its install row. Nothing anywhere reported it. The backfills now accumulate
+and write **once**, check the result, and read it back to confirm no day went missing.
+
+`--audit` exists because that failure is invisible from the outside: an index that has
+quietly lost days looks exactly like a correct one, and the only symptom is the pro-rata
+view covering fewer days and printing a smaller uplift. The **Meta share · modelled**
+tile shows `days_covered/days_total` for the same reason.
 
 **This is a model, not a measurement.** Branch labels every one of these trials, and on
 20 Aug not one of them was Facebook's. Pro rata deliberately overrides that, on the
@@ -650,12 +675,17 @@ Google spend, so those rows carry volume with no cost beside them.
 
 ### Two things it deliberately does
 
-**Today is excluded.** A multi-day window ends *yesterday* and takes one extra day at the
-far end, so "Last 14 days" is fourteen whole days. Today is partial — spend is minutes
-behind, Branch trials land all evening — and on a trend line a partial day dives towards
-zero and reads as a collapse that never happened. A window that *is* today keeps it and
-says so. The KPI tiles above the tabs still include today; the note explains the
-difference.
+**These tabs own their window.** A `Last 7 / 14 / 30 / 60 days` selector sits in their
+control bar, defaulting to **30 days**, and the page's range picker does not apply to
+them — Longevity already works this way. Following the picker meant opening Trends on
+its default of "Today" and getting a single point with a paragraph explaining why it was
+useless. A trend line over one day is not a smaller answer, it is no answer.
+
+**Today is excluded.** A window ends *yesterday* and takes one extra day at the far end,
+so "Last 30 days" is thirty whole days. Today is partial — spend is minutes behind,
+Branch trials land all evening — and on a trend line a partial day dives towards zero and
+reads as a collapse that never happened. The KPI tiles above the tabs still include
+today; the note explains the difference.
 
 **Derived metrics come from the sums.** CPT for a period is total spend over total
 trials, never the mean of the daily CPTs — on a row that ran on three days out of
@@ -672,7 +702,7 @@ in 0.4s. The nightly precompute warms the default combination (14 days, script) 
 brand; the artifact is only reused when its dates match the request **exactly**, because
 a window that has rolled forward a day is a different question.
 
-Both tabs are deep-linkable: `?tab=matrix&range=14d&dim=adset&metric=cpi&attr=prorata`.
+Both tabs are deep-linkable: `?tab=matrix&win=30&dim=adset&metric=cpi&attr=prorata`.
 
 ### Installs
 

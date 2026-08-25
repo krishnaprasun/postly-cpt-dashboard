@@ -447,6 +447,12 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   </div>
 
   <div class="ctl" id="sctl" style="display:none">
+    <select class="sel" id="sWin">
+      <option value="7">Last 7 days</option>
+      <option value="14">Last 14 days</option>
+      <option value="30" selected>Last 30 days</option>
+      <option value="60">Last 60 days</option>
+    </select>
     <label class="chk">Dimension
       <select class="sel" id="sDim" style="margin-left:6px">
         <option value="script" selected>Script (ad name)</option>
@@ -966,7 +972,11 @@ function niceMax(v, ticks){
 }
 const LINE_COLOURS = ['#2563EB','#E8A017','#20A75D','#B3342C','#7C3AED','#0891B2'];
 
-const seriesKey = () => `${BRAND}|${CUSTOM ? CUSTOM.since+'_'+CUSTOM.until : RANGE}|${sDim()}`;
+/* Deliberately NOT keyed on the page's range picker: these two tabs carry their own
+   window. Following the picker meant opening Trends on its default of "Today" and being
+   shown a single point and a paragraph explaining why it was useless. */
+const sWin = () => document.getElementById('sWin').value;
+const seriesKey = () => `${BRAND}|${sWin()}|${sDim()}`;
 const seriesFresh = () => !!(SERIES && SERIESKEY === seriesKey());
 const sDim = () => document.getElementById('sDim').value;
 const sMetric = () => document.getElementById('sMetric').value;
@@ -1008,7 +1018,8 @@ async function loadSeries(force){
   SERIES = null; SERIESKEY = null; SERIESBUSY = true;
   document.getElementById('scount').textContent = 'loading…';
   try{
-    const r = await fetch(`/api/series?${apiQuery()}&dim=${sDim()}${force?'&force=1':''}`);
+    const r = await fetch(`/api/series?brand=${BRAND}&days=${sWin()}&dim=${sDim()}${
+      force ? '&force=1' : ''}${K}`);
     const j = await r.json();
     if(j.error){ document.getElementById('scount').textContent = 'failed: ' + j.error; return; }
     SERIES = j; SERIESKEY = key;
@@ -1975,6 +1986,7 @@ document.getElementById('tabs').onclick = e => {
 };
 /* Dimension changes the fold, so it re-fetches. Metric and the filters are pure
    re-renders of an answer already in hand. */
+document.getElementById('sWin').onchange = () => loadSeries(false);
 document.getElementById('sDim').onchange = () => loadSeries(false);
 document.getElementById('sMetric').onchange = () => { renderTable(); noteFor(); };
 document.getElementById('sq').oninput = renderTable;
@@ -2113,7 +2125,7 @@ try{
    what people actually want to send each other. */
 try{
   const q = new URLSearchParams(location.search);
-  for(const [param, id] of [['dim','sDim'], ['metric','sMetric']]){
+  for(const [param, id] of [['dim','sDim'], ['metric','sMetric'], ['win','sWin']]){
     const want = q.get(param), sel = document.getElementById(id);
     if(want && sel && [...sel.options].some(o => o.value === want)) sel.value = want;
   }

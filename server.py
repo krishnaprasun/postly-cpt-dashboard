@@ -359,8 +359,22 @@ def api_series():
                              request.args.get("brand", C.DEFAULT_BRAND))
     if err:
         return err
-    since, until = resolve_range(request.args.get("range", "14d"),
-                                 request.args.get("since"), request.args.get("until"))
+    # These two views own their window rather than following the page's range picker.
+    # A trend line and a date grid over a single day are not a smaller version of the
+    # answer, they are no answer at all -- and "Today", the picker's default, is exactly
+    # that. Longevity already works this way for the same reason.
+    if request.args.get("since") and request.args.get("until"):
+        since, until = request.args["since"], request.args["until"]
+    else:
+        try:
+            days = int(request.args.get("days", "30"))
+        except ValueError:
+            days = 30
+        days = max(2, min(days, P.SERIES_MAX_DAYS))
+        today = P.today_ist()
+        since = (datetime.strptime(today, "%Y-%m-%d")
+                 - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+        until = today
     dim = request.args.get("dim", "script")
     force = full and request.args.get("force") == "1"
     args = (brand, since, until, dim)
@@ -455,7 +469,7 @@ def api_precompute():
             .strftime("%Y-%m-%d")
         for b in brands:
             try:
-                r = P.series(b, since, today, dim="script", force=True)
+                r = P.series(b, since, today, dim="script", force=True)  # noqa: E501
                 warmed.append({"brand": b, "rows": r.get("total_rows"),
                                "days": len(r.get("dates") or [])})
             except Exception as e:
