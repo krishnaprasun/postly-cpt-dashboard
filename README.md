@@ -629,6 +629,66 @@ To turn on a password later, set `ADMIN_PASS` (and optionally `ADMIN_USER`, defa
 by itself when the variable is present. No redeploy needed beyond the restart Render
 does when you save an env var.
 
+## Trends and Matrix
+
+Two tabs over the same fold, `/api/series`: one number per row per **day**, for a chosen
+dimension. The window tables collapse the days and Longevity only tracks spend, so
+neither could draw a trend line or fill a date grid.
+
+**Dimension** — Script (ad name), Ad set, Campaign, Ad account, Stage, Platform.
+**Metric** — Spend, Trials, CPT, Installs, CPI.
+
+*Script is the ad name.* Branch attributes to an ad name and nothing else, and the same
+creative is rebuilt into new ads across ad sets and builds, so the name groups those
+rebuilds where an ad id would not. There is no separate script registry behind it — the
+`{creative}_{build}` tail in Postly's names parses on 96% of ads but yields 1,557 ids
+across 1,848 ads, so it groups nothing.
+
+*Platform* is the one dimension that can show a non-Meta row: Branch knows which trials
+and installs Google earned (see the channel section above), and this dashboard reads no
+Google spend, so those rows carry volume with no cost beside them.
+
+### Two things it deliberately does
+
+**Today is excluded.** A multi-day window ends *yesterday* and takes one extra day at the
+far end, so "Last 14 days" is fourteen whole days. Today is partial — spend is minutes
+behind, Branch trials land all evening — and on a trend line a partial day dives towards
+zero and reads as a collapse that never happened. A window that *is* today keeps it and
+says so. The KPI tiles above the tabs still include today; the note explains the
+difference.
+
+**Derived metrics come from the sums.** CPT for a period is total spend over total
+trials, never the mean of the daily CPTs — on a row that ran on three days out of
+fourteen those are far apart and only the first is the real cost. A day with no trials
+renders as a dash and *breaks* the line rather than being drawn as zero.
+
+### Cost
+
+The fold is 16–26s cold: raw stored days plus a live pull for the unsettled tail. So the
+result is cached in process for 15 minutes, served stale while it refreshes, **and
+persisted to the store** under `{brand}ser{dim}` — the in-process cache dies with the
+process, which on the free plan is every fifteen idle minutes. A cold instance restores
+in 0.4s. The nightly precompute warms the default combination (14 days, script) for each
+brand; the artifact is only reused when its dates match the request **exactly**, because
+a window that has rolled forward a day is a different question.
+
+Both tabs are deep-linkable: `?tab=matrix&range=14d&dim=adset&metric=cpi&attr=prorata`.
+
+### Installs
+
+`eo_install` from Branch, joined to ads by the same ad-name key as trials and stored as a
+third pseudo-event (`inst`) in the same `{event: {ad_name: n}}` shape — so the store, its
+aggregator and the channel index needed no format change. Installs are pulled on the same
+trip as the trials rather than in a second pass.
+
+They are kept out of `matched`, `channels` and `unattributed`, which describe *trial*
+attribution — the thing every CPT divides by. Pro rata does not touch them either: that
+model is about trial attribution.
+
+`tools/backfill_installs.py` fills days stored before this existed. Only the install
+series is fetched — one query per 7-day chunk rather than a full re-pull — so the whole
+history is about forty requests. Run 2026-08-26: 286 days across three brands, 0 failed.
+
 ## Pre-deploy checks
 
     ./tools/check.sh
@@ -690,6 +750,7 @@ Free-plan facts worth knowing:
 | `history-service/` | the Cloud Run front door to the GCS bucket |
 | `tools/backfill_history.py` | fill the store with settled days |
 | `tools/backfill_channels.py` | one-off: tag stored nameless trials with their channel |
+| `tools/backfill_installs.py` | one-off: add the install series to older stored days |
 | `tools/check.sh` | pre-deploy syntax checks, including the page's inline JS |
 | `Dockerfile`, `render.yaml` | deploy |
 

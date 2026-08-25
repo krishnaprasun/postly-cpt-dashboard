@@ -251,7 +251,7 @@ def resolve_range(rng, since, until):
     if rng == "yesterday":
         d = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
         return d, d
-    back = {"3d": 2, "7d": 6, "30d": 29}.get(rng)
+    back = {"3d": 2, "7d": 6, "14d": 13, "30d": 29, "60d": 59}.get(rng)
     if back is not None:
         d = (datetime.strptime(today, "%Y-%m-%d")
              - timedelta(days=back)).strftime("%Y-%m-%d")
@@ -330,6 +330,59 @@ def api_data():
         return jsonify({"error": str(e)[:500]}), 500
 
 
+# ---- daily series -----------------------------------------------------------
+# Same stale-while-revalidate shape as /api/data, for the same reason: a fourteen-day
+# fold over a wide dimension is a real Meta and Branch cost, and nobody should watch a
+# spinner for it when perfectly good numbers from ten minutes ago are on hand.
+_series_refreshing = set()
+
+
+def _series_into_cache(args):
+    try:
+        P.series(*args, force=True)
+    except Exception:
+        traceback.print_exc()
+    finally:
+        with _lock:
+            _series_refreshing.discard(args)
+
+
+@app.route("/api/series")
+@protected
+def api_series():
+    """Per-day spend, trials and installs for every row of one dimension.
+
+    Feeds both the Trends chart and the date matrix — they are two renderings of one
+    answer, so they share a request rather than each paying for their own fold.
+    """
+    brand, err, full = _gate(request.args.get("k", ""),
+                             request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    since, until = resolve_range(request.args.get("range", "14d"),
+                                 request.args.get("since"), request.args.get("until"))
+    dim = request.args.get("dim", "script")
+    force = full and request.args.get("force") == "1"
+    args = (brand, since, until, dim)
+    try:
+        out = P.series(*args, force=force)
+        # Served from cache and old enough to be worth refreshing: hand back what we have
+        # and rebuild behind the request, exactly as the main payload does.
+        if out.get("cached") and out.get("age_min", 0) >= 5 and not force:
+            with _lock:
+                start = args not in _series_refreshing
+                if start:
+                    _series_refreshing.add(args)
+            if start:
+                threading.Thread(target=_series_into_cache, args=(args,),
+                                 daemon=True).start()
+            out = dict(out, stale=True)
+        return jsonify(out)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)[:500]}), 500
+
+
 @app.route("/api/longevity")
 @protected
 def api_longevity():
@@ -390,7 +443,26 @@ def api_precompute():
             except Exception as e:
                 traceback.print_exc()
                 out.append({"ok": False, "brand": b, "days": w, "error": str(e)[:200]})
-    return jsonify({"wrote": sum(1 for r in out if r.get("ok")), "results": out})
+    # Warm the daily series for the combination the Trends and Matrix tabs open on.
+    # The fold is 15-25s cold, which on a woken free instance is long enough that someone
+    # concludes the tab is broken. Warming it here costs the nightly job a few seconds and
+    # nobody else anything. Only the default window and dimension: warming every
+    # combination would be spending Meta quota on views that may never be opened.
+    warmed = []
+    if request.args.get("series", "1") != "0":
+        today = P.today_ist()
+        since = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=14)) \
+            .strftime("%Y-%m-%d")
+        for b in brands:
+            try:
+                r = P.series(b, since, today, dim="script", force=True)
+                warmed.append({"brand": b, "rows": r.get("total_rows"),
+                               "days": len(r.get("dates") or [])})
+            except Exception as e:
+                traceback.print_exc()
+                warmed.append({"brand": b, "error": str(e)[:200]})
+    return jsonify({"wrote": sum(1 for r in out if r.get("ok")), "results": out,
+                    "series_warmed": warmed})
 
 
 @app.route("/api/snapshot", methods=["POST", "GET"])

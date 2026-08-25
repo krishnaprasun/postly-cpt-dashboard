@@ -241,6 +241,46 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
    it on should not look like just another view filter. */
 .attrsw button[data-a="prorata"].on{background:var(--gold-dk);color:#fff}
 .modelled{color:var(--gold-dk);font-weight:650}
+
+/* ---- Trends + Matrix ---- */
+.panel{background:var(--white);border:1px solid var(--line);border-radius:12px;
+  box-shadow:var(--shadow);padding:16px 18px;margin-bottom:14px}
+.panel h3{margin:0 0 2px;font-size:15px;font-weight:700;color:var(--navy)}
+.panel .sub{margin:0 0 12px;font-size:12px;color:var(--muted)}
+.chartbox{position:relative;width:100%;height:320px}
+.chartbox svg{width:100%;height:100%;display:block;overflow:visible}
+.chartbox .grid{stroke:var(--line);stroke-width:1}
+.chartbox .axis{fill:var(--faint);font-size:10px}
+.chartbox path.ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.chartbox circle.pt{stroke:var(--white);stroke-width:1.5}
+.legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:11px;
+  color:var(--ink)}
+.legend span.it{display:inline-flex;align-items:center;gap:6px;max-width:100%}
+.legend i.sw{width:20px;height:0;border-top:2px solid;flex:0 0 auto}
+.legend b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  max-width:340px}
+.legend em{font-style:normal;color:var(--faint)}
+/* The grid scrolls inside itself; the page must never scroll sideways. */
+.mwrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;
+  background:var(--white);box-shadow:var(--shadow)}
+table.mx{border-collapse:separate;border-spacing:0;font-size:12px;min-width:100%}
+table.mx th,table.mx td{padding:7px 10px;white-space:nowrap;
+  border-bottom:1px solid var(--line2)}
+table.mx thead th{position:sticky;top:0;z-index:2;background:var(--panel2);
+  color:var(--muted);font-weight:650;font-size:10px;letter-spacing:.04em;
+  text-transform:uppercase;text-align:right}
+table.mx thead th.l{text-align:left}
+table.mx td{text-align:right;color:var(--ink);font-variant-numeric:tabular-nums}
+table.mx td.l{text-align:left}
+table.mx td.nm{max-width:330px;overflow:hidden;text-overflow:ellipsis}
+/* First two columns pinned so a row stays identifiable however far right you scroll. */
+table.mx th.pin,table.mx td.pin{position:sticky;left:0;z-index:1;background:var(--white)}
+table.mx thead th.pin{z-index:3;background:var(--panel2)}
+table.mx tbody tr:hover td{background:var(--panel2)}
+table.mx tbody tr:hover td.pin{background:var(--panel2)}
+table.mx td.z{color:var(--faint)}
+table.mx tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:650;
+  border-top:1px solid var(--line)}
 .segsw button[disabled]:hover{color:var(--muted)}
 
 /* Range picker. A select rather than a button row: five fixed spans plus a custom range
@@ -346,6 +386,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <option value="yesterday">Yesterday</option>
       <option value="3d">Last 3 days</option>
       <option value="7d">Last 7 days</option>
+      <option value="14d">Last 14 days</option>
       <option value="30d">Last 30 days</option>
       <option value="custom">Custom range…</option>
     </select>
@@ -393,6 +434,8 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <button data-t="adsets">Ad sets <i id="n-adsets"></i></button>
     <button data-t="ads">Ads <i id="n-ads"></i></button>
     <button data-t="longevity">Longevity <i id="n-longevity"></i></button>
+    <button data-t="trends">Trends</button>
+    <button data-t="matrix">Matrix</button>
   </div>
 
   <div class="ctl" id="ctl">
@@ -401,6 +444,30 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <label class="chk"><input type="checkbox" id="spentOnly"> spent &gt; 0 only</label>
     <label class="chk" id="cpWrap" style="display:none"><input type="checkbox" id="cpCols" checked> signups &amp; mandates</label>
     <span class="meta" id="rowcount"></span>
+  </div>
+
+  <div class="ctl" id="sctl" style="display:none">
+    <label class="chk">Dimension
+      <select class="sel" id="sDim" style="margin-left:6px">
+        <option value="script" selected>Script (ad name)</option>
+        <option value="adset">Ad set</option>
+        <option value="campaign">Campaign</option>
+        <option value="account">Ad account</option>
+        <option value="stage">Stage</option>
+        <option value="platform">Platform</option>
+      </select></label>
+    <label class="chk">Metric
+      <select class="sel" id="sMetric" style="margin-left:6px">
+        <option value="spend" selected>Spend</option>
+        <option value="t101">Trials</option>
+        <option value="cpt">CPT</option>
+        <option value="inst">Installs</option>
+        <option value="cpi">CPI</option>
+      </select></label>
+    <input type="search" id="sq" placeholder="Filter by name…">
+    <label class="chk"><input type="checkbox" id="sTesting"> include testing</label>
+    {% if can_act %}<button class="btn" id="sCsv">Export CSV</button>{% endif %}
+    <span class="meta" id="scount"></span>
   </div>
 
   <div class="ctl" id="lctl" style="display:none">
@@ -419,7 +486,9 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <span class="meta" id="lcount"></span>
   </div>
 
-  <div class="wrap"><table id="tbl"><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
+  <div id="trendsWrap" style="display:none"></div>
+  <div id="matrixWrap" style="display:none"></div>
+  <div class="wrap" id="tblWrap"><table id="tbl"><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
   <div class="note" id="note"></div>
 </main>
 
@@ -878,6 +947,219 @@ function sparkline(daily){
     <path class="fill" d="M0,${Hh} L${pts} L${W},${Hh} Z"/><path d="M${pts}"/></svg>`;
 }
 
+/* ---------- Trends + Matrix ---------- */
+/* Both are one answer rendered twice: /api/series returns every row of the chosen
+   dimension with a value per day, the chart draws the top six and the grid prints the
+   top twenty. They share a fetch because they share a fold, and that fold is the
+   expensive part. */
+let SERIES = null, SERIESKEY = null, SERIESBUSY = false;
+const CHART_LINES = 6, MATRIX_ROWS = 20;
+/* Six lines, picked to stay apart both in hue and in lightness so the chart survives
+   being printed, screenshotted or read by someone who cannot separate red from green. */
+/* An axis ceiling a person can read: 1, 2, 2.5 or 5 times a power of ten, per tick. */
+function niceMax(v, ticks){
+  if(!(v > 0)) return 1;
+  const raw = v / ticks, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  const step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 2.5 ? 2.5 : n <= 5 ? 5 : 10) * mag;
+  return step * ticks;
+}
+const LINE_COLOURS = ['#2563EB','#E8A017','#20A75D','#B3342C','#7C3AED','#0891B2'];
+
+const seriesKey = () => `${BRAND}|${CUSTOM ? CUSTOM.since+'_'+CUSTOM.until : RANGE}|${sDim()}`;
+const seriesFresh = () => !!(SERIES && SERIESKEY === seriesKey());
+const sDim = () => document.getElementById('sDim').value;
+const sMetric = () => document.getElementById('sMetric').value;
+
+/* Metric definitions in one place: how to get it out of a day, how to total it over a
+   window, and how to print it. Anything derived (CPT, CPI) must be computed from the
+   two underlying sums and never averaged from per-day values — a mean of daily CPTs is
+   not the window's CPT, and on a row that spent nothing on most days it is not close. */
+const METRICS = {
+  spend: {label:'Spend',    of:d=>d?d.spend:0,  fmt:rs,  agg:null},
+  t101:  {label:'Trials',   of:d=>d?d.t101:0,   fmt:num, agg:null},
+  inst:  {label:'Installs', of:d=>d?d.inst:0,   fmt:num, agg:null},
+  cpt:   {label:'CPT',      of:d=>(d&&d.t101)?d.spend/d.t101:null, fmt:rs,
+          agg:(sp,r)=>r.t101?sp/r.t101:null, num:'t101'},
+  cpi:   {label:'CPI',      of:d=>(d&&d.inst)?d.spend/d.inst:null, fmt:rs,
+          agg:(sp,r)=>r.inst?sp/r.inst:null, num:'inst'},
+};
+const metricOf = () => METRICS[sMetric()] || METRICS.spend;
+
+function seriesRows(){
+  if(!SERIES) return [];
+  const q = (document.getElementById('sq').value || '').trim().toLowerCase();
+  const testing = document.getElementById('sTesting').checked;
+  return SERIES.rows.filter(r =>
+    (testing || r.stage !== 'testing') &&
+    (!q || (r.label || '').toLowerCase().includes(q)));
+}
+
+/* The window total for a row under the current metric. */
+function rowTotal(r){
+  const m = metricOf();
+  if(m.agg) return m.agg(r.total_spend, {t101:r.total_t101, inst:r.total_inst});
+  return sMetric() === 'spend' ? r.total_spend : r['total_' + sMetric()];
+}
+
+async function loadSeries(force){
+  const key = seriesKey();
+  if(seriesFresh() && !force) return;
+  SERIES = null; SERIESKEY = null; SERIESBUSY = true;
+  document.getElementById('scount').textContent = 'loading…';
+  try{
+    const r = await fetch(`/api/series?${apiQuery()}&dim=${sDim()}${force?'&force=1':''}`);
+    const j = await r.json();
+    if(j.error){ document.getElementById('scount').textContent = 'failed: ' + j.error; return; }
+    SERIES = j; SERIESKEY = key;
+  }catch(e){
+    document.getElementById('scount').textContent = 'failed: ' + e;
+  }finally{
+    SERIESBUSY = false;
+  }
+  if(TAB === 'trends' || TAB === 'matrix'){ renderTable(); noteFor(); }
+}
+
+function renderTrends(){
+  const box = document.getElementById('trendsWrap');
+  if(!SERIES){ box.innerHTML = `<div class="panel"><p class="sub">${
+    SERIESBUSY ? 'Loading…' : 'No data for this window.'}</p></div>`; return; }
+  const m = metricOf(), dates = SERIES.dates;
+  /* Top six by SPEND regardless of the metric on screen, so switching metric keeps the
+     same six lines and the comparison stays honest. Ranking by the metric itself would
+     swap the cast every time and make CPT look like it belonged to different creatives. */
+  const rows = seriesRows().slice(0, CHART_LINES);
+  document.getElementById('scount').textContent =
+    `${seriesRows().length} row(s) · top ${Math.min(CHART_LINES, rows.length)} charted`;
+  if(!rows.length || !dates.length){
+    box.innerHTML = `<div class="panel"><p class="sub">Nothing to chart.</p></div>`; return;
+  }
+  const vals = rows.map(r => dates.map(d => m.of(r.days[d])));
+  const flat = vals.flat().filter(v => v !== null && isFinite(v));
+  /* Round the axis up to a readable ceiling. Dividing the raw maximum into quarters
+     gives labels like Rs12,660 that nobody can compare at a glance. */
+  const max = niceMax(Math.max(...flat, 1), 4);
+  const W = 1000, H = 300, L = 56, R = 12, Tp = 12, Bt = 26;
+  const px = i => L + (dates.length === 1 ? (W-L-R)/2 : (i*(W-L-R))/(dates.length-1));
+  const py = v => Tp + (H-Tp-Bt) * (1 - v/max);
+  const ticks = 4;
+  let g = '';
+  for(let t=0; t<=ticks; t++){
+    const v = max*t/ticks, y = py(v);
+    g += `<line class="grid" x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}"/>
+          <text class="axis" x="${L-8}" y="${(y+3).toFixed(1)}" text-anchor="end">${m.fmt(v)}</text>`;
+  }
+  /* Every date gets a line; only some get a label, or they collide. */
+  const step = Math.ceil(dates.length / 8);
+  dates.forEach((d,i) => { if(i % step) return;
+    g += `<text class="axis" x="${px(i).toFixed(1)}" y="${H-8}" text-anchor="middle">${
+      d.slice(8)} ${new Date(d+'T00:00:00').toLocaleString('en-GB',{month:'short'})}</text>`; });
+  let lines = '';
+  vals.forEach((vs,ri) => {
+    const col = LINE_COLOURS[ri % LINE_COLOURS.length];
+    /* A null (no spend, so no CPT) breaks the line rather than being drawn as zero —
+       joining across it would invent a value the row never had. */
+    let d = '', pen = false;
+    vs.forEach((v,i) => {
+      if(v === null || !isFinite(v)){ pen = false; return; }
+      d += `${pen ? 'L' : 'M'}${px(i).toFixed(1)},${py(v).toFixed(1)} `; pen = true;
+    });
+    lines += `<path class="ln" stroke="${col}" d="${d.trim()}"/>`;
+    if(dates.length === 1 && vs[0] !== null)
+      lines += `<circle class="pt" cx="${px(0)}" cy="${py(vs[0])}" r="4" fill="${col}"/>`;
+  });
+  const legend = rows.map((r,i) => {
+    const col = LINE_COLOURS[i % LINE_COLOURS.length], tv = rowTotal(r);
+    return `<span class="it"><i class="sw" style="border-color:${col}"></i>
+      <b title="${(r.label||'').replace(/"/g,'&quot;')}">${r.label||'—'}</b>
+      <em>· ${r.platform}${r.stage ? ' · '+r.stage : ''} · ${
+        tv===null ? '—' : m.fmt(tv)}</em></span>`; }).join('');
+  box.innerHTML = `<div class="panel">
+    <h3>${m.label} by ${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}</h3>
+    <p class="sub">Top ${rows.length} row${rows.length===1?'':'s'} by spend in the current
+      filters, ${SERIES.since} to ${SERIES.until}. Ranked by spend so the same rows stay
+      on screen when you change metric.</p>
+    <div class="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      ${g}${lines}</svg></div>
+    <div class="legend">${legend}</div></div>`;
+}
+
+function renderMatrix(){
+  const box = document.getElementById('matrixWrap');
+  if(!SERIES){ box.innerHTML = `<div class="panel"><p class="sub">${
+    SERIESBUSY ? 'Loading…' : 'No data for this window.'}</p></div>`; return; }
+  const m = metricOf(), dates = SERIES.dates;
+  const all = seriesRows(), rows = all.slice(0, MATRIX_ROWS);
+  document.getElementById('scount').textContent =
+    `${all.length} row(s) · top ${rows.length} shown`;
+  const head = `<tr>
+    <th class="l pin">${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}</th>
+    <th class="l">Platform</th><th class="l">Stage</th>
+    <th>Period ${m.label.toLowerCase()}</th>
+    ${dates.map(d => `<th>${d.slice(8)} ${
+      new Date(d+'T00:00:00').toLocaleString('en-GB',{month:'short'})}</th>`).join('')}</tr>`;
+  const body = rows.map(r => {
+    const tv = rowTotal(r);
+    return `<tr>
+      <td class="l pin nm" title="${(r.label||'').replace(/"/g,'&quot;')}">${r.label||'—'}</td>
+      <td class="l">${r.platform}</td><td class="l">${r.stage||'—'}</td>
+      <td><b>${tv===null?'—':m.fmt(tv)}</b></td>
+      ${dates.map(d => { const v = m.of(r.days[d]);
+        return v===null||!isFinite(v) ? `<td class="z">—</td>`
+             : `<td${v ? '' : ' class="z"'}>${m.fmt(v)}</td>`; }).join('')}</tr>`;
+  }).join('');
+  /* The footer totals the ROWS ON SCREEN, not the window — otherwise it would not add
+     up to the column above it, which is the one thing a total has to do. */
+  const colTot = d => { let sp=0, t=0, n=0;
+    rows.forEach(r => { const x=r.days[d]; if(!x) return;
+      sp+=x.spend; t+=x.t101; n+=x.inst; });
+    return m.agg ? m.agg(sp,{t101:t,inst:n})
+         : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n); };
+  let sp=0,t=0,n=0;
+  rows.forEach(r => { sp+=r.total_spend; t+=r.total_t101; n+=r.total_inst; });
+  const gt = m.agg ? m.agg(sp,{t101:t,inst:n})
+                   : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n);
+  const foot = `<tr><td class="l pin">TOP ${rows.length} SHOWN</td><td></td><td></td>
+    <td>${gt===null?'—':m.fmt(gt)}</td>
+    ${dates.map(d => { const v = colTot(d);
+      return `<td>${v===null||!isFinite(v)?'—':m.fmt(v)}</td>`; }).join('')}</tr>`;
+  box.innerHTML = `<div class="panel" style="padding-bottom:10px">
+      <h3>${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}-by-date matrix · ${m.label}</h3>
+      <p class="sub">Top ${rows.length} rows by period spend${all.length>rows.length
+        ? `, of ${all.length} matching` : ''}, ${SERIES.since} to ${SERIES.until}.
+        Scroll sideways for the rest of the days; the first column stays put.
+        Export CSV writes exactly what is on screen.</p>
+    </div>
+    <div class="mwrap"><table class="mx"><thead>${head}</thead>
+      <tbody>${body || `<tr><td class="l" colspan="${dates.length+4}">No rows match.</td></tr>`}</tbody>
+      <tfoot>${rows.length ? foot : ''}</tfoot></table></div>`;
+}
+
+function matrixCsv(){
+  if(!SERIES) return;
+  const m = metricOf(), dates = SERIES.dates;
+  const rows = seriesRows().slice(0, MATRIX_ROWS);
+  const head = [(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim, 'platform', 'stage',
+                'period_' + sMetric()].concat(dates);
+  const line = a => a.join(',');
+  const out = [line(head.map(csvCell))];
+  for(const r of rows){
+    const tv = rowTotal(r);
+    out.push(line([csvCell(r.label), csvCell(r.platform), csvCell(r.stage),
+      tv===null?'':round2(tv)].concat(dates.map(d => {
+        const v = m.of(r.days[d]);
+        return v===null||!isFinite(v) ? '' : round2(v); }))));
+  }
+  const md = proOn() ? ' Trials and any cost-per figure here are MODELLED (pro rata).' : '';
+  out.push('', line([csvCell(
+    `${SERIES.brand_label} · ${SERIES.dim} · ${m.label} · ${SERIES.since} to ${SERIES.until}` +
+    ` · exported ${new Date(Date.now()+330*60000).toISOString().slice(0,16).replace('T',' ')} IST.` + md)]));
+  const md2 = proOn() ? 'prorata_' : '';
+  download(`${SERIES.brand}_${md2}${SERIES.dim}_by_date_${sMetric()}_${
+    SERIES.since}_to_${SERIES.until}.csv`, out.join('\r\n') + '\r\n');
+}
+const round2 = v => Math.round(v * 100) / 100;
+
 async function loadLongevity(force){
   const days = document.getElementById('lWin').value;
   const key = longKey();
@@ -1137,7 +1419,20 @@ function cell(o, c){
 
 function renderTable(){
   const tbl = document.getElementById('tbl');
+  const isSeries = TAB==='trends' || TAB==='matrix';
   document.getElementById('lctl').style.display = TAB==='longevity' ? 'flex' : 'none';
+  document.getElementById('sctl').style.display = isSeries ? 'flex' : 'none';
+  document.getElementById('trendsWrap').style.display = TAB==='trends' ? 'block' : 'none';
+  document.getElementById('matrixWrap').style.display = TAB==='matrix' ? 'block' : 'none';
+  document.getElementById('tblWrap').style.display = isSeries ? 'none' : 'block';
+  if(isSeries){
+    document.getElementById('ctl').style.display='none';
+    // The window or the brand may have moved under us — a re-render must never draw the
+    // previous window's days under the new window's heading.
+    if(!seriesFresh() && !SERIESBUSY){ loadSeries(false); }
+    if(TAB==='trends') renderTrends(); else renderMatrix();
+    return;
+  }
   if(TAB==='longevity'){
     document.getElementById('ctl').style.display='none';
     renderLongevity();
@@ -1246,7 +1541,59 @@ function render(){
    different question and its caveats are different ones. */
 function noteFor(){
   if(TAB === 'longevity'){ document.getElementById('note').innerHTML = longNote(); return; }
+  if(TAB === 'trends' || TAB === 'matrix'){
+    document.getElementById('note').innerHTML = seriesNote(); return; }
   mainNote();
+}
+
+/* What these two views are and are not. The dimension choice needs explaining more than
+   anything else here: "Script" is an ad NAME, which is the closest thing this data has
+   to a script, and it is worth saying so rather than letting the label imply a registry
+   that does not exist. */
+function seriesNote(){
+  if(!SERIES) return '';
+  const m = metricOf();
+  const scope = `<b>Meta ads only</b> for spend — Google Ads spend is not read by this
+    dashboard, so any non-Meta row carries trials and installs with no cost beside them.
+    <br><br>`;
+  const dimNote = SERIES.dim === 'script'
+    ? `<b>Script</b> here is the <b>ad name</b>. Branch attributes to an ad name and
+       nothing else, and the same creative is rebuilt into new ads across ad sets and
+       builds, so the name is the closest thing in this data to a script — it groups
+       those rebuilds together where an ad id would not. There is no separate script
+       registry behind it.`
+    : `Rows are ${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}, folded from the same
+       per-day data.`;
+  const derived = m.agg
+    ? `<b>${m.label} is computed from the sums</b>, never averaged across days: the
+       period figure is total spend over total ${m.num === 'inst' ? 'installs' : 'trials'},
+       not the mean of the daily ${m.label}s. On a row that ran on only a few days those
+       two are far apart, and only the first one is the real cost. A day with no
+       ${m.num === 'inst' ? 'installs' : 'trials'} shows a dash and breaks the line rather
+       than being drawn as zero.<br><br>`
+    : '';
+  const pro = proOn()
+    ? `<b class="modelled">Pro rata is on</b>, so trials and any cost-per figure here are
+       modelled, lifted by the same factor as the rest of the page. Installs are
+       <i>not</i> modelled — the pro-rata split is about trial attribution.<br><br>`
+    : '';
+  const trunc = SERIES.truncated
+    ? `Folded ${num(SERIES.total_rows)} rows and kept the ${SERIES.rows.length} biggest by
+       spend; the rest are outside both views. ` : '';
+  const ends = SERIES.partial_today
+    ? `<b>This window is today only, and today is still landing</b> — spend is minutes
+       behind and Branch trials arrive all evening, so treat it as incomplete rather than
+       as a drop.<br><br>`
+    : `<b>Ends ${SERIES.until}, not ${SERIES.excluded_today}.</b> Today is excluded: it is
+       a partial day, and on a trend line a partial day dives towards zero and reads as a
+       collapse that never happened. The tiles above this tab do include it.<br><br>`;
+  const src = SERIES.stored_days
+    ? `${SERIES.stored_days} of ${SERIES.dates.length} day(s) came from the history store;
+       the rest were pulled live. ` : '';
+  return scope + ends + derived + pro + `${dimNote}<br><br>${trunc}${src}
+    Trials and installs are split across rows that share an ad name by that
+    <i>day's</i> spend share, so nothing lands on a day a row did not spend.
+    ${SERIES.cached ? `Folded ${SERIES.age_min || 0} min ago.` : ''}`;
 }
 
 function longNote(){
@@ -1624,7 +1971,15 @@ document.getElementById('tabs').onclick = e => {
   // Opening the tab is the request. Anything else means looking at an empty table and
   // wondering what to press.
   if(TAB==='longevity' && !longFresh() && !LONGBUSY) loadLongevity(false);
+  if((TAB==='trends' || TAB==='matrix') && !seriesFresh() && !SERIESBUSY) loadSeries(false);
 };
+/* Dimension changes the fold, so it re-fetches. Metric and the filters are pure
+   re-renders of an answer already in hand. */
+document.getElementById('sDim').onchange = () => loadSeries(false);
+document.getElementById('sMetric').onchange = () => { renderTable(); noteFor(); };
+document.getElementById('sq').oninput = renderTable;
+document.getElementById('sTesting').onchange = renderTable;
+if(CAN_ACT) document.getElementById('sCsv').onclick = matrixCsv;
 if(CAN_ACT) document.getElementById('lGo').onclick = () => loadLongevity(true);
 document.getElementById('lWin').onchange = () => loadLongevity(false);
 for(const id of ['lq','lFrom','lTo','lActive'])
@@ -1661,6 +2016,7 @@ document.getElementById('brandsw').onclick = e => {
   [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.b === b));
   applyBrand(b);
   RAW = null;
+  SERIES = null; SERIESKEY = null;   // and never one brand's daily series under another's
   DATA = null;                       // never render one brand's rows under another's name
   LONG = null; LONGKEY = null;       // the longevity payload is per-brand too
   TAB = 'combined';
@@ -1742,6 +2098,40 @@ document.getElementById('attrsw').onclick = e => {
   DATA = applyAttr(RAW);
   render();
 };
+/* `?range=14d` picks the window from the URL, so a link can carry the whole view: which
+   brand, which window, which tab, measured or modelled. Ignored unless it names one of
+   the options actually in the picker. */
+try{
+  const want = new URLSearchParams(location.search).get('range');
+  const sel = document.getElementById('range');
+  if(want && [...sel.options].some(o => o.value === want)){
+    sel.value = want; RANGE = want; CUSTOM = null;
+  }
+}catch(_){}
+
+/* ...and `?dim=` / `?metric=` finish the job: a link can name the exact answer, which is
+   what people actually want to send each other. */
+try{
+  const q = new URLSearchParams(location.search);
+  for(const [param, id] of [['dim','sDim'], ['metric','sMetric']]){
+    const want = q.get(param), sel = document.getElementById(id);
+    if(want && sel && [...sel.options].some(o => o.value === want)) sel.value = want;
+  }
+}catch(_){}
+
+/* `?tab=matrix` opens straight onto a view. Useful for a link into a specific answer,
+   and the only way to reach a tab without a click. */
+try{
+  const want = new URLSearchParams(location.search).get('tab');
+  const btn = want && document.querySelector(`#tabs button[data-t="${
+    want.replace(/[^a-z]/g,'')}"]`);
+  if(btn){
+    [...document.getElementById('tabs').children].forEach(b => b.classList.remove('on'));
+    btn.classList.add('on');
+    TAB = btn.dataset.t;
+  }
+}catch(_){}
+
 /* `?attr=prorata` wins over the remembered choice, so a link can carry the mode with it.
    Safe to share: the tiles, the note, the export filename and the CSV itself all say
    when a figure is modelled, so a link cannot hand someone modelled numbers quietly. */

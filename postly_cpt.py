@@ -392,6 +392,13 @@ def _branch_pages(body, cap=40, tries=5):
 # "channel not recorded" rather than guessed at; tools/backfill_channels.py fills them in.
 NONE_PREFIX = "~none~"
 
+# Installs ride alongside the two trial events as a third pseudo-event so that the store,
+# its aggregator, the channel index and the ad-name join all take them with no format
+# change. It is not a custom event -- Branch keeps installs in their own data source and
+# they carry no event name -- so only the query differs, never the shape of the answer.
+INSTALL_KEY = "inst"
+INSTALL_SOURCE = "eo_install"
+
 # Meta is "meta" and not "facebook" because the dashboard's own vocabulary is Meta, and
 # Branch's is Facebook. Anything Branch names that is neither is kept as "other" rather
 # than folded into organic: an unrecognised paid partner is a fact worth seeing, and
@@ -399,6 +406,23 @@ NONE_PREFIX = "~none~"
 CHANNELS = ("meta", "google", "organic", "other")
 CHANNEL_LABELS = {"meta": "Meta", "google": "Google Ads",
                   "organic": "Organic / direct", "other": "Other partners"}
+
+
+def _event_query(key, ev):
+    """The data-source half of a Branch query for one event key."""
+    if key == INSTALL_KEY:
+        return {"data_source": INSTALL_SOURCE}
+    return {"data_source": "eo_custom_event", "filters": {"name": [ev]}}
+
+
+def _with_installs(events):
+    """[(key, branch_event_name)] for every series worth pulling, installs last.
+
+    Installs are pulled on the same trip as the trials because they are wanted at the
+    same grain by the same views, and a separate pass over the same days would double
+    the number of Branch requests for nothing.
+    """
+    return list(events.items()) + [(INSTALL_KEY, None)]
 
 
 def _nameless_key(partner):
@@ -427,19 +451,19 @@ def branch_trials_by_ad(since, until, B):
     if not (events and creds):
         return {}
     bkey, bsecret = creds
-    out = {k: defaultdict(int) for k in events}
+    out = {k: defaultdict(int) for k, _ in _with_installs(events)}
     d = datetime.strptime(since, "%Y-%m-%d").date()
     endd = datetime.strptime(until, "%Y-%m-%d").date()
     while d <= endd:
         ce = min(d + timedelta(days=BRANCH_MAX_SPAN - 1), endd)
-        for key, ev in events.items():
+        for key, ev in _with_installs(events):
             rows, _tc = _branch_pages({
                 "branch_key": bkey, "branch_secret": bsecret,
                 "start_date": d.strftime("%Y-%m-%d"), "end_date": ce.strftime("%Y-%m-%d"),
                 "dimensions": ["last_attributed_touch_data_tilde_ad_name",
                                "last_attributed_touch_data_tilde_advertising_partner_name"],
                 "granularity": "all", "aggregation": "unique_count",
-                "data_source": "eo_custom_event", "filters": {"name": [ev]}})
+                **_event_query(key, ev)})
             for row in rows:
                 res = row.get("result", {})
                 name = res.get("last_attributed_touch_data_tilde_ad_name")
@@ -797,14 +821,14 @@ def branch_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     endd = datetime.strptime(until, "%Y-%m-%d").date()
     while d <= endd:
         ce = min(d + timedelta(days=BRANCH_MAX_SPAN - 1), endd)
-        for key, ev in events.items():
+        for key, ev in _with_installs(events):
             rows, _tc = _branch_pages({
                 "branch_key": bkey, "branch_secret": bsecret,
                 "start_date": d.strftime("%Y-%m-%d"), "end_date": ce.strftime("%Y-%m-%d"),
                 "dimensions": ["last_attributed_touch_data_tilde_ad_name",
                                "last_attributed_touch_data_tilde_advertising_partner_name"],
                 "granularity": "day", "aggregation": "unique_count",
-                "data_source": "eo_custom_event", "filters": {"name": [ev]}},
+                **_event_query(key, ev)},
                 tries=tries)
             for row in rows:
                 day = (row.get("timestamp") or "")[:10]
@@ -1053,7 +1077,7 @@ def window_data(since, until, B, today=None):
     brand, events = B["key"], B["events"]
     today = today or today_ist()
     meta = defaultdict(list)
-    trials = {k: defaultdict(int) for k in events}
+    trials = {k: defaultdict(int) for k, _ in _with_installs(events)}
     chan_days = {}
     prov = {"stored_days": 0, "live_since": since, "live_until": until,
             "store": "off" if not H.available() else "on", "note": ""}
@@ -1105,7 +1129,7 @@ def window_data(since, until, B, today=None):
             kind = ("Branch is rate-limiting this app"
                     if isinstance(ex, BranchThrottled) else str(ex)[:160])
             prov["trials_error"] = kind
-            trials = {k: defaultdict(int) for k in events}
+            trials = {k: defaultdict(int) for k, _ in _with_installs(events)}
             chan_days = {}
     return meta, trials, chan_days, prov
 
@@ -1200,6 +1224,232 @@ def _adset_day(meta_rows, branch_day, events):
                 if sid in sets:
                     sets[sid][ev] += n * (sp / tot) if tot else n / len(group)
     return sets
+
+
+# ----------------------------------------------------------- daily series ----
+# Two views want the same thing and neither existed before: one number per row per DAY.
+# The window tables answer "what did this cost over the period" and deliberately collapse
+# the days; Longevity answers "how long did this ad set keep going" and only tracks
+# spend. Neither can draw a trend line or fill a date grid.
+#
+# The fold is the one _adset_day already does, generalised to any grouping. Grouping by
+# ad NAME rather than ad id is deliberate for the Script dimension: the same creative is
+# rebuilt into new ads across ad sets and builds, and the name is what Branch attributes
+# to, so a name is the closest thing in this data to a script.
+SERIES_TTL = int(os.environ.get("SERIES_TTL", "900"))
+SERIES_MAX_DAYS = int(os.environ.get("SERIES_MAX_DAYS", "62"))
+SERIES_TOP = int(os.environ.get("SERIES_TOP", "60"))
+_series_cache, _series_lock = {}, threading.Lock()
+
+def _series_ns(brand, dim):
+    """Store namespace for a folded series. Alphanumeric, which the service requires."""
+    return f"{brand}ser{dim}"
+
+
+def _series_dates(since, until, today=None):
+    """(dates, partial_today) for a series window.
+
+    One function so the fold and the stored-artifact check can never disagree about which
+    days a window means -- if they did, a restore would answer a slightly different
+    question than the one asked, and silently.
+    """
+    today = today or today_ist()
+    dates = date_range(since, min(until, today))[-SERIES_MAX_DAYS:]
+    if len(dates) > 1 and dates[-1] == today:
+        # Drop today and take one more day at the far end, so "last 14 days" is fourteen
+        # whole days rather than thirteen and a fragment. Today is a partial day: spend
+        # is minutes behind and Branch trials land all evening, and on a trend line that
+        # draws as a collapse that never happened.
+        back = (datetime.strptime(dates[0], "%Y-%m-%d").date()
+                - timedelta(days=1)).strftime("%Y-%m-%d")
+        return [back] + dates[:-1], False
+    return dates, bool(dates and dates[-1] == today)
+
+
+DIMS = ("script", "adset", "campaign", "account", "stage", "platform")
+DIM_LABELS = {"script": "Script (ad name)", "adset": "Ad set", "campaign": "Campaign",
+              "account": "Ad account", "stage": "Stage", "platform": "Platform"}
+
+
+def _dim_day(meta_rows, branch_day, keys, dim, testing_re, acct_names):
+    """One day folded to {row_key: {label, stage, platform, spend, <keys...>}}.
+
+    Branch attributes to an ad NAME and nothing else, so a name carried by several ads
+    has its trials and installs split by that day's spend share -- the same rule build()
+    and _adset_day use, applied on the day rather than on the window, so nothing lands on
+    a day the ad did not spend.
+    """
+    rows, by_name = {}, defaultdict(list)
+    blank = {k: 0.0 for k in keys}
+
+    for acct, mrows in (meta_rows or {}).items():
+        for r in mrows:
+            camp = r.get("campaign_name") or ""
+            stage = "testing" if testing_re.search(camp) else "trial"
+            sp = float(r.get("spend") or 0)
+            if dim == "script":
+                k = lbl = r.get("ad_name") or ""
+            elif dim == "adset":
+                k, lbl = r.get("adset_id"), r.get("adset_name") or ""
+            elif dim == "campaign":
+                k, lbl = r.get("campaign_id"), camp
+            elif dim == "account":
+                k, lbl = acct, acct_names.get(acct, acct)
+            elif dim == "stage":
+                k, lbl = stage, stage
+            else:
+                k, lbl = "meta", "Meta"
+            if not k:
+                continue
+            e = rows.get(k)
+            if e is None:
+                e = rows[k] = {"label": lbl, "stage": stage, "platform": "Meta",
+                               "spend": 0.0, **dict(blank)}
+            e["spend"] += sp
+            e["label"] = e["label"] or lbl
+            # An ad name that appears under both stages is reported under the stage that
+            # spent more on the day, rather than silently taking whichever row came last.
+            if dim in ("script",) and stage != e["stage"] and sp > e["spend"] / 2:
+                e["stage"] = stage
+            if r.get("ad_name"):
+                by_name[r["ad_name"]].append((k, sp))
+
+    for ev in keys:
+        for name, n in ((branch_day or {}).get(ev) or {}).items():
+            nm = name if isinstance(name, str) else ""
+            if dim == "platform" and (nm.startswith(NONE_PREFIX) or not nm or nm == "null"):
+                # The only place a non-Meta row can exist: Branch knows these belong to
+                # Google or to organic, and this dashboard reads no spend for either, so
+                # they appear with trials and installs and no cost beside them.
+                slug = partner_slug(nm[len(NONE_PREFIX):]) if nm.startswith(NONE_PREFIX) \
+                    else "unknown"
+                if slug == "meta":
+                    slug = "meta"
+                e = rows.get(slug)
+                if e is None:
+                    e = rows[slug] = {"label": CHANNEL_LABELS.get(slug, slug.title()),
+                                      "stage": "", "platform": CHANNEL_LABELS.get(
+                                          slug, slug.title()),
+                                      "spend": 0.0, **dict(blank)}
+                e[ev] += n
+                continue
+            group = by_name.get(nm)
+            if not group:
+                continue
+            tot = sum(sp for _, sp in group)
+            for k, sp in group:
+                if k in rows:
+                    rows[k][ev] += n * (sp / tot) if tot else n / len(group)
+    return rows
+
+
+def series(brand, since, until, dim="script", force=False):
+    """Per-day spend, trials and installs for every row of one dimension.
+
+    Same source split as everything else: settled days out of the store, the rest live.
+    Cached, because a fourteen-day fold is a real cost and both views re-ask for it every
+    time somebody changes a metric or a dimension.
+    """
+    dim = dim if dim in DIMS else "script"
+    key = (brand, since, until, dim)
+    with _series_lock:
+        hit = _series_cache.get(key)
+        if hit and not force and time.time() - hit["at"] < SERIES_TTL:
+            return dict(hit["data"], cached=True,
+                        age_min=int((time.time() - hit["at"]) // 60))
+
+    want, _partial = _series_dates(since, until)
+    if not force and want:
+        # Already folded by the nightly warm or by another instance. The dates must match
+        # EXACTLY: a window that has rolled forward by a day is a different question, and
+        # answering it with yesterday's fold would be wrong without looking wrong.
+        art = H.get_agg(_series_ns(brand, dim))
+        if art and art.get("dates") == want:
+            with _series_lock:
+                _series_cache[key] = {"at": time.time(), "data": art}
+            return dict(art, cached=True, restored=True, age_min=0)
+
+    B = C.brand(brand)
+    events = B["events"]
+    keys = [k for k, _ in _with_installs(events)]
+    testing_re = re.compile(B.get("testing_re") or C.TESTING_RE_DEFAULT)
+    acct_names = {a["id"]: a["name"] for a in B["accounts"]}
+    today = today_ist()
+    dates, partial_today = want, _partial
+    if not dates:
+        return {"brand": brand, "since": since, "until": until, "dim": dim,
+                "dates": [], "rows": [], "generated_at": now_ist_str()}
+
+    stored = H.fetch_raw(brand, dates) if H.available() else {}
+    live_days = [x for x in dates if x not in stored]
+    live = {}
+    # Contiguous runs only: Meta and Branch both cost far more per call than per day, so
+    # one range beats a call per day, and a gap in the middle is cheaper to re-fetch than
+    # to work around.
+    runs, cur = [], []
+    for d in live_days:
+        dd = datetime.strptime(d, "%Y-%m-%d").date()
+        if cur and dd != datetime.strptime(cur[-1], "%Y-%m-%d").date() + timedelta(1):
+            runs.append(cur); cur = []
+        cur.append(d)
+    if cur:
+        runs.append(cur)
+    for run in runs:
+        lo, hi = run[0], run[-1]
+        by_day = {}
+        for a in B["accounts"]:
+            for r in meta_insights_daily(a["id"], lo, hi):
+                by_day.setdefault(r.get("date_start"), {}).setdefault(
+                    a["id"], []).append(r)
+        try:
+            bd = branch_trials_daily(lo, hi, B)
+        except Exception:
+            bd = {}
+        for day in run:
+            live[day] = {"meta": by_day.get(day, {}), "branch": bd.get(day, {})}
+
+    rows = {}
+    for day in dates:
+        src = stored.get(day) or live.get(day)
+        if not src:
+            continue
+        for k, e in _dim_day(src.get("meta"), src.get("branch"), keys, dim,
+                             testing_re, acct_names).items():
+            row = rows.get(k)
+            if row is None:
+                row = rows[k] = {"key": k, "label": e["label"], "stage": e["stage"],
+                                 "platform": e["platform"], "total_spend": 0.0,
+                                 "days": {},
+                                 **{"total_" + x: 0.0 for x in keys}}
+            row["label"] = row["label"] or e["label"]
+            row["stage"] = row["stage"] or e["stage"]
+            row["total_spend"] += e["spend"]
+            for x in keys:
+                row["total_" + x] += e[x]
+            row["days"][day] = {"spend": round(e["spend"], 2),
+                                **{x: round(e[x], 2) for x in keys}}
+
+    out_rows = sorted(rows.values(), key=lambda r: -r["total_spend"])[:SERIES_TOP]
+    for r in out_rows:
+        r["total_spend"] = round(r["total_spend"], 2)
+        for x in keys:
+            r["total_" + x] = round(r["total_" + x], 2)
+
+    data = {"brand": brand, "brand_label": B["label"], "since": dates[0],
+            "until": dates[-1], "dim": dim, "dim_labels": DIM_LABELS,
+            "dates": dates, "keys": keys, "install_key": INSTALL_KEY,
+            "event_labels": B["labels"], "cpt_target": B["cpt_target"],
+            "rows": out_rows, "truncated": len(rows) > len(out_rows),
+            "partial_today": partial_today, "excluded_today": today,
+            "total_rows": len(rows), "stored_days": len(stored),
+            "generated_at": now_ist_str()}
+    with _series_lock:
+        _series_cache[key] = {"at": time.time(), "data": data}
+    # And to the store, so a woken instance does not re-fold from scratch. The in-process
+    # cache dies with the process, which on the free plan is every fifteen idle minutes --
+    # exactly the gap the nightly warm was supposed to close.
+    H.put_agg(_series_ns(brand, dim), today, data)
+    return dict(data, cached=False, age_min=0)
 
 
 def longevity(brand, since, until, force=False):
@@ -1690,7 +1940,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
 
     for coll in (ads, adsets, campaigns, accounts):
         for o in coll.values():
-            for k in CP_KEYS:
+            for k in CP_KEYS + (INSTALL_KEY,):
                 o[k] = 0.0
 
     # ---- attach Branch trials to ads by NAME -------------------------------
@@ -1736,6 +1986,25 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                 g[key] += n * (g["spend"] / tot) if tot else n / len(group)
                 g["shared_name"] = True
 
+    # ---- attach Branch installs by the same ad-name join --------------------
+    # Kept out of the loop above rather than folded into it because installs must not
+    # touch `matched`, `chan` or `unattributed`: those describe trial attribution, which
+    # is what every CPT on the page divides by, and quietly adding a third series to them
+    # would change the attribution figure into something nobody asked for.
+    inst_matched = 0.0
+    for name, n in trials.get(INSTALL_KEY, {}).items():
+        nm = name if isinstance(name, str) else ""
+        if not nm or nm == "null" or nm.startswith(NONE_PREFIX) or nm not in by_name:
+            continue
+        group = by_name[nm]
+        inst_matched += n
+        if len(group) == 1:
+            group[0][INSTALL_KEY] += n
+            continue
+        tot = sum(g["spend"] for g in group)
+        for g in group:
+            g[INSTALL_KEY] += n * (g["spend"] / tot) if tot else n / len(group)
+
     # ---- attach Classplus signups/mandates to ads by the SAME name key ------
     cp, cp_note = classplus(since, until) if B["classplus"] else (None, None)
     cp_matched = {k: 0.0 for k in CP_KEYS}
@@ -1762,6 +2031,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         s = adsets.get(x["adset_id"])
         if s:
             s["spend"] += x["spend"]; s["t101"] += x["t101"]; s["t10m"] += x["t10m"]
+            s[INSTALL_KEY] += x[INSTALL_KEY]
             for k in CP_KEYS:
                 s[k] += x[k]
             if x["active"]:
@@ -1770,6 +2040,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         c = campaigns.get(s["campaign_id"])
         if c:
             c["spend"] += s["spend"]; c["t101"] += s["t101"]; c["t10m"] += s["t10m"]
+            c[INSTALL_KEY] += s[INSTALL_KEY]
             for k in CP_KEYS:
                 c[k] += s[k]
             c["active_ads"] += s["active_ads"]
@@ -1779,6 +2050,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         a = accounts.get(c["account_id"])
         if a:
             a["spend"] += c["spend"]; a["t101"] += c["t101"]; a["t10m"] += c["t10m"]
+            a[INSTALL_KEY] += c[INSTALL_KEY]
             for k in CP_KEYS:
                 a[k] += c[k]
             a["budget"] += c["budget"]
@@ -1787,6 +2059,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                 "budget": sum(a["budget"] for a in accounts.values()),
                 "t101": sum(a["t101"] for a in accounts.values()),
                 "t10m": sum(a["t10m"] for a in accounts.values()),
+                INSTALL_KEY: sum(a[INSTALL_KEY] for a in accounts.values()),
                 "active_adsets": sum(a["active_adsets"] for a in accounts.values()),
                 "active_ads": sum(a["active_ads"] for a in accounts.values())}
     for k in CP_KEYS:
@@ -1797,7 +2070,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     # row exactly — for spend, budget, trials and Classplus alike. The campaign/ad set/ad
     # tables are filtered client-side by the `seg` tag instead, because those rows exist
     # already and shipping three copies of them would treble the payload.
-    NUM = ("spend", "budget", "t101", "t10m", "active_adsets", "active_ads") + CP_KEYS
+    NUM = (("spend", "budget", "t101", "t10m", INSTALL_KEY,
+            "active_adsets", "active_ads") + CP_KEYS)
 
     def _acct_rows(seg):
         out = {}
@@ -1912,6 +2186,10 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         # as a count with no CPT beside them until the Google Ads pull lands.
         "channels": channels,
         "channel_labels": CHANNEL_LABELS,
+        # Branch installs, joined to ads by the same name key as trials. Reported
+        # separately from `matched` because installs are not what CPT divides by.
+        "installs": {"branch_total": round(sum(trials.get(INSTALL_KEY, {}).values()), 1),
+                     "matched": round(inst_matched, 1)},
         # The modelled view. `uplift` is the multiplier the page applies to every trial
         # count when pro-rata mode is on; 1.0 means the model changes nothing.
         "prorata": prorata,
