@@ -1009,14 +1009,35 @@ def prorata_day(ch):
     return pool * (meta / denom), pool
 
 
+def chan_index_read(brand):
+    """({date: {event: {channel: n}}}, ok). `ok` is False if the store could not be read.
+
+    Every writer below goes through this rather than chan_index(), because a writer that
+    cannot tell "empty" from "unreachable" will overwrite the whole index with whatever
+    single entry it was adding.
+    """
+    got, ok = H.get_agg_raw(H.agg_ns(brand, CHAN_NS, 0))
+    if not ok:
+        return {}, False
+    return {k: v for k, v in (got or {}).items() if not k.startswith("_")}, True
+
+
 def chan_index(brand, force=False):
-    """{date: {event: {channel: n}}} for every stored day of this brand. {} if absent."""
+    """{date: {event: {channel: n}}} for every stored day of this brand. {} if absent.
+
+    The reader's view: a failed read degrades to whatever was last cached, or to nothing,
+    and is NOT cached as an empty index -- caching a failure would take the pro-rata view
+    down to zero covered days for the whole TTL.
+    """
     with _chan_lock:
         hit = _chan_cache.get(brand)
         if hit and not force and time.time() - hit[0] < CHAN_TTL:
             return hit[1]
-    got = H.get_agg(H.agg_ns(brand, CHAN_NS, 0)) or {}
-    idx = {k: v for k, v in got.items() if not k.startswith("_")}
+    idx, ok = chan_index_read(brand)
+    if not ok:
+        with _chan_lock:
+            stale = _chan_cache.get(brand)
+        return stale[1] if stale else {}
     with _chan_lock:
         _chan_cache[brand] = (time.time(), idx)
     return idx
@@ -1031,35 +1052,63 @@ def chan_index_put(brand, idx):
 
 
 def chan_index_add(brand, date, by_event):
-    """Fold one freshly stored day into the index. Best effort; never raises.
+    """Fold one freshly stored day into the index. Returns True only if it landed.
 
     Called from snapshot() so the nightly job keeps the index current without anyone
-    having to remember to rebuild it.
+    having to remember to rebuild it. Refuses to write when the read failed: a truncated
+    index would then be the NEWEST artifact and would win every subsequent read.
     """
     try:
-        idx = dict(chan_index(brand, force=True))
+        idx, ok = chan_index_read(brand)
+        if not ok:
+            return False
         idx[date] = {ev: chan_of_day(bn) for ev, bn in (by_event or {}).items()}
         return chan_index_put(brand, idx)
     except Exception:
         return False
 
 
-def chan_index_build(brand, dates=None, log=None):
-    """(built, total) — compute per-day channels for stored days missing from the index."""
-    idx = dict(chan_index(brand, force=True))
+def chan_index_build(brand, dates=None, log=None, rebuild=False):
+    """(built, total) — bring the channel index in line with the stored days.
+
+    One read and ONE write, not one of each per day. The per-day version did 286
+    read-modify-write round trips during the install backfill and lost an update: any
+    single failed read or write in that chain vanishes silently, because nothing checks.
+
+    `rebuild` recomputes every stored day rather than only the ones missing, which is how
+    an entry that went stale -- present, but written before the day gained a series --
+    gets corrected. It never writes an empty index first: the new one is assembled in
+    memory and swapped in, so a failure part-way leaves the old one intact.
+    """
+    idx, ok = chan_index_read(brand)
+    if not ok:
+        raise RuntimeError("could not read the existing channel index — refusing to "
+                           "rebuild over it")
     stored = sorted(dates or H.have(brand))
-    todo = [d for d in stored if d not in idx]
+    todo = stored if rebuild else [d for d in stored if d not in idx]
     if not todo:
         return 0, len(stored)
     for i in range(0, len(todo), 15):
         part = todo[i:i + 15]
         raw = H.fetch_raw(brand, part)
+        if len(raw) < len(part) and log:
+            log(f"    {part[0]}..{part[-1]}  WARNING: read {len(raw)} of {len(part)} day(s)")
         for d, day in raw.items():
             idx[d] = {ev: chan_of_day(bn)
                       for ev, bn in (day.get("branch") or {}).items()}
         if log:
             log(f"    {part[0]}..{part[-1]}  {len(raw)} day(s)")
-    chan_index_put(brand, idx)
+    if not chan_index_put(brand, idx):
+        raise RuntimeError(f"channel index write failed: {H.last_error()}")
+    # Read it back. An index that silently lost days is the failure this whole change is
+    # about, and the only way to know it did not happen is to look.
+    back, ok = chan_index_read(brand)
+    if not ok:
+        raise RuntimeError("wrote the channel index but could not read it back")
+    lost = [d for d in idx if d not in back]
+    if lost:
+        raise RuntimeError(f"channel index came back missing {len(lost)} day(s): "
+                           f"{lost[:3]}")
     return len(todo), len(stored)
 
 
@@ -1162,11 +1211,13 @@ def snapshot(brand, date):
                           "that may just be past retention"}
 
     ok = H.put(brand, date, meta, branch)
+    chan_ok = None
     if ok:
         # Fold the day into the channel index in the same breath. Doing it here rather
         # than in a separate nightly job means the index cannot silently fall behind the
-        # store, which would make the pro-rata view quietly skip days.
-        chan_index_add(brand, date, branch)
+        # store, which would make the pro-rata view quietly skip days. Reported, not
+        # assumed: this is the step that failed once already.
+        chan_ok = chan_index_add(brand, date, branch)
     with _have_lock:
         _have_cache.pop(brand, None)
     return {"ok": ok, "date": date, "brand": brand,
@@ -1174,7 +1225,9 @@ def snapshot(brand, date):
             "spend": round(sum(float(r.get("spend") or 0)
                                for v in meta.values() for r in v), 2),
             "trials": {ev: sum(v.values()) for ev, v in branch.items()},
-            "error": H.last_error() if not ok else None}
+            "chan_index": chan_ok,
+            "error": H.last_error() if not (ok and chan_ok is not False) else
+                     H.last_error()}
 
 
 # ---------------------------------------------------------- longevity ------

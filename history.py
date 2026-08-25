@@ -195,24 +195,43 @@ def put_agg(ns, date, payload):
         return False
 
 
+def get_agg_raw(ns):
+    """(artifact_or_None, ok) — `ok` is False only when the store could not be READ.
+
+    get_agg() collapses "nothing stored" and "could not reach the store" into the same
+    None. For a reader that is fine: both mean "do without it". For a writer doing
+    read-modify-write it is not, and the difference is destructive — treating a failed
+    read as an empty artifact writes back whatever single entry it was adding and
+    silently destroys every other one. That is not hypothetical: it left one day of
+    Postly's channel index without its install row.
+    """
+    global _last_error
+    try:
+        dates = _call("GET", "/v1/have", {"brand": ns}).get("dates") or []
+    except Exception as ex:
+        _last_error = f"{type(ex).__name__}: {str(ex)[:160]}"
+        return None, False
+    if not dates:
+        return None, True
+    newest = max(dates)
+    try:
+        j = _call("GET", "/v1/history", {"brand": ns, "dates": newest})
+    except Exception as ex:
+        _last_error = f"{type(ex).__name__}: {str(ex)[:160]}"
+        return None, False
+    got = (j.get("days") or {}).get(newest)
+    if got:
+        got["_written"] = newest
+    return got, True
+
+
 def get_agg(ns):
     """The most recent artifact in this namespace, or None. Never raises.
 
     Most recent rather than "today's": a job that did not run last night should leave the
     view a day stale and SAYING so, not empty.
     """
-    try:
-        dates = _call("GET", "/v1/have", {"brand": ns}).get("dates") or []
-        if not dates:
-            return None
-        newest = max(dates)
-        j = _call("GET", "/v1/history", {"brand": ns, "dates": newest})
-        got = (j.get("days") or {}).get(newest)
-        if got:
-            got["_written"] = newest
-        return got
-    except Exception:
-        return None
+    return get_agg_raw(ns)[0]
 
 
 # ---- persisted payload cache ------------------------------------------------

@@ -148,6 +148,42 @@ def repair_brand(brand, limit=None, dry=False, since=None, pause=2.0):
     return done, failed
 
 
+def audit(brand):
+    """Report the channel index against the stored days. Reads only, writes nothing.
+
+    Exists because the failure it looks for is silent by construction: an index that has
+    quietly lost a day, or an entry written before its day gained a series, looks exactly
+    like a correct one from the outside. The pro-rata view would just cover fewer days
+    and print a smaller uplift, with nothing anywhere saying why.
+    """
+    idx, ok = P.chan_index_read(brand)
+    if not ok:
+        print(f"  {brand}: could not read the channel index — {H.last_error()}")
+        return False
+    stored = sorted(H.have(brand))
+    want = {"inst"} | set(C.brand(brand).get("events") or {})
+    missing = [d for d in stored if d not in idx]
+    extra = [d for d in idx if d not in stored]
+    partial = {d: sorted(want - set(idx[d] or {})) for d in sorted(idx)
+               if want - set(idx[d] or {})}
+    clean = not (missing or extra or partial)
+    print(f"  {brand}: index {len(idx)} day(s), stored {len(stored)} — "
+          + ("consistent" if clean else "PROBLEMS"))
+    if missing:
+        print(f"     {len(missing)} stored day(s) absent from the index: "
+              f"{missing[:4]}{' …' if len(missing) > 4 else ''}")
+    if extra:
+        print(f"     {len(extra)} index day(s) not in the store: {extra[:4]}")
+    for d, ks in list(partial.items())[:8]:
+        print(f"     {d} has no {', '.join(ks)} row")
+    if len(partial) > 8:
+        print(f"     … and {len(partial) - 8} more")
+    if not clean:
+        print(f"     fix: python3 tools/backfill_channels.py --brands {brand} "
+              f"--index-only --reindex")
+    return clean
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--brands", default=",".join(C.BRANDS))
@@ -158,10 +194,18 @@ def main():
     ap.add_argument("--index-only", action="store_true",
                     help="skip the repair, just (re)build the per-day channel index")
     ap.add_argument("--reindex", action="store_true",
-                    help="discard the stored index and recompute every day")
+                    help="recompute every stored day, not only the ones missing")
+    ap.add_argument("--audit", action="store_true",
+                    help="report the index against the stored days; write nothing")
     a = ap.parse_args()
     if not H.available():
         sys.exit("HISTORY_URL / HISTORY_TOKEN not set — nothing to repair")
+    if a.audit:
+        print("channel index audit — reads only")
+        allclean = True
+        for b in [x.strip() for x in a.brands.split(",") if x.strip()]:
+            allclean = audit(b) and allclean
+        sys.exit(0 if allclean else 1)
     print(("DRY RUN — " if a.dry_run else "") + "channel backfill")
     tot_d = tot_f = 0
     for b in [x.strip() for x in a.brands.split(",") if x.strip()]:
@@ -172,10 +216,17 @@ def main():
             continue
         # The index is what the pro-rata view reads day by day. Rebuilt AFTER the repair
         # so it picks up the channels the repair just wrote, never before.
-        if a.reindex:
-            P.chan_index_put(b, {})
-        built, total = P.chan_index_build(b, log=print)
-        print(f"  {b}: channel index {built} day(s) added, {total} stored day(s) total")
+        #
+        # --reindex recomputes every stored day rather than wiping first: writing an
+        # empty index and then filling it means a failure part-way leaves nothing behind,
+        # and the empty one would be the newest artifact and win every read.
+        try:
+            built, total = P.chan_index_build(b, log=print, rebuild=a.reindex)
+            print(f"  {b}: channel index {built} day(s) written, "
+                  f"{total} stored day(s) total")
+        except Exception as ex:
+            tot_f += 1
+            print(f"  {b}: channel index NOT updated — {type(ex).__name__}: {ex}")
     print(f"\ndone: {tot_d} day(s) {'would be ' if a.dry_run else ''}repaired, "
           f"{tot_f} failed")
 

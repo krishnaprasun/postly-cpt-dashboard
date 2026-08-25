@@ -99,6 +99,7 @@ def repair_brand(brand, limit=None, dry=False, since=None, pause=2.0):
         return 0, 0
 
     done = failed = 0
+    written = []
     for run in chunks(need):
         try:
             got = installs_daily(run[0], run[-1], B)
@@ -126,13 +127,24 @@ def repair_brand(brand, limit=None, dry=False, since=None, pause=2.0):
                 done += 1
                 continue
             if H.put(brand, d, day.get("meta") or {}, branch):
-                # keep the per-day channel index in step: it now has an install row too
-                P.chan_index_add(brand, d, branch)
+                written.append(d)
                 done += 1
             else:
                 failed += 1
                 print(f"    {d}  WRITE FAILED: {H.last_error()}")
         time.sleep(pause)
+
+    # The channel index now has an install row to gain for every day just written. ONE
+    # read-modify-write for the whole set, not one per day: the per-day version did 286
+    # round trips on the first run and lost an update, because a failed read there looks
+    # exactly like an empty index and nothing checked the result.
+    if written:
+        try:
+            n, tot = P.chan_index_build(brand, dates=written, log=None, rebuild=True)
+            print(f"  {brand}: channel index refreshed for {n} day(s)")
+        except Exception as ex:
+            failed += 1
+            print(f"  {brand}: channel index NOT refreshed — {type(ex).__name__}: {ex}")
     return done, failed
 
 
