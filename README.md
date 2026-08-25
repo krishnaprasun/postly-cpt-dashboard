@@ -483,6 +483,46 @@ null key; each day's totals come out identical, because the stored nameless coun
 redistributed across partners rather than replaced by the second query's own total.
 Run on 2026-08-25: 284 days across all three brands, 0 failed.
 
+### Pro rata — the modelled second reading
+
+`Measured | Pro rata` in the header. **Measured** is the default and is what Branch
+says. **Pro rata** shares every trial with no Meta ad name between Meta and Google in
+proportion to the trials each is *measured* to have earned — organic absorbed into that
+split, since "counted in Meta and Google" leaves nowhere else for it to go.
+
+It is computed **per day and then summed**, not once over the window aggregate, because
+the Meta/Google mix moves. Over Funda's 27 Jul – 25 Aug window the two give ₹136.80 and
+₹135.26 — 1.1% apart, which is small but is not nothing and is free to get right.
+
+    per day:  alloc(D) = pool(D) x meta(D) / (meta(D) + google(D))
+              pool(D)  = every trial that day with no Meta ad name
+    window:   uplift   = (Σ matched + Σ alloc) / Σ matched
+
+The uplift reaches the tables as one scalar per event. Every figure on the page is spend
+over trials, so multiplying trials is exactly equivalent to re-deriving each row, and it
+keeps ad → ad set → campaign rollups exact. **What it cannot do is move trials between
+ads** — every row is lifted by the same factor, so the split across rows stays the
+measured one. Compare creatives on the measured view.
+
+Where it shows: the CPT and Trials tiles are labelled `pro rata`, the Attribution tile
+becomes `Meta share · modelled`, the note spells out the size of the lift and the
+measured figure it replaced, the export filename gains `prorata`, and the CSV carries a
+trailing NOTE row saying so — a file gets forwarded without the page it came from.
+
+Remembered per browser (`localStorage`), and `?attr=prorata` on any URL, including a
+read-only team link, opens straight into it.
+
+Per-day channel totals for stored days live in the `{brand}chan0` store namespace —
+four integers per event per day, none of which depend on the current ad roster, so they
+are computed once and reused. `snapshot()` folds each new day in as it is written, so
+the index cannot fall behind the store. Rebuild with
+`python3 tools/backfill_channels.py --index-only`.
+
+**This is a model, not a measurement.** Branch labels every one of these trials, and on
+20 Aug not one of them was Facebook's. Pro rata deliberately overrides that, on the
+argument that last-touch attribution under-credits upper-funnel Meta spend. Treat the
+CPT it prints as a different question, not a better answer to the same one.
+
 ### Caveats the UI states on every view
 
 - **Attribution coverage.** Branch trials whose ad name matches no ad in either

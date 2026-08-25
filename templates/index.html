@@ -236,6 +236,11 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 .segsw button:hover:not(.on){color:var(--ink)}
 .segsw button.on{background:var(--accent);color:#fff}
 .segsw button[disabled]{opacity:.4;cursor:default}
+/* Gold ONLY on the modelled side. Measured is the ordinary state and keeps the ordinary
+   accent; pro rata changes what every number on the page means, so the control that turns
+   it on should not look like just another view filter. */
+.attrsw button[data-a="prorata"].on{background:var(--gold-dk);color:#fff}
+.modelled{color:var(--gold-dk);font-weight:650}
 .segsw button[disabled]:hover{color:var(--muted)}
 
 /* Range picker. A select rather than a button row: five fixed spans plus a custom range
@@ -331,6 +336,11 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <button data-s="testing">Testing</button>
       <button data-s="blended">Blended</button>
     </div>
+    <div class="segsw attrsw" id="attrsw"
+         title="How Branch trials with no Meta ad name are counted. Measured: Branch says which channel earned each one. Pro rata: they are shared between Meta and Google by each channel's measured trials that day.">
+      <button data-a="measured" class="on">Measured</button>
+      <button data-a="prorata">Pro rata</button>
+    </div>
     <select class="sel" id="range">
       <option value="today" selected>Today</option>
       <option value="yesterday">Yesterday</option>
@@ -425,6 +435,13 @@ const BRANDS = {{ brand_meta | tojson }};
    CPT target is set against — a testing ad set judged against Rs150 would be killed for
    doing its job. */
 let SEG = 'trial';
+/* 'measured' = trials as Branch attributes them. 'prorata' = the modelled view: every
+   trial with no Meta ad name shared between Meta and Google in proportion to what each
+   is measured to have earned, worked out for each day separately and then summed.
+   The server does the per-day arithmetic and hands back one multiplier per event, so
+   turning this on is a re-render and never a fetch. */
+let ATTR = 'measured';
+let RAW = null;                      // the payload as served, never scaled
 let DATA=null, RANGE='today', TAB='combined',
     /* The headline slot. Each brand maps it to its own Branch event in config.py —
        Postly's postly_trial_started_backend, Speakeasy's speakeasy_trial_started — so
@@ -559,7 +576,7 @@ async function load(force, silent, hard){
     lastFetchAt = Date.now();
     if(j.error){ document.getElementById('err').innerHTML =
       `<div class="err"><b>Could not load.</b> ${j.error}</div>`; return; }
-    DATA = j; render();
+    RAW = j; DATA = applyAttr(RAW); render();
     // Warnings still carry figures — render them, then explain what is off.
     const notes = [];
     if(j.warning && j.warning_kind !== 'rate_limit') notes.push(
@@ -687,6 +704,51 @@ const inSeg = o => SEG === 'blended' || !o.seg || o.seg === SEG;
 const segHas = sg => !!(DATA && DATA.segments && DATA.segments[sg]
                         && (DATA.segments[sg].spend > 0 || DATA.segments[sg].budget > 0));
 
+/* ---------- attribution mode ---------- */
+/* Pro rata reaches the tables as one scalar per event. Every figure on this page is
+   spend over trials, so scaling trials is exactly equivalent to re-deriving each row
+   from the model, and it keeps ad -> ad set -> campaign rollups exact. What it does not
+   do is shift trials BETWEEN ads: each row keeps its measured share and the whole page
+   lifts by the window's factor. That limitation is stated in the note, not hidden. */
+function upliftOf(ev){
+  const p = RAW && RAW.prorata && RAW.prorata[ev];
+  return (ATTR === 'prorata' && p && p.uplift) ? p.uplift : 1;
+}
+function proOn(){ return ATTR === 'prorata' && !!(RAW && RAW.prorata); }
+
+function applyAttr(src){
+  if(!src || !src.prorata || ATTR !== 'prorata') return src;
+  const evs = src.events || [], U = {};
+  let any = false;
+  evs.forEach(ev => { const u = upliftOf(ev); U[ev] = u; if(u !== 1) any = true; });
+  if(!any) return src;
+  const d = JSON.parse(JSON.stringify(src));
+  /* Trial counts only. Classplus signups and mandates come from the product database
+     and know nothing about Branch attribution — scaling them would be inventing data. */
+  const mul = o => { if(o) evs.forEach(ev => {
+    if(typeof o[ev] === 'number') o[ev] = o[ev] * U[ev]; }); };
+  ['ads','adsets','campaigns','accounts'].forEach(k => (d[k] || []).forEach(mul));
+  mul(d.combined);
+  Object.values(d.segments || {}).forEach(mul);
+  Object.values(d.accounts_by_seg || {}).forEach(rows => (rows || []).forEach(mul));
+  return d;
+}
+
+/* Disabled rather than hidden when the payload cannot support it — a brand with no
+   Branch app, or a payload restored from before this shipped. */
+function attrAvail(){
+  const sw = document.getElementById('attrsw');
+  if(!sw) return;
+  const ok = !!(RAW && RAW.prorata && hasTrials());
+  sw.children[1].disabled = !ok;
+  sw.children[1].title = ok ? '' : 'No trial attribution data in this window';
+  if(!ok && ATTR === 'prorata'){
+    ATTR = 'measured';
+    [...sw.children].forEach(x => x.classList.toggle('on', x.dataset.a === ATTR));
+    DATA = RAW;
+  }
+}
+
 /* ---------- trials by channel ---------- */
 /* Branch fills in `~ad_name` for Meta ads and leaves it empty for Google, so a trial with
    no ad name is a Google or an organic trial — and Branch names which one. That is why
@@ -724,9 +786,13 @@ function kpis(){
   /* Spend leads instead when the brand has no trial feed: promoting a CPT tile that
      could only ever read "—" would make a missing Branch key look like zero trials. */
   const segLbl = SEG === 'blended' ? 'blended' : SEG;
+  /* Pro rata changes what CPT means, so it is named on the tile itself and not only in
+     the switcher — a screenshot of this page has to carry its own caveat. */
+  const modLbl = proOn() ? ' · <span class="modelled">pro rata</span>' : '';
+  const pr = proOn() ? RAW.prorata[EV] : null;
   document.getElementById('kpis').innerHTML =
    (trials ? `
-   <div class="kpi hero"><div class="k">Current CPT · ${segLbl}</div>
+   <div class="kpi hero"><div class="k">Current CPT · ${segLbl}${modLbl}</div>
      <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
      <div class="s">${heroSub}</div></div>` : '') + `
    <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend</div><div class="v">${rs(sp)}</div>
@@ -734,14 +800,21 @@ function kpis(){
        : !DATA.budgets_known ? 'budget unavailable — partial data'
              : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
    (trials ? `
-   <div class="kpi"><div class="k">Trials</div><div class="v">${num(tr)}</div>
-     <div class="s">${DATA.event_note[EV]||EV}${SEG==='blended'
-       ? ` · Branch ${num(DATA.branch_totals[EV])} total`
-       : ` · ${segLbl} campaigns only`}</div></div>
+   <div class="kpi"><div class="k">Trials${modLbl}</div><div class="v">${num(tr)}</div>
+     <div class="s">${DATA.event_note[EV]||EV}${pr
+       ? ` · ${num(pr.matched)} measured, lifted ×${pr.uplift.toFixed(3)}`
+       : (SEG==='blended' ? ` · Branch ${num(DATA.branch_totals[EV])} total`
+                          : ` · ${segLbl} campaigns only`)}</div></div>
+   ${pr ? `
+   <div class="kpi"><div class="k">Meta share · modelled</div>
+     <div class="v">${DATA.branch_totals[EV] ? (100*pr.meta/DATA.branch_totals[EV]).toFixed(1) : '—'}%</div>
+     <div class="s">${num(pr.meta)} Meta · ${num(pr.google)} Google, of
+       ${num(DATA.branch_totals[EV])} · ${pr.days_covered}/${pr.days_total} days</div></div>`
+   : `
    <div class="kpi"><div class="k">Attribution</div><div class="v">${cov.toFixed(1)}%</div>
      <div class="s">${chanBits().length ? chanBits().join(' · ')
        : `${num(DATA.unattributed[EV])} trials not matched to an ad`}${
-       SEG==='blended' ? '' : ' · brand-wide'}</div></div>`
+       SEG==='blended' ? '' : ' · brand-wide'}</div></div>`}`
    : `
    <div class="kpi"><div class="k">Budget/day</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) + `
@@ -1152,6 +1225,7 @@ function render(){
   T = DATA.cpt_target;
   applyBrand(DATA.brand);
   segAvail();
+  attrAvail();
   document.getElementById('win').textContent =
     DATA.since===DATA.until ? DATA.since : `${DATA.since} → ${DATA.until}`;
   stampNow();
@@ -1178,7 +1252,12 @@ function noteFor(){
 function longNote(){
   if(!longFresh()) return '';
   const scope = `<b>Meta ads only</b> — ad sets in ${DATA ? DATA.brand_label : 'this brand'}'s
-     Meta ad accounts. Creatives run on other channels do not appear here at all.<br><br>`;
+     Meta ad accounts. Creatives run on other channels do not appear here at all.<br>
+     ${proOn() ? `<b class="modelled">Pro rata does not apply on this tab</b> — every CPT
+       below is measured, over windows this tab defines for itself rather than the one in
+       the header. It costs nothing here: the model lifts every row by the same factor, so
+       it never changes which creative beats which, and comparing creatives is what this
+       tab is for.<br>` : ''}<br>`;
   const cens = LONG.adsets.filter(a => a.censored).length;
   const unk = (LONG.status_unknown || []);
   return scope + `<b>Went live</b> is the first day an ad set actually <i>spent</i>, not the day it
@@ -1214,23 +1293,37 @@ function chanNote(){
   const pct = v => `${(100*v/tot).toFixed(1)}%`;
   const row = (lab, v, extra) => v ? `<br>&nbsp;&nbsp;&nbsp;<b>${num(v)}</b> ${lab}
      <span class="dimtxt">${pct(v)}${extra ? ' — ' + extra : ''}</span>` : '';
-  /* The counterfactual, computed live for whatever window is on screen, because it is
-     the whole argument for not doing it and an abstract one would not land. */
-  const pool = c.google + c.organic + c.other;
-  const denom = c.meta + c.google;
-  const sp = DATA.combined.spend;
+  const sp = RAW.combined.spend;
+  const p = RAW.prorata && RAW.prorata[EV];
   let counter = '';
-  if(pool && denom && c.meta_matched && sp){
-    const would = c.meta + pool * (c.meta / denom);
-    counter = `Splitting that pool between Meta and Google in proportion to their
-      attributed trials would credit Meta with ${num(would - c.meta)} trials it did not
-      earn here, and print a brand-wide CPT of ${rs(sp/would)} where the measured figure
-      is ${rs(sp/c.meta_matched)}. (Brand-wide: this breakdown covers every campaign, so
-      it does not split by testing and trial the way the tiles above do.)`;
+  if(p && p.matched && sp && p.uplift !== 1){
+    counter = proOn()
+      /* On: the reader is looking at modelled numbers and is owed the size of the model
+         and the measured figure it replaced, in the same breath. */
+      ? `<br><b class="modelled">Pro rata is on, so the figures above this paragraph are
+          modelled, not measured.</b> The ${num(p.meta - c.meta)} trials with no Meta ad
+          name that this model hands to Meta are trials Branch attributed to Google or to
+          organic. Every trial count on the page is lifted
+          <b>×${p.uplift.toFixed(3)}</b> and every CPT divided by it, so brand-wide CPT
+          reads ${rs(sp/p.trials)} where the measured figure is ${rs(sp/p.matched)}.
+          The lift is worked out for each of the ${p.days_covered} day(s) in this window
+          on its own and then summed, so a window where Google's share moved is not
+          flattened to one ratio. It is applied to every row by the same factor, which
+          means it does not move trials BETWEEN ads — each ad keeps its measured share.
+          Judge one creative against another on the measured view.`
+      /* Off: the same arithmetic, as the thing that would happen — the argument for
+         leaving it off, checkable on whatever window is on screen. */
+      : `Splitting that pool between Meta and Google in proportion to their measured
+          trials — the <b>Pro rata</b> switch in the header — would credit Meta with
+          ${num(p.meta - c.meta)} trials Branch attributed elsewhere, and print a
+          brand-wide CPT of ${rs(sp/p.trials)} where the measured figure is
+          ${rs(sp/p.matched)}. (Brand-wide: this breakdown covers every campaign, so it
+          does not split by testing and trial the way the tiles above do.)`;
   }
   return `<b>Which channel earned these trials.</b> Branch fills in an ad name for Meta ads
      and leaves it empty for Google — so a trial with no ad name is not an untraceable one,
-     it is a Google or organic trial, and Branch says which. Measured over this window:
+     it is a Google or organic trial, and Branch says which. Measured over this window${
+       proOn() ? ', before the pro-rata model is applied' : ''}:
      ${row('Meta', c.meta, c.meta_orphan ? `${num(c.meta_orphan)} of them name an ad no
         longer in the account, so they are Meta's but sit outside every row above` : '')}
      ${row('Google Ads', c.google, `counted here; this dashboard does not read Google
@@ -1410,17 +1503,27 @@ function toCsv(level, r){
   const cols = expCols(level);
   const ids = new Set(cols.filter(c => /_id$/.test(c[0])).map(c => c[0]));
   const line = a => a.join(',');
-  return [line(cols.map(c => c[0]))].concat(r.map(o => line(cols.map(c => {
+  const body = [line(cols.map(c => c[0]))].concat(r.map(o => line(cols.map(c => {
     const v = c[1](o);
     return ids.has(c[0]) ? idCell(v == null ? '' : v) : csvCell(v);
-  })))).join('\r\n') + '\r\n';
+  }))));
+  /* A modelled file must say so inside itself, not only in its name. Nobody renames a
+     CSV before forwarding it, and a trials column that has been lifted 45% is not
+     something a reader can spot by looking at it. */
+  const p = proOn() && RAW.prorata[EV];
+  if(p) body.push('', line([csvCell(
+    `NOTE: trials and CPT here are MODELLED (pro rata, lift x${p.uplift.toFixed(3)}). ` +
+    `Trials with no Meta ad name were shared between Meta and Google per day by each ` +
+    `channel's measured trials. Measured trials for this window: ${Math.round(p.matched)}.`)]));
+  return body.join('\r\n') + '\r\n';
 }
 
 function expName(level){
   const win = DATA.since === DATA.until ? DATA.since : `${DATA.since}_to_${DATA.until}`;
   const now = new Date(Date.now() + 330*60000).toISOString().slice(11,16).replace(':','');
   const sg = SEG === 'blended' ? '' : SEG + '_';
-  return `${DATA.brand}_${sg}${level}_${win}_${now}IST.csv`;
+  const md = proOn() ? 'prorata_' : '';
+  return `${DATA.brand}_${sg}${md}${level}_${win}_${now}IST.csv`;
 }
 
 function download(name, text){
@@ -1464,10 +1567,15 @@ function expCounts(){
     document.querySelector(`#expMenu button[data-x="${lv}"]`).disabled = !n;
   }
   document.querySelector('#expMenu button[data-x="all"]').disabled = !total;
+  const md = proOn() && RAW.prorata[EV]
+    ? `<br><b class="modelled">Pro rata: trials are modelled, lifted
+        ×${RAW.prorata[EV].uplift.toFixed(3)}, and CPT with them.</b> Marked
+        <code>prorata</code> in the filename.`
+    : '';
   document.getElementById('expNote').innerHTML = DATA
     ? `${rangeLabel()} · ${DATA.brand_label} · ${SEG === 'blended' ? 'trial + testing'
          : SEG + ' only'} · ${expFilterNote()}.<br>
-       Raw figures plus the Meta ids, so a row can be acted on as it stands.`
+       Raw figures plus the Meta ids, so a row can be acted on as it stands.${md}`
     : '';
 }
 
@@ -1552,6 +1660,7 @@ document.getElementById('brandsw').onclick = e => {
   BRAND = b;
   [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.b === b));
   applyBrand(b);
+  RAW = null;
   DATA = null;                       // never render one brand's rows under another's name
   LONG = null; LONGKEY = null;       // the longevity payload is per-brand too
   TAB = 'combined';
@@ -1620,6 +1729,32 @@ document.getElementById('segsw').onclick = e => {
   [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.s === sg));
   render();
 };
+/* Same idea for attribution: the payload carries the multiplier, so switching between
+   the measured and the modelled reading is a re-render, not a fetch. Remembered per
+   browser, because whoever wants the modelled view wants it every time they open the
+   page — and whoever does not must never be handed it by surprise. */
+document.getElementById('attrsw').onclick = e => {
+  const a = e.target.dataset && e.target.dataset.a;
+  if(!a || a === ATTR || e.target.disabled) return;
+  ATTR = a;
+  try{ localStorage.setItem('cpt_attr', a); }catch(_){}
+  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.a === a));
+  DATA = applyAttr(RAW);
+  render();
+};
+/* `?attr=prorata` wins over the remembered choice, so a link can carry the mode with it.
+   Safe to share: the tiles, the note, the export filename and the CSV itself all say
+   when a figure is modelled, so a link cannot hand someone modelled numbers quietly. */
+try{
+  const want = new URLSearchParams(location.search).get('attr')
+            || localStorage.getItem('cpt_attr');
+  if(want === 'prorata'){
+    ATTR = 'prorata';
+    [...document.getElementById('attrsw').children].forEach(
+      x => x.classList.toggle('on', x.dataset.a === 'prorata'));
+  }
+}catch(_){}
+
 /* A segment with no spend and no budget is disabled rather than shown empty: an empty
    table reads as "nothing performed", which is a different claim from "this brand ran
    no testing in this window". */

@@ -919,17 +919,142 @@ def _stored_prefix(brand, dates):
     return out
 
 
-def window_data(since, until, B, today=None):
-    """({account_id: insight rows}, {event: {ad_name: n}}, provenance) for the window.
+# ------------------------------------------- per-day channel totals --------
+# The pro-rata model has to be applied DAY BY DAY and then summed, because the Meta /
+# Google mix moves: doing it once on a window aggregate silently uses one blended ratio
+# for a month, and on a month where Google's share doubled that is a different number.
+#
+# What a day needs for it is four integers per event, and none of them depend on the
+# current ad roster -- "named" means Facebook regardless of whether that ad still exists.
+# So the per-day totals can be computed once, cached in the store, and reused forever,
+# which is what CHAN_NS holds. Reading raw stored days instead would be tens of thousands
+# of rows to recover twenty numbers.
+CHAN_NS = "chan"
+_chan_cache, _chan_lock = {}, threading.Lock()
+CHAN_TTL = int(os.environ.get("CHAN_TTL", "900"))
 
-    Settled days come from the store, the rest from Meta and Branch live. The shapes
-    returned are exactly what build() already consumed, which is why build() barely
-    changes.
+
+def date_range(since, until):
+    """Every date from since to until inclusive, as YYYY-MM-DD strings."""
+    out = []
+    d = datetime.strptime(since, "%Y-%m-%d").date()
+    endd = datetime.strptime(until, "%Y-%m-%d").date()
+    while d <= endd:
+        out.append(d.strftime("%Y-%m-%d")); d += timedelta(days=1)
+    return out
+
+
+def chan_of_day(by_name):
+    """{channel: n} for one day's {ad_name: count} map.
+
+    `meta` is every trial with a real ad name plus any nameless row Branch attributed to
+    Facebook (rare, but it happens and it is Meta's). `unknown` is a day stored before
+    partners were recorded -- reported, never apportioned.
+    """
+    out = {c: 0 for c in CHANNELS}
+    out["unknown"] = 0
+    for k, n in (by_name or {}).items():
+        nm = k if isinstance(k, str) else ""
+        if nm.startswith(NONE_PREFIX):
+            out[partner_slug(nm[len(NONE_PREFIX):])] += n
+        elif not nm or nm == "null":
+            out["unknown"] += n
+        else:
+            out["meta"] += n
+    return out
+
+
+def prorata_day(ch):
+    """(meta_allocation, pool) for one day under the pro-rata model.
+
+    The pool is every trial with no Meta ad name -- Google's, organic, and anything
+    stored before channels were kept. It is shared out between Meta and Google in
+    proportion to the trials each of them is MEASURED to have earned that day, which is
+    the rule as asked for. Organic is absorbed into that split rather than kept aside:
+    "counted in Meta and Google" leaves nowhere else for it to go.
+
+    Returns (0, 0) on a day with no measured paid trials at all, rather than inventing a
+    50/50 split out of nothing.
+    """
+    meta, google = ch.get("meta", 0), ch.get("google", 0)
+    pool = ch.get("google", 0) + ch.get("organic", 0) + ch.get("other", 0) \
+        + ch.get("unknown", 0)
+    denom = meta + google
+    if not pool or not denom:
+        return 0.0, pool
+    return pool * (meta / denom), pool
+
+
+def chan_index(brand, force=False):
+    """{date: {event: {channel: n}}} for every stored day of this brand. {} if absent."""
+    with _chan_lock:
+        hit = _chan_cache.get(brand)
+        if hit and not force and time.time() - hit[0] < CHAN_TTL:
+            return hit[1]
+    got = H.get_agg(H.agg_ns(brand, CHAN_NS, 0)) or {}
+    idx = {k: v for k, v in got.items() if not k.startswith("_")}
+    with _chan_lock:
+        _chan_cache[brand] = (time.time(), idx)
+    return idx
+
+
+def chan_index_put(brand, idx):
+    ok = H.put_agg(H.agg_ns(brand, CHAN_NS, 0), today_ist(), idx)
+    if ok:
+        with _chan_lock:
+            _chan_cache[brand] = (time.time(), idx)
+    return ok
+
+
+def chan_index_add(brand, date, by_event):
+    """Fold one freshly stored day into the index. Best effort; never raises.
+
+    Called from snapshot() so the nightly job keeps the index current without anyone
+    having to remember to rebuild it.
+    """
+    try:
+        idx = dict(chan_index(brand, force=True))
+        idx[date] = {ev: chan_of_day(bn) for ev, bn in (by_event or {}).items()}
+        return chan_index_put(brand, idx)
+    except Exception:
+        return False
+
+
+def chan_index_build(brand, dates=None, log=None):
+    """(built, total) — compute per-day channels for stored days missing from the index."""
+    idx = dict(chan_index(brand, force=True))
+    stored = sorted(dates or H.have(brand))
+    todo = [d for d in stored if d not in idx]
+    if not todo:
+        return 0, len(stored)
+    for i in range(0, len(todo), 15):
+        part = todo[i:i + 15]
+        raw = H.fetch_raw(brand, part)
+        for d, day in raw.items():
+            idx[d] = {ev: chan_of_day(bn)
+                      for ev, bn in (day.get("branch") or {}).items()}
+        if log:
+            log(f"    {part[0]}..{part[-1]}  {len(raw)} day(s)")
+    chan_index_put(brand, idx)
+    return len(todo), len(stored)
+
+
+def window_data(since, until, B, today=None):
+    """(insights_by_account, {event: {ad_name: n}}, {date: {event: {channel: n}}}, prov).
+
+    Settled days come from the store, the rest from Meta and Branch live.
+
+    The third element is the per-day channel split, kept separate from the aggregated
+    trials because the pro-rata model needs each day on its own and the aggregate has
+    already thrown the days away. Stored days come from the index; live days are folded
+    in as they arrive, which costs nothing -- branch_trials_daily returns per-day data
+    and the aggregation was discarding it.
     """
     brand, events = B["key"], B["events"]
     today = today or today_ist()
     meta = defaultdict(list)
     trials = {k: defaultdict(int) for k in events}
+    chan_days = {}
     prov = {"stored_days": 0, "live_since": since, "live_until": until,
             "store": "off" if not H.available() else "on", "note": ""}
 
@@ -955,6 +1080,10 @@ def window_data(since, until, B, today=None):
             for name, n in by_name.items():
                 trials[ev][name] += n
         prov["stored_days"] = len(got)
+        idx = chan_index(brand)
+        for d in got:
+            if d in idx:
+                chan_days[d] = idx[d]
 
     prov["live_since"], prov["live_until"] = live_since, live_until
     if live_since:
@@ -971,12 +1100,14 @@ def window_data(since, until, B, today=None):
                 for ev, by_name in per_ev.items():
                     for name, n in by_name.items():
                         trials[ev][name] += n
+                chan_days[day] = {ev: chan_of_day(bn) for ev, bn in per_ev.items()}
         except Exception as ex:
             kind = ("Branch is rate-limiting this app"
                     if isinstance(ex, BranchThrottled) else str(ex)[:160])
             prov["trials_error"] = kind
             trials = {k: defaultdict(int) for k in events}
-    return meta, trials, prov
+            chan_days = {}
+    return meta, trials, chan_days, prov
 
 
 def snapshot(brand, date):
@@ -1007,6 +1138,11 @@ def snapshot(brand, date):
                           "that may just be past retention"}
 
     ok = H.put(brand, date, meta, branch)
+    if ok:
+        # Fold the day into the channel index in the same breath. Doing it here rather
+        # than in a separate nightly job means the index cannot silently fall behind the
+        # store, which would make the pro-rata view quietly skip days.
+        chan_index_add(brand, date, branch)
     with _have_lock:
         _have_cache.pop(brand, None)
     return {"ok": ok, "date": date, "brand": brand,
@@ -1449,7 +1585,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     budgets_known = True
     # Settled days out of the store, the rest live. The shapes are identical to what the
     # two direct fetches used to return, which is why nothing below this line changed.
-    insights_by_acct, trials, prov = window_data(since, until, B)
+    insights_by_acct, trials, chan_days, prov = window_data(since, until, B)
 
     ads, adsets, campaigns, accounts = {}, {}, {}, {}
 
@@ -1703,6 +1839,43 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                     "other": round(chan[k]["other"], 1),
                     "unknown": round(unknown_chan[k], 1)} for k in EVENTS}
 
+    # ---- pro rata -----------------------------------------------------------
+    # A second, MODELLED reading of the same data, asked for explicitly and shipped
+    # alongside the measured one rather than instead of it. Every trial with no Meta ad
+    # name is shared between Meta and Google in proportion to what each is measured to
+    # have earned -- computed for each day separately and then summed, because the mix
+    # moves and one blended ratio over a month would be a different number.
+    #
+    # It reaches the tables as a single scalar per event: the whole page divides spend by
+    # trials, so multiplying every trial count by the same uplift is exactly equivalent to
+    # re-deriving each row, and it keeps every rollup exact instead of leaving ad sets
+    # that no longer sum to their campaign. What it CANNOT do is move trials between ads:
+    # it lifts them all by the window's factor, so the split across rows stays the
+    # measured one. Ad-level accuracy is not what this model is for.
+    ndays = len(date_range(since, until))
+    prorata = {}
+    for k in EVENTS:
+        alloc, covered = 0.0, 0
+        for d, per_ev in chan_days.items():
+            ch = (per_ev or {}).get(k)
+            if not ch:
+                continue
+            a, _pool = prorata_day(ch)
+            alloc += a
+            covered += 1
+        m = matched[k]
+        meta_pro = chan[k]["meta"] + alloc
+        prorata[k] = {
+            "uplift": round((m + alloc) / m, 6) if m else 1.0,
+            "allocated": round(alloc, 1),
+            "matched": round(m, 1),
+            "trials": round(m + alloc, 1),
+            "meta": round(meta_pro, 1),
+            "google": round(branch_totals[k] - meta_pro, 1),
+            "days_covered": covered,
+            "days_total": ndays,
+        }
+
     return {
         "since": since, "until": until,
         "generated_at": datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S IST"),
@@ -1739,6 +1912,9 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         # as a count with no CPT beside them until the Google Ads pull lands.
         "channels": channels,
         "channel_labels": CHANNEL_LABELS,
+        # The modelled view. `uplift` is the multiplier the page applies to every trial
+        # count when pro-rata mode is on; 1.0 means the model changes nothing.
+        "prorata": prorata,
         "duplicate_ad_names": dup_names,
         # per-account list of which roster listings Meta would not return. Spend,
         # trials and CPT stay correct regardless; only statuses and budgets are affected.

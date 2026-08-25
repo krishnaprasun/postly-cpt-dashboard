@@ -155,14 +155,27 @@ def main():
     ap.add_argument("--since", default=None)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--pause", type=float, default=2.0)
+    ap.add_argument("--index-only", action="store_true",
+                    help="skip the repair, just (re)build the per-day channel index")
+    ap.add_argument("--reindex", action="store_true",
+                    help="discard the stored index and recompute every day")
     a = ap.parse_args()
     if not H.available():
         sys.exit("HISTORY_URL / HISTORY_TOKEN not set — nothing to repair")
     print(("DRY RUN — " if a.dry_run else "") + "channel backfill")
     tot_d = tot_f = 0
     for b in [x.strip() for x in a.brands.split(",") if x.strip()]:
-        d, f = repair_brand(b, a.limit, a.dry_run, a.since, a.pause)
-        tot_d += d; tot_f += f
+        if not a.index_only:
+            d, f = repair_brand(b, a.limit, a.dry_run, a.since, a.pause)
+            tot_d += d; tot_f += f
+        if a.dry_run:
+            continue
+        # The index is what the pro-rata view reads day by day. Rebuilt AFTER the repair
+        # so it picks up the channels the repair just wrote, never before.
+        if a.reindex:
+            P.chan_index_put(b, {})
+        built, total = P.chan_index_build(b, log=print)
+        print(f"  {b}: channel index {built} day(s) added, {total} stored day(s) total")
     print(f"\ndone: {tot_d} day(s) {'would be ' if a.dry_run else ''}repaired, "
           f"{tot_f} failed")
 
