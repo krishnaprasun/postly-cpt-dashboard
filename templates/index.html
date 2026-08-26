@@ -451,7 +451,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
 </div></div>
 <header>
   <div class="hrow">
-    <div class="brand"><img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt=""><h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span> <em>Performance</em> <span class="scope" title="Meta ad accounts only — Google Ads and other channels are not included in any figure on this page">Meta ads only</span> <span id="win"></span></h1></div>
+    <div class="brand"><img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt=""><h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span> <em>Performance</em> <span class="scope" id="scopechip" title="Which channel's figures this page is showing">Meta ads only</span> <span id="win"></span></h1></div>
     {% if brands|length > 1 %}<div class="brandsw" id="brandsw">{% for b in brands %}<button data-b="{{ b.key }}"{% if b.key == default_brand %} class="on"{% endif %}>{{ b.label }}</button>{% endfor %}</div>{% else %}<div class="brandsw" id="brandsw" style="display:none"></div>{% endif %}
     <div class="segsw chansw" id="chansw"
          title="Which channel's money this page is about. Meta and Google are bought separately, reported separately, and only add up at the Blended level.">
@@ -750,7 +750,7 @@ function stampNow(){
         .replace(' ago','').replace('just now','now')}</span>`;
   el.innerHTML = (m === null
       ? `Last refreshed <b>${DATA.generated_at.replace(' IST','')}</b> IST`
-      : `Spend from Meta <b>${DATA.meta_as_of}</b> · ` +
+      : `Spend from ${chanIsMeta() ? 'Meta' : 'Meta'} <b>${DATA.meta_as_of}</b> · ` +
         `<span class="${m > 2100 ? 'warn' : ''}">${ago(m)}</span>`)
     + bit('trials', t, 2100) + bit('budgets', b, 2400) + ' · auto 30m';
   /* The assembly time is not useless -- it is what the server cache and the browser
@@ -846,12 +846,13 @@ async function load(force, silent, hard, skipCache){
        Last updated ${DATA.generated_at.replace(' IST','')} IST.`);
     // When the throttle banner is up it already names the accounts, the listings and
     // the deadline; repeating it here would just be two boxes saying the same thing.
-    if(j.trials_error) notes.push(
+    if(j.trials_error && chanIsMeta()) notes.push(
       `<b>Trial counts are unavailable.</b> ${j.trials_error}. Spend, budgets, statuses
        and the testing/trial split are from Meta and are correct and current — only
        trials and CPT are missing, and they are hidden rather than shown as zero.
        Retried on the next refresh.`);
-    if(j.degraded && j.degraded.length && !(j.rate_limit && j.rate_limit.active)) notes.push(
+    if(j.degraded && j.degraded.length && chanIsMeta()
+       && !(j.rate_limit && j.rate_limit.active)) notes.push(
       `<b>Partial data.</b> Meta would not return some listings — ` +
       j.degraded.map(d=>`<b>${d.account}</b>: ${d.missing.join(' + ')}`).join('; ') +
       `. Spend, trials and CPT are unaffected and correct.
@@ -1043,7 +1044,50 @@ function kpis(){
          active_ads: mc.active_ads, inst: (mc.inst || 0) + (g ? g.inst : 0)};
   const waiting = !chanIsMeta() && !g;
   const tr = c[EV], sp = c.spend, k = waiting ? null : cpt(sp,tr);
+  /* Named before the tiles are built, because the non-Meta branch below needs it too.
+     Spend leads instead of CPT when the brand has no trial feed at all: promoting a CPT
+     tile that could only ever read "—" would make a missing Branch key look like zero
+     trials. */
+  const segLbl = (chanIsMeta() ? '' : CHAN_LABEL[CHAN].toLowerCase() + ' · ')
+    + (SEG === 'blended' ? 'blended' : SEG);
   const trials = hasTrials();
+
+  /* Google and Blended get their OWN tiles rather than borrowing Meta's. Budget/day and
+     "live ad sets" are Meta concepts -- Google's budgets are not read here and an ad
+     group is not an ad set -- and on the Google channel they were rendering as a
+     confident "₹0" and "0 active ad sets", which is not an absence of data, it reads as
+     an answer. A tile that cannot mean anything for the channel on screen should not be
+     on screen. */
+  if(!chanIsMeta()){
+    const gt = googTotals();
+    const ins = c.inst || 0;
+    const split = (a, b) => (a + b) ? `${(100*a/(a+b)).toFixed(0)}% / ${(100*b/(a+b)).toFixed(0)}%` : '—';
+    const dash = '<span class="dimtxt">—</span>';
+    document.getElementById('kpis').innerHTML = `
+     <div class="kpi hero"><div class="k">Current CPT · ${segLbl}</div>
+       <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
+       <div class="s">${waiting ? 'loading Google…'
+         : T===null ? `no target set · ${num(tr)} trials`
+         : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`}</div></div>
+     <div class="kpi"><div class="k">Spend</div>
+       <div class="v">${sp ? rs(sp) : dash}</div>
+       <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
+     <div class="kpi"><div class="k">Trials</div>
+       <div class="v">${waiting ? dash : num(tr)}</div>
+       <div class="s">${CHAN === 'blended'
+         ? `Meta ${num(mc[EV])} · Google ${gt ? num(gt.trials) : '—'}`
+         : 'joined to campaigns and ad groups by name'}</div></div>
+     <div class="kpi"><div class="k">Installs</div>
+       <div class="v">${waiting ? dash : num(ins)}</div>
+       <div class="s">${ins && sp ? `${rs(sp/ins)} each` : 'no CPI yet'}</div></div>` +
+     (CHAN === 'blended' ? `
+     <div class="kpi"><div class="k">Channel split</div>
+       <div class="v">${gt ? split(mc.spend, gt.spend) : dash}</div>
+       <div class="s">Meta / Google share of spend${gt
+         ? ` · ${split(mc[EV], gt.trials)} of trials` : ''}</div></div>` : '');
+    return;
+  }
+
   const pace = c.budget ? 100*sp/c.budget : 0;
   const days = Math.round((new Date(DATA.until) - new Date(DATA.since))/864e5) + 1;
   // budgets and statuses are only partly known when an account's roster failed
@@ -1053,10 +1097,7 @@ function kpis(){
   const heroSub = T===null
     ? (k===null ? 'no target set' : `no target set · ${num(tr)} trials`)
     : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`;
-  /* Spend leads instead when the brand has no trial feed: promoting a CPT tile that
-     could only ever read "—" would make a missing Branch key look like zero trials. */
-  const segLbl = (chanIsMeta() ? '' : CHAN_LABEL[CHAN].toLowerCase() + ' · ')
-    + (SEG === 'blended' ? 'blended' : SEG);
+
   /* Pro rata changes what CPT means, so it is named on the tile itself and not only in
      the header badge — a screenshot of this page has to carry its own caveat. The label
      is the whole caveat: the size of the lift and the measured figure under it belong in
@@ -1289,6 +1330,21 @@ const CHAN_TABS = {
   blended: ['combined'],
 };
 const CHAN_LABEL = {meta: 'Meta', google: 'Google', blended: 'Meta + Google'};
+const CHAN_CHIP = {
+  meta:    ['Meta ads only',
+            'Meta ad accounts only — Google Ads is on the Google tab and is not in any figure here'],
+  google:  ['Google Ads only',
+            'Google Ads only — Meta figures are on the Meta channel and the two are never added on a row'],
+  blended: ['Meta + Google',
+            'Both channels added. The only view where they are, and the only one that answers what a trial actually costs'],
+};
+function chanChip(){
+  const el = document.getElementById('scopechip');
+  if(!el) return;
+  const [t, tip] = CHAN_CHIP[CHAN];
+  el.textContent = t; el.title = tip;
+  el.dataset.c = CHAN;
+}
 
 function chanTabsAvail(){
   const allow = CHAN_TABS[CHAN];
@@ -2435,6 +2491,7 @@ function render(){
   T = DATA.cpt_target;
   applyBrand(DATA.brand);
   segAvail();
+  chanChip();
   chanTabsAvail();
   attrAvail();
   document.getElementById('win').textContent =
@@ -2445,8 +2502,17 @@ function render(){
       (t === 'accounts' ? acctRows() : DATA[t].filter(inSeg)).length;
   /* Only once the tab has been opened: a count is a promise that the number is real, and
      guessing one before the fetch would be a promise this cannot keep. */
-  const gn = document.querySelector('#tabs button[data-t="adsets"] i');
-  if(gn && !chanIsMeta()) gn.textContent = GOOG && googFresh() ? GOOG.ad_groups.length : '';
+  if(!chanIsMeta()){
+    const g = googFresh() ? GOOG : null;
+    for(const b of document.getElementById('tabs').children){
+      const i = b.querySelector('i');
+      if(!i) continue;
+      i.textContent = b.disabled ? ''
+        : b.dataset.t === 'campaigns' ? (g ? g.campaigns.length : '')
+        : b.dataset.t === 'adsets'    ? (g ? g.ad_groups.length : '')
+        : '';
+    }
+  }
   document.getElementById('cpWrap').style.display =
     (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
   renderLimits(); kpis(); renderTable();
@@ -3206,6 +3272,9 @@ document.getElementById('chansw').onclick = e => {
      ask for them -- otherwise the first switch shows an empty page and the second shows
      the answer, which reads as a bug. */
   if(!chanIsMeta() && !googFresh() && !GOOGBUSY) loadGoogle(false);
+  /* Warnings are written per channel, so the box is cleared here and refilled by the
+     next payload rather than left describing the view you just left. */
+  if(!chanIsMeta()) document.getElementById('err').innerHTML = '';
   render();
 };
 document.getElementById('segsw').onclick = e => {
@@ -3283,6 +3352,19 @@ try{
    no testing in this window". */
 function segAvail(){
   const sw = document.getElementById('segsw');
+  /* Testing vs trial is decided by a pattern in the META campaign name. Google campaigns
+     were never in that split, so on Google the control would silently do nothing -- and a
+     control that does nothing is worse than one that says it cannot. */
+  if(!chanIsMeta()){
+    for(const b of sw.children){
+      b.disabled = true;
+      b.title = 'Testing vs trial is a Meta campaign-naming rule; Google buying is not '
+              + 'split that way.';
+    }
+    sw.style.opacity = '.45';
+    return;
+  }
+  sw.style.opacity = '';
   for(const b of sw.children){
     const sg = b.dataset.s;
     const on = sg === 'blended' || segHas(sg);
