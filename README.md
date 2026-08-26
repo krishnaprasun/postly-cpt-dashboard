@@ -818,7 +818,13 @@ instance. `SERIES_TOP` still exists and still caps the fold, but defaults to `0`
 no cap; `SERIES_MAX_ROWS` (20,000) is a safety net against a dimension nobody has tried,
 and when it bites the note says the fold was capped.
 
-The nightly precompute warms the default combination (14 days, script) for each brand.
+The nightly precompute warms the default combination (`SERIES_DEFAULT_DAYS`, script) for
+each brand, through `P.series_window()` — the same function the endpoint's default uses.
+One definition on purpose: a stored fold is reused only on an exact date match, so a warm
+one day wider than the request is a fold nobody will ever ask for. They had already
+drifted once, the tabs moving to 30 days while the warm stayed at 15, and the symptom was
+invisible — every cold open still paid the full 15–25s and the nightly job still reported
+success.
 A stored artifact is reused only when its dates match the request **exactly** — a window
 that has rolled forward a day is a different question — **and** its `row_cap` matches the
 running code. Dates alone was not enough: on the first deploy of the uncapped fold,

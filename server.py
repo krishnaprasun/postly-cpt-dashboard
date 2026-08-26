@@ -376,14 +376,10 @@ def api_series():
         since, until = request.args["since"], request.args["until"]
     else:
         try:
-            days = int(request.args.get("days", "30"))
+            days = int(request.args.get("days", P.SERIES_DEFAULT_DAYS))
         except ValueError:
-            days = 30
-        days = max(2, min(days, P.SERIES_MAX_DAYS))
-        today = P.today_ist()
-        since = (datetime.strptime(today, "%Y-%m-%d")
-                 - timedelta(days=days - 1)).strftime("%Y-%m-%d")
-        until = today
+            days = P.SERIES_DEFAULT_DAYS
+        since, until = P.series_window(days)
     dim = request.args.get("dim", "script")
     force = full and request.args.get("force") == "1"
     args = (brand, since, until, dim)
@@ -545,14 +541,13 @@ def api_precompute():
     # combination would be spending Meta quota on views that may never be opened.
     warmed = []
     if request.args.get("series", "1") != "0":
-        today = P.today_ist()
-        since = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=14)) \
-            .strftime("%Y-%m-%d")
+        since, until = P.series_window()
         for b in brands:
             try:
-                r = P.series(b, since, today, dim="script", force=True)  # noqa: E501
+                r = P.series(b, since, until, dim="script", force=True)
                 warmed.append({"brand": b, "rows": r.get("total_rows"),
-                               "days": len(r.get("dates") or [])})
+                               "days": len(r.get("dates") or []),
+                               "window": f"{since}..{until}"})
             except Exception as e:
                 traceback.print_exc()
                 warmed.append({"brand": b, "error": str(e)[:200]})

@@ -1516,6 +1516,21 @@ def _adset_day(meta_rows, branch_day, events):
 # to, so a name is the closest thing in this data to a script.
 SERIES_TTL = int(os.environ.get("SERIES_TTL", "900"))
 SERIES_MAX_DAYS = int(os.environ.get("SERIES_MAX_DAYS", "62"))
+# The window Trends and Matrix open on. ONE definition, because the nightly warm and the
+# endpoint's default have to agree exactly: a stored fold is reused only on an exact date
+# match, so a warm one day wider than the request is a fold nobody will ever ask for.
+# They drifted -- the tabs moved to 30 days and the warm stayed at 15 -- and the symptom
+# was invisible: every cold open still paid the full 15-25s, and the nightly job still
+# reported success.
+SERIES_DEFAULT_DAYS = int(os.environ.get("SERIES_DEFAULT_DAYS", "30"))
+
+
+def series_window(days=None, today=None):
+    """(since, until) for a days-long window ending today, clamped to the allowed range."""
+    d = max(2, min(int(days or SERIES_DEFAULT_DAYS), SERIES_MAX_DAYS))
+    t = today or today_ist()
+    return ((datetime.strptime(t, "%Y-%m-%d") - timedelta(days=d - 1))
+            .strftime("%Y-%m-%d"), t)
 # 0 means "every row". The Matrix paginates, so there is no longer a screen-sized reason
 # to truncate, and the truncation was hiding real money: on Postly's 30-day script fold
 # the top 60 rows are only 40% of the spend, and rank 61 had still spent Rs24,000.
