@@ -1302,8 +1302,26 @@ def _adset_day(meta_rows, branch_day, events):
 # to, so a name is the closest thing in this data to a script.
 SERIES_TTL = int(os.environ.get("SERIES_TTL", "900"))
 SERIES_MAX_DAYS = int(os.environ.get("SERIES_MAX_DAYS", "62"))
-SERIES_TOP = int(os.environ.get("SERIES_TOP", "60"))
+# 0 means "every row". The Matrix paginates, so there is no longer a screen-sized reason
+# to truncate, and the truncation was hiding real money: on Postly's 30-day script fold
+# the top 60 rows are only 40% of the spend, and rank 61 had still spent Rs24,000.
+# The ceiling is a safety net against a dimension nobody has tried yet, not a view limit.
+SERIES_TOP = int(os.environ.get("SERIES_TOP", "0"))
+SERIES_MAX_ROWS = int(os.environ.get("SERIES_MAX_ROWS", "20000"))
+# Folds are now 1.5-2 MB each, so an unbounded dict of them is an OOM on a 512 MB
+# instance. Keep the few most recently used and let the store serve the rest.
+SERIES_CACHE_MAX = int(os.environ.get("SERIES_CACHE_MAX", "8"))
 _series_cache, _series_lock = {}, threading.Lock()
+
+
+def _series_cache_put(key, data):
+    """Insert under the lock and evict the least recently touched. Caller holds nothing."""
+    with _series_lock:
+        _series_cache[key] = {"at": time.time(), "data": data}
+        if len(_series_cache) > SERIES_CACHE_MAX:
+            for k in sorted(_series_cache, key=lambda k: _series_cache[k]["at"]
+                            )[:len(_series_cache) - SERIES_CACHE_MAX]:
+                _series_cache.pop(k, None)
 
 def _series_ns(brand, dim):
     """Store namespace for a folded series. Alphanumeric, which the service requires."""
@@ -1429,8 +1447,7 @@ def series(brand, since, until, dim="script", force=False):
         # answering it with yesterday's fold would be wrong without looking wrong.
         art = H.get_agg(_series_ns(brand, dim))
         if art and art.get("dates") == want:
-            with _series_lock:
-                _series_cache[key] = {"at": time.time(), "data": art}
+            _series_cache_put(key, art)
             return dict(art, cached=True, restored=True, age_min=0)
 
     B = C.brand(brand)
@@ -1493,7 +1510,8 @@ def series(brand, since, until, dim="script", force=False):
             row["days"][day] = {"spend": round(e["spend"], 2),
                                 **{x: round(e[x], 2) for x in keys}}
 
-    out_rows = sorted(rows.values(), key=lambda r: -r["total_spend"])[:SERIES_TOP]
+    cap = SERIES_TOP if SERIES_TOP > 0 else SERIES_MAX_ROWS
+    out_rows = sorted(rows.values(), key=lambda r: -r["total_spend"])[:cap]
     for r in out_rows:
         r["total_spend"] = round(r["total_spend"], 2)
         for x in keys:
@@ -1507,8 +1525,7 @@ def series(brand, since, until, dim="script", force=False):
             "partial_today": partial_today, "excluded_today": today,
             "total_rows": len(rows), "stored_days": len(stored),
             "generated_at": now_ist_str()}
-    with _series_lock:
-        _series_cache[key] = {"at": time.time(), "data": data}
+    _series_cache_put(key, data)
     # And to the store, so a woken instance does not re-fold from scratch. The in-process
     # cache dies with the process, which on the free plan is every fifteen idle minutes --
     # exactly the gap the nightly warm was supposed to close.

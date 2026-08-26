@@ -738,6 +738,23 @@ Branch trials land all evening — and on a trend line a partial day dives towar
 reads as a collapse that never happened. The KPI tiles above the tabs still include
 today; the note explains the difference.
 
+**The Matrix shows every row, and sorts by any column.** It pages — 50 / 100 / 250 / 500
+/ All, default 100 — rather than showing a top N. The old top 20 was not a summary of the
+spend, it was a slice of it: on Postly's 30-day script fold the top 60 rows are **40% of
+the spend**, and rank 61 had still spent ₹24,395. Clicking a heading sorts by it, and
+that includes each **day** column, which is the question a date grid exists to answer
+("who was cheapest on the 21st"). Text columns open A→Z, numbers open biggest-first.
+
+A blank is not a zero, and the sort keeps that distinction: for Spend / Trials / Installs
+a day a row did not run really is zero and sorts as one, but a CPT with no trials behind
+it has no value at all and sinks to the bottom in **both** directions — otherwise "sort
+ascending by CPT" would answer "who was absent" instead of "who was cheapest".
+
+The footer carries two totals, because with paging one number cannot mean both things:
+**this page**, which adds up the column above it, and **all rows**, which is the window.
+Export CSV writes every row matching the filter in the order on screen — not just the
+page, which would be a screenshot rather than an export.
+
 **Derived metrics come from the sums.** CPT for a period is total spend over total
 trials, never the mean of the daily CPTs — on a row that ran on three days out of
 fourteen those are far apart and only the first is the real cost. A day with no trials
@@ -749,11 +766,23 @@ The fold is 16–26s cold: raw stored days plus a live pull for the unsettled ta
 result is cached in process for 15 minutes, served stale while it refreshes, **and
 persisted to the store** under `{brand}ser{dim}` — the in-process cache dies with the
 process, which on the free plan is every fifteen idle minutes. A cold instance restores
-in 0.4s. The nightly precompute warms the default combination (14 days, script) for each
+in 0.7s.
+
+Returning every row makes a fold 1.5–2 MB (Postly, 30 days, script: 4,136 rows, 1.69 MB),
+so two things had to change with it. Responses are **gzipped** in an `after_request` —
+it is nearly all digits and repeated keys and compresses **9.9×**, so that fold is 175 KB
+on the wire. And the in-process series cache is now bounded (`SERIES_CACHE_MAX`, default
+8, least-recently-used evicted): an unbounded dict of 2 MB folds is an OOM on a 512 MB
+instance. `SERIES_TOP` still exists and still caps the fold, but defaults to `0`, meaning
+no cap; `SERIES_MAX_ROWS` (20,000) is a safety net against a dimension nobody has tried,
+and when it bites the note says the fold was capped. The nightly precompute warms the default combination (14 days, script) for each
 brand; the artifact is only reused when its dates match the request **exactly**, because
 a window that has rolled forward a day is a different question.
 
-Both tabs are deep-linkable: `?tab=matrix&win=30&dim=adset&metric=cpi&attr=prorata`.
+Both tabs are deep-linkable, sort and page size included:
+`?tab=matrix&win=30&dim=adset&metric=cpi&per=250&sort=2026-08-21&dir=asc`. A `sort` that
+names no column the current grid has falls back to the period total rather than sorting
+by nothing, so a stale bookmark degrades instead of breaking.
 
 ### Installs
 

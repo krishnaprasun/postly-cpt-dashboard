@@ -279,6 +279,13 @@ table.mx td{text-align:right;color:var(--ink);font-variant-numeric:tabular-nums}
 table.mx td.l{text-align:left}
 table.mx td.nm{max-width:330px;overflow:hidden;text-overflow:ellipsis}
 /* First two columns pinned so a row stays identifiable however far right you scroll. */
+table.mx thead th{cursor:pointer;user-select:none}
+table.mx thead th:hover{color:var(--accent-dk)}
+table.mx tfoot tr.grand td{border-top:2px solid var(--line);font-weight:700}
+table.mx td .rk{display:inline-block;min-width:34px;color:var(--muted);
+  font-variant-numeric:tabular-nums}
+.pager{display:flex;align-items:center;gap:8px;padding:10px 2px 0;flex-wrap:wrap}
+.btn.sm{padding:4px 10px;font-size:12px}
 table.mx th.pin,table.mx td.pin{position:sticky;left:0;z-index:1;background:var(--white)}
 table.mx thead th.pin{z-index:3;background:var(--panel2)}
 table.mx tbody tr:hover td{background:var(--panel2)}
@@ -474,6 +481,14 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       </select></label>
     <input type="search" id="sq" placeholder="Filter by name…">
     <label class="chk"><input type="checkbox" id="sTesting"> include testing</label>
+    <label class="chk" id="sPerWrap">Rows
+      <select class="sel" id="sPer" style="margin-left:6px">
+        <option value="50">50</option>
+        <option value="100" selected>100</option>
+        <option value="250">250</option>
+        <option value="500">500</option>
+        <option value="0">All</option>
+      </select></label>
     {% if can_act %}<button class="btn" id="sCsv">Export CSV</button>{% endif %}
     <span class="meta" id="scount"></span>
   </div>
@@ -971,7 +986,16 @@ function sparkline(daily){
    top twenty. They share a fetch because they share a fold, and that fold is the
    expensive part. */
 let SERIES = null, SERIESKEY = null, SERIESBUSY = false;
-const CHART_LINES = 6, MATRIX_ROWS = 20;
+const CHART_LINES = 6;
+/* The Matrix pages through every row the fold returned rather than showing a top 20.
+   The cut was hiding real money: on Postly's 30-day script fold the top 60 rows are 40%
+   of the spend and rank 61 had still spent Rs24,000, so "top N" was not a summary of the
+   spend, it was a slice of it. `MPER = 0` means one page with everything on it. */
+let MPER = 100, MPAGE = 0;
+/* Sorted by period total, descending, to open the way it always did. `key` is 'name',
+   'platform', 'stage', 'total', or a date string -- clicking a day column sorts by that
+   day, which is the question the grid exists to answer. */
+let MSORT = {key:'total', dir:-1};
 /* Six lines, picked to stay apart both in hue and in lightness so the chart survives
    being printed, screenshotted or read by someone who cannot separate red from green. */
 /* An axis ceiling a person can read: 1, 2, 2.5 or 5 times a power of ten, per tick. */
@@ -1016,6 +1040,35 @@ function seriesRows(){
     (testing || r.stage !== 'testing') &&
     (!q || (r.label || '').toLowerCase().includes(q)));
 }
+
+/* Filtered, then sorted by whichever column the header click chose. Sorts a COPY:
+   SERIES.rows stays in the server's spend order, which is what Trends picks its six
+   lines from and what "top by spend" in the note means. */
+function matrixRows(){
+  const rows = seriesRows().slice(), m = metricOf(), k = MSORT.key, d = MSORT.dir;
+  const txt = k === 'name' || k === 'platform' || k === 'stage';
+  const val = r => k === 'name' ? (r.label || '')
+                 : k === 'platform' ? (r.platform || '')
+                 : k === 'stage' ? (r.stage || '')
+                 : k === 'total' ? rowTotal(r)
+                 : m.of(r.days[k]);
+  rows.sort((a, b) => {
+    const x = val(a), y = val(b);
+    if(txt) return d * String(x).localeCompare(String(y), undefined, {numeric:true});
+    /* A blank is not a zero -- a day a creative did not run, or a CPT with no trials
+       behind it. Blanks sink to the bottom in BOTH directions, so "sort ascending by
+       21 Aug" answers "who was cheapest that day", not "who was absent". */
+    const xn = (x === null || x === undefined || !isFinite(x));
+    const yn = (y === null || y === undefined || !isFinite(y));
+    if(xn && yn) return 0;
+    if(xn) return 1;
+    if(yn) return -1;
+    return d * (x - y);
+  });
+  return rows;
+}
+
+const mPages = n => MPER ? Math.max(1, Math.ceil(n / MPER)) : 1;
 
 /* The window total for a row under the current metric. */
 function rowTotal(r){
@@ -1112,56 +1165,102 @@ function renderMatrix(){
   if(!SERIES){ box.innerHTML = `<div class="panel"><p class="sub">${
     SERIESBUSY ? 'Loading…' : 'No data for this window.'}</p></div>`; return; }
   const m = metricOf(), dates = SERIES.dates;
-  const all = seriesRows(), rows = all.slice(0, MATRIX_ROWS);
-  document.getElementById('scount').textContent =
-    `${all.length} row(s) · top ${rows.length} shown`;
+  const all = matrixRows(), pages = mPages(all.length);
+  if(MPAGE >= pages) MPAGE = pages - 1;
+  if(MPAGE < 0) MPAGE = 0;
+  const from = MPER ? MPAGE * MPER : 0;
+  const rows = MPER ? all.slice(from, from + MPER) : all;
+  document.getElementById('scount').textContent = all.length
+    ? `${all.length} row(s) · showing ${from + 1}–${from + rows.length}`
+    : '0 rows';
+
+  const arrow = k => MSORT.key === k ? (MSORT.dir < 0 ? ' ↓' : ' ↑') : '';
+  const th = (k, label, cls) =>
+    `<th data-mk="${k}" class="${[cls, MSORT.key === k ? 'sorted' : ''].filter(Boolean).join(' ')}"
+      >${label}${arrow(k)}</th>`;
   const head = `<tr>
-    <th class="l pin">${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}</th>
-    <th class="l">Platform</th><th class="l">Stage</th>
-    <th>Period ${m.label.toLowerCase()}</th>
-    ${dates.map(d => `<th>${d.slice(8)} ${
-      new Date(d+'T00:00:00').toLocaleString('en-GB',{month:'short'})}</th>`).join('')}</tr>`;
-  const body = rows.map(r => {
+    ${th('name', (SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim, 'l pin')}
+    ${th('platform', 'Platform', 'l')}${th('stage', 'Stage', 'l')}
+    ${th('total', 'Period ' + m.label.toLowerCase())}
+    ${dates.map(d => th(d, `${d.slice(8)} ${
+      new Date(d+'T00:00:00').toLocaleString('en-GB',{month:'short'})}`)).join('')}</tr>`;
+
+  const body = rows.map((r, i) => {
     const tv = rowTotal(r);
     return `<tr>
-      <td class="l pin nm" title="${(r.label||'').replace(/"/g,'&quot;')}">${r.label||'—'}</td>
+      <td class="l pin nm" title="${(r.label||'').replace(/"/g,'&quot;')}"><span class="rk"
+        >${from + i + 1}</span>${r.label||'—'}</td>
       <td class="l">${r.platform}</td><td class="l">${r.stage||'—'}</td>
       <td><b>${tv===null?'—':m.fmt(tv)}</b></td>
       ${dates.map(d => { const v = m.of(r.days[d]);
         return v===null||!isFinite(v) ? `<td class="z">—</td>`
              : `<td${v ? '' : ' class="z"'}>${m.fmt(v)}</td>`; }).join('')}</tr>`;
   }).join('');
-  /* The footer totals the ROWS ON SCREEN, not the window — otherwise it would not add
-     up to the column above it, which is the one thing a total has to do. */
-  const colTot = d => { let sp=0, t=0, n=0;
-    rows.forEach(r => { const x=r.days[d]; if(!x) return;
-      sp+=x.spend; t+=x.t101; n+=x.inst; });
-    return m.agg ? m.agg(sp,{t101:t,inst:n})
-         : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n); };
-  let sp=0,t=0,n=0;
-  rows.forEach(r => { sp+=r.total_spend; t+=r.total_t101; n+=r.total_inst; });
-  const gt = m.agg ? m.agg(sp,{t101:t,inst:n})
-                   : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n);
-  const foot = `<tr><td class="l pin">TOP ${rows.length} SHOWN</td><td></td><td></td>
-    <td>${gt===null?'—':m.fmt(gt)}</td>
-    ${dates.map(d => { const v = colTot(d);
-      return `<td>${v===null||!isFinite(v)?'—':m.fmt(v)}</td>`; }).join('')}</tr>`;
+
+  /* Two totals, because with paging one number cannot mean both things. The page row
+     adds up the column above it -- the one job a total has. The all-rows row is the
+     answer to "and what is the whole window", which is no longer on screen. */
+  const tot = set => {
+    const colTot = d => { let sp=0, t=0, n=0;
+      set.forEach(r => { const x=r.days[d]; if(!x) return;
+        sp+=x.spend; t+=x.t101; n+=x.inst; });
+      return m.agg ? m.agg(sp,{t101:t,inst:n})
+           : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n); };
+    let sp=0,t=0,n=0;
+    set.forEach(r => { sp+=r.total_spend; t+=r.total_t101; n+=r.total_inst; });
+    const gt = m.agg ? m.agg(sp,{t101:t,inst:n})
+                     : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n);
+    return `<td>${gt===null?'—':m.fmt(gt)}</td>` + dates.map(d => { const v = colTot(d);
+      return `<td>${v===null||!isFinite(v)?'—':m.fmt(v)}</td>`; }).join('');
+  };
+  const foot = (rows.length ? `<tr><td class="l pin">THIS PAGE · ${rows.length} row(s)</td>
+      <td></td><td></td>${tot(rows)}</tr>` : '')
+    + (all.length > rows.length ? `<tr class="grand"><td class="l pin">ALL ${
+        num(all.length)} ROWS</td><td></td><td></td>${tot(all)}</tr>` : '');
+
+  const pager = pages > 1 ? `<div class="pager">
+      <button class="btn sm" data-mp="first" ${MPAGE?'':'disabled'}>&laquo; First</button>
+      <button class="btn sm" data-mp="prev" ${MPAGE?'':'disabled'}>&lsaquo; Prev</button>
+      <span class="meta">Page ${MPAGE+1} of ${pages}</span>
+      <button class="btn sm" data-mp="next" ${MPAGE<pages-1?'':'disabled'}>Next &rsaquo;</button>
+      <button class="btn sm" data-mp="last" ${MPAGE<pages-1?'':'disabled'}>Last &raquo;</button>
+    </div>` : '';
+
   box.innerHTML = `<div class="panel" style="padding-bottom:10px">
       <h3>${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}-by-date matrix · ${m.label}</h3>
-      <p class="sub">Top ${rows.length} rows by period spend${all.length>rows.length
-        ? `, of ${all.length} matching` : ''}, ${SERIES.since} to ${SERIES.until}.
-        Scroll sideways for the rest of the days; the first column stays put.
-        Export CSV writes exactly what is on screen.</p>
+      <p class="sub">${num(all.length)} row(s)${SERIES.truncated
+        ? ` (capped — the fold hit its ceiling)` : ''}, ${SERIES.since} to ${SERIES.until}.
+        Click any column heading to sort by it, a day column included. Scroll sideways for
+        the rest of the days; the first column stays put.
+        Export CSV writes every row that matches the filter, not just this page.</p>
     </div>
     <div class="mwrap"><table class="mx"><thead>${head}</thead>
       <tbody>${body || `<tr><td class="l" colspan="${dates.length+4}">No rows match.</td></tr>`}</tbody>
-      <tfoot>${rows.length ? foot : ''}</tfoot></table></div>`;
+      <tfoot>${foot}</tfoot></table></div>${pager}`;
+
+  box.querySelectorAll('thead th').forEach(el => el.onclick = () => {
+    const k = el.dataset.mk;
+    /* Text columns open ascending, numbers open descending: A-Z and biggest-first are
+       what each one is actually asked for first. */
+    MSORT = {key:k, dir: MSORT.key===k ? -MSORT.dir
+                        : (k==='name'||k==='platform'||k==='stage' ? 1 : -1)};
+    MPAGE = 0; renderMatrix();
+  });
+  box.querySelectorAll('.pager button').forEach(el => el.onclick = () => {
+    const w = el.dataset.mp;
+    MPAGE = w==='first' ? 0 : w==='last' ? pages-1
+          : w==='prev' ? MPAGE-1 : MPAGE+1;
+    renderMatrix();
+    document.getElementById('matrixWrap').scrollIntoView({block:'start'});
+  });
 }
 
 function matrixCsv(){
   if(!SERIES) return;
   const m = metricOf(), dates = SERIES.dates;
-  const rows = seriesRows().slice(0, MATRIX_ROWS);
+  /* Every row that matches the filter, in the order on screen -- not just the page.
+     A file that stopped at the visible 100 would be a screenshot, not an export. */
+  const rows = matrixRows();
   const head = [(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim, 'platform', 'stage',
                 'period_' + sMetric()].concat(dates);
   const line = a => a.join(',');
@@ -1463,6 +1562,8 @@ function renderTable(){
     // The window or the brand may have moved under us — a re-render must never draw the
     // previous window's days under the new window's heading.
     if(!seriesFresh() && !SERIESBUSY){ loadSeries(false); }
+    document.getElementById('sPerWrap').style.display =
+      TAB === 'matrix' ? 'inline-flex' : 'none';
     if(TAB==='trends') renderTrends(); else renderMatrix();
     return;
   }
@@ -1615,8 +1716,11 @@ function seriesNote(){
        — the pro-rata split is about trial attribution.<br><br>`
     : '';
   const trunc = SERIES.truncated
-    ? `Folded ${num(SERIES.total_rows)} rows and kept the ${SERIES.rows.length} biggest by
-       spend; the rest are outside both views. ` : '';
+    ? `<b>Folded ${num(SERIES.total_rows)} rows and kept the ${num(SERIES.rows.length)}
+       biggest by spend</b> — the fold's safety ceiling, not a view limit; the rest are
+       outside both views. `
+    : `All ${num(SERIES.total_rows)} rows from this window are here — the Matrix pages
+       through them, Trends charts the six that spent most. `;
   const ends = SERIES.partial_today
     ? `<b>This window is today only, and today is still landing</b> — spend is minutes
        behind and Branch trials arrive all evening, so treat it as incomplete rather than
@@ -2031,11 +2135,18 @@ document.getElementById('tabs').onclick = e => {
 };
 /* Dimension changes the fold, so it re-fetches. Metric and the filters are pure
    re-renders of an answer already in hand. */
-document.getElementById('sWin').onchange = () => loadSeries(false);
-document.getElementById('sDim').onchange = () => loadSeries(false);
-document.getElementById('sMetric').onchange = () => { renderTable(); noteFor(); };
-document.getElementById('sq').oninput = renderTable;
-document.getElementById('sTesting').onchange = renderTable;
+document.getElementById('sWin').onchange = () => { MPAGE = 0; loadSeries(false); };
+document.getElementById('sDim').onchange = () => {
+  /* A new dimension has different columns to sort by, and "sort by 12 Aug" carried over
+     from the last one would silently mean a different grid. */
+  MPAGE = 0; MSORT = {key:'total', dir:-1}; loadSeries(false);
+};
+document.getElementById('sMetric').onchange = () => { MPAGE = 0; renderTable(); noteFor(); };
+document.getElementById('sq').oninput = () => { MPAGE = 0; renderTable(); };
+document.getElementById('sTesting').onchange = () => { MPAGE = 0; renderTable(); };
+document.getElementById('sPer').onchange = e => {
+  MPER = parseInt(e.target.value, 10) || 0; MPAGE = 0; renderTable();
+};
 if(CAN_ACT) document.getElementById('sCsv').onclick = matrixCsv;
 if(CAN_ACT) document.getElementById('lGo').onclick = () => loadLongevity(true);
 document.getElementById('lWin').onchange = () => loadLongevity(false);
@@ -2157,10 +2268,19 @@ try{
    what people actually want to send each other. */
 try{
   const q = new URLSearchParams(location.search);
-  for(const [param, id] of [['dim','sDim'], ['metric','sMetric'], ['win','sWin']]){
+  for(const [param, id] of [['dim','sDim'], ['metric','sMetric'], ['win','sWin'],
+                           ['per','sPer']]){
     const want = q.get(param), sel = document.getElementById(id);
     if(want && sel && [...sel.options].some(o => o.value === want)) sel.value = want;
   }
+  MPER = parseInt(document.getElementById('sPer').value, 10) || 0;
+  /* `?sort=2026-08-21&dir=asc` opens the grid on one day's column, which is the whole
+     reason to send someone a matrix link. Validated against the columns that exist, so a
+     stale date in an old bookmark falls back to the period total rather than sorting by
+     nothing. */
+  const sk = q.get('sort');
+  if(sk && (['name','platform','stage','total'].includes(sk) || /^\d{4}-\d\d-\d\d$/.test(sk)))
+    MSORT = {key: sk, dir: q.get('dir') === 'asc' ? 1 : -1};
 }catch(_){}
 
 /* `?tab=matrix` opens straight onto a view. Useful for a link into a specific answer,

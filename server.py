@@ -11,6 +11,7 @@ Two things exist for the free Render plan specifically:
     the app sends noindex headers and a disallow-all robots.txt to keep it out of
     search results. An optional ADMIN_PASS turns on a password prompt if ever wanted.
 """
+import gzip
 import hmac
 import os
 import threading
@@ -562,6 +563,37 @@ def api_snapshot():
 def _noindex(resp):
     """Nothing here should ever turn up in a search result."""
     resp.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    return resp
+
+
+# A full series fold is 1.5-2 MB of JSON now that the Matrix shows every row, and it is
+# almost all digits and repeated keys -- it compresses about eight to one. Done here
+# rather than with a dependency, because the whole app is Flask and gunicorn and this is
+# the only thing on it big enough to care.
+GZIP_MIN = 4096
+
+
+@app.after_request
+def _gzip(resp):
+    if resp.direct_passthrough or resp.status_code >= 300:
+        return resp
+    if "gzip" not in (request.headers.get("Accept-Encoding") or ""):
+        return resp
+    if resp.headers.get("Content-Encoding"):
+        return resp
+    ct = (resp.headers.get("Content-Type") or "")
+    if not (ct.startswith("application/json") or ct.startswith("text/")):
+        return resp
+    body = resp.get_data()
+    if len(body) < GZIP_MIN:
+        return resp
+    packed = gzip.compress(body, 6)
+    if len(packed) >= len(body):
+        return resp
+    resp.set_data(packed)
+    resp.headers["Content-Encoding"] = "gzip"
+    resp.headers["Content-Length"] = str(len(packed))
+    resp.headers.add("Vary", "Accept-Encoding")
     return resp
 
 
