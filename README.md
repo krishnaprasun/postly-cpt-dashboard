@@ -1193,3 +1193,63 @@ to refresh
 
 The assembly time is not useless — it is what both caches are keyed on — so it moves to
 the tooltip, alongside each pull time and whether this copy came from the browser cache.
+
+## CTR and CPM
+
+Added to the insights call on 2026-08-26 — `impressions` and `clicks` alongside `spend`,
+on the request that was already being made, so no extra Meta calls.
+
+Where they show:
+
+- **Ad accounts, Campaigns, Ad sets, Ads** — a CTR and a CPM column, and in the footer,
+  derived from the **sums**. Never the mean of the rows' rates: an average CTR across ad
+  sets of wildly different size is a number no impression actually experienced.
+- **Matrix and Trends** — four new metrics: Impressions, Clicks, CTR, CPM. So you can
+  sort ad sets by CPM on one specific day, or chart a creative's CTR decaying over a
+  month.
+- **CSV export** — `impressions`, `clicks`, `ctr_pct`, `cpm` on every level.
+
+### The stored-history problem
+
+Days settled before 26 Aug were stored with spend and nothing else. The difference between
+that and a genuine zero is the whole ballgame: **a stored row has no `impressions` key at
+all, while a live row that got none has the key set to zero.** Reading the first as the
+second divides real spend by no impressions and prints a CPM of infinity.
+
+So the rule, everywhere: a row counts towards CTR and CPM **only if it reports
+impressions**, and the spend that came with it is accumulated separately as `imp_spend`.
+
+    CPM = imp_spend / impressions × 1000        not  total spend / impressions
+
+On a 7-day Postly window today that is the difference between a correct **₹33.43** and a
+nonsense **₹82.41** — the second inflated by exactly the 59% of spend that has no
+impressions behind it. The page states the coverage rather than leaving it to be guessed:
+
+> **CTR and CPM cover 41% of this window's spend.** Impressions and clicks were only added
+> to the stored history on 2026-08-26; days settled before that hold spend and nothing
+> else.
+
+In the Matrix a day with no measurement is a **blank**, never a zero — the same rule as
+budget — and the note says `2 of 30 days in this window have impressions`.
+
+### Backfilling it
+
+Unlike budgets, this **is** recoverable: Meta's insights are not retention-limited the way
+the activity log is, so stored days can be asked for again with the extra fields.
+
+    python3 tools/backfill_reach.py --brand postly --days 30
+    python3 tools/backfill_reach.py --all --dry-run
+
+It is not free — 5–7 seconds per brand-day measured, so ~97 days across three brands is
+around half an hour of the request time Meta rate-limits on. Hence resumable, one day at a
+time, skipping days that already have impressions, and stopping on a throttle rather than
+feeding it. The stored day's **Branch trials are read and written back untouched**; losing
+a day's trials to a reach backfill would be an absurd trade.
+
+## Cache versioning
+
+`APP_VERSION` — a stamp derived from the mtimes of the app's own files — is folded into
+the browser cache key. A payload's *shape* is decided by the code that built it, so an
+entry from before a deploy can be missing fields the new page reads. That is not
+hypothetical: it is how the CPM column first rendered as a row of dashes on a matrix that
+had every number it needed. A deploy now retires the old entries instead of serving them.

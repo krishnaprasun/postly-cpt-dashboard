@@ -301,6 +301,7 @@ def index(key=None):
         brand = allowed[0]
     return render_template(
         "index.html",
+        app_version=APP_VERSION,
         link_key=key,
         can_act=caps["full"],
         # Only the brands this link may see. A switcher listing brands the key cannot
@@ -640,6 +641,28 @@ def _noindex(resp):
 # rather than with a dependency, because the whole app is Flask and gunicorn and this is
 # the only thing on it big enough to care.
 GZIP_MIN = 4096
+
+
+def _app_version():
+    """A short stamp that changes whenever this app's code does.
+
+    The browser cache holds payloads for up to twelve hours, and a payload is shaped by
+    the code that produced it. Without this, a deploy that adds a field leaves everyone
+    reading yesterday's shape until it expires -- which is how a CPM column came out as a
+    row of dashes on a matrix that had every number it needed. Folded into the cache key,
+    so a deploy retires the old entries instead of serving them.
+    """
+    h = 0
+    for f in ("postly_cpt.py", "server.py", "config.py", "history.py",
+              "templates/index.html"):
+        try:
+            h ^= int(os.stat(os.path.join(os.path.dirname(__file__), f)).st_mtime)
+        except OSError:
+            pass
+    return format(h & 0xffffffff, "x")
+
+
+APP_VERSION = _app_version()
 
 
 @app.after_request

@@ -440,7 +440,35 @@ def meta_insights(acct, since, until):
     """Ad-level spend for the window. Re-pulled on every refresh; this is the number."""
     return _graph(f"{acct}/insights", {
         "level": "ad", "time_range": json.dumps({"since": since, "until": until}),
-        "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend"})
+        "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks"})
+
+
+# ---- impressions and clicks ------------------------------------------------
+# Added to the insights call on 2026-08-26. Every day stored BEFORE that carries spend and
+# nothing else, and the difference matters: a stored row has no `impressions` key at all,
+# while a live row that genuinely got none has the key set to zero. Reading the first as
+# the second would divide real spend by no impressions and print a CPM of infinity.
+#
+# So the rule everywhere below is: a row counts towards CTR and CPM only if it actually
+# REPORTS impressions, and the spend that goes with it is accumulated separately as
+# `imp_spend`. CPM is imp_spend / imp, never total spend / imp. The figure is then correct
+# on day one over whatever fraction of the window is measured, and `imp_cov` says what
+# fraction that is instead of leaving the reader to guess.
+# The first day fetched with impressions and clicks. Days before it carry spend only, and
+# nothing can be inferred about their CTR -- but they CAN be re-fetched, because insights
+# are not retention-limited the way the activity log is. See tools/backfill_reach.py.
+IMP_FROM = os.environ.get("IMP_FROM", "2026-08-26")
+
+
+def has_imp(r):
+    return r.get("impressions") is not None
+
+
+def _num(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _as_of_str(ts):
@@ -1006,7 +1034,7 @@ def meta_insights_daily(acct, since, until):
     return _graph(f"{acct}/insights", {
         "level": "ad", "time_increment": 1,
         "time_range": json.dumps({"since": since, "until": until}),
-        "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend"})
+        "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks"})
 
 
 # Retry budget for the LIVE page vs the backfill. The long backoff that lets a backfill
@@ -1557,7 +1585,7 @@ SERIES_MAX_ROWS = int(os.environ.get("SERIES_MAX_ROWS", "20000"))
 # Bumped when the SHAPE of a folded row changes. Checked alongside dates and row_cap
 # before a stored fold is reused, for the same reason: a fold from before rows carried
 # their account gives the Matrix a grid with no links and no way to tell why.
-SERIES_SHAPE = 3
+SERIES_SHAPE = 4
 # The levels a budget belongs to. A script is an ad name and a stage is a bucket; neither
 # is a thing Meta holds a budget against.
 BUDGET_DIMS = {"adset": "adsets", "campaign": "campaigns", "account": "accounts"}
@@ -1644,10 +1672,19 @@ def _dim_day(meta_rows, branch_day, keys, dim, testing_re, acct_names):
                 # accounts and a link into the wrong one is worse than none.
                 e = rows[k] = {"label": lbl, "stage": stage, "platform": "Meta",
                                "spend": 0.0, "acct": acct, "acct_spend": 0.0,
+                               "imp": 0.0, "clk": 0.0, "isp": 0.0, "impn": 0,
                                **dict(blank)}
             if sp > e["acct_spend"]:
                 e["acct"], e["acct_spend"] = acct, sp
             e["spend"] += sp
+            # `impn` counts rows that actually reported impressions. Zero of them means
+            # this day was stored before the fields were fetched, which is not the same
+            # statement as "this row got no impressions" -- so the day is left BLANK.
+            if has_imp(r):
+                e["impn"] += 1
+                e["imp"] += _num(r.get("impressions"))
+                e["clk"] += _num(r.get("clicks"))
+                e["isp"] += sp
             e["label"] = e["label"] or lbl
             # An ad name that appears under both stages is reported under the stage that
             # spent more on the day, rather than silently taking whichever row came last.
@@ -1836,8 +1873,15 @@ def series(brand, since, until, dim="script", force=False):
             row["total_spend"] += e["spend"]
             for x in keys:
                 row["total_" + x] += e[x]
-            row["days"][day] = {"spend": round(e["spend"], 2),
-                                **{x: round(e[x], 2) for x in keys}}
+            rec = row["days"][day] = {"spend": round(e["spend"], 2),
+                                      **{x: round(e[x], 2) for x in keys}}
+            if e.get("impn"):
+                rec["imp"] = e["imp"]
+                rec["clk"] = e["clk"]
+                rec["isp"] = round(e["isp"], 2)
+                row["total_imp"] = (row.get("total_imp") or 0) + e["imp"]
+                row["total_clk"] = (row.get("total_clk") or 0) + e["clk"]
+                row["total_isp"] = round((row.get("total_isp") or 0) + e["isp"], 2)
 
     cap = SERIES_TOP if SERIES_TOP > 0 else SERIES_MAX_ROWS
     # ---- day-on-day budgets -------------------------------------------------
@@ -1886,6 +1930,13 @@ def series(brand, since, until, dim="script", force=False):
             "shape": SERIES_SHAPE,
             # How many of the window's days have a budget snapshot at all. The page needs
             # this to say "recording started on the 26th" instead of drawing a cliff.
+            # How many of the window's days carry impressions at all. Without this the
+            # page cannot tell a genuinely click-free day from one stored before the
+            # fields existed, and would draw the second as a cliff to zero.
+            "imp_days": sum(1 for d in dates
+                            if any((r["days"].get(d) or {}).get("imp") is not None
+                                   for r in out_rows)),
+            "imp_from": IMP_FROM,
             "budget_dim": bool(lvl), "budget_days": bud_days,
             "budget_from": (min((d for d in dates
                                  if any((r["days"].get(d) or {}).get("bud") is not None
@@ -2430,6 +2481,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         ad_active = not ok["ads"]
         accounts[a["id"]] = {"id": a["id"], "name": a["name"], "spend": 0.0,
                              "budget": 0.0, "t101": 0.0, "t10m": 0.0,
+                             "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
                              "active_adsets": 0, "active_ads": 0}
         cstat = {c["id"]: c for c in camps}
         live_set_ids = {s["id"] for s in live_sets}
@@ -2440,7 +2492,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
             campaigns[c["id"]] = {
                 "id": c["id"], "name": c["name"], "status": c.get("effective_status", ""),
                 "account": a["name"], "account_id": a["id"], "spend": 0.0, "budget": 0.0,
-                "t101": 0.0, "t10m": 0.0, "active_adsets": 0, "active_ads": 0}
+                "t101": 0.0, "t10m": 0.0, "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
+                "active_adsets": 0, "active_ads": 0}
         for s in live_sets:
             adsets[s["id"]] = {
                 "id": s["id"], "name": s["name"], "status": s.get("effective_status", ""),
@@ -2448,14 +2501,16 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                 "campaign_id": s.get("campaign_id"),
                 "campaign": (cstat.get(s.get("campaign_id")) or {}).get("name", ""),
                 "account": a["name"], "account_id": a["id"],
-                "spend": 0.0, "t101": 0.0, "t10m": 0.0, "active_ads": 0}
+                "spend": 0.0, "t101": 0.0, "t10m": 0.0,
+                "imp": 0.0, "clk": 0.0, "imp_spend": 0.0, "active_ads": 0}
         for x in live_ads:
             ads[x["id"]] = {
                 "id": x["id"], "name": x["name"], "status": x.get("effective_status", ""),
                 "active": True, "adset_id": x.get("adset_id"), "adset": "",
                 "campaign_id": x.get("campaign_id"), "campaign": "",
                 "account": a["name"], "account_id": a["id"],
-                "spend": 0.0, "t101": 0.0, "t10m": 0.0}
+                "spend": 0.0, "t101": 0.0, "t10m": 0.0,
+                "imp": 0.0, "clk": 0.0, "imp_spend": 0.0}
 
         # spend; also picks up objects that spent in the window but are no longer active
         for r in insights:
@@ -2465,22 +2520,33 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                 campaigns[cid] = {"id": cid, "name": r.get("campaign_name", ""),
                                   "status": set_status, "account": a["name"],
                                   "account_id": a["id"], "spend": 0.0, "budget": 0.0,
-                                  "t101": 0.0, "t10m": 0.0,
+                                  "t101": 0.0, "t10m": 0.0, "imp": 0.0, "clk": 0.0,
+                                  "imp_spend": 0.0,
                                   "active_adsets": 0, "active_ads": 0}
             if sid and sid not in adsets:
                 adsets[sid] = {"id": sid, "name": r.get("adset_name", ""),
                                "status": set_status, "active": set_active, "budget": 0.0,
                                "campaign_id": cid, "campaign": r.get("campaign_name", ""),
                                "account": a["name"], "account_id": a["id"],
-                               "spend": 0.0, "t101": 0.0, "t10m": 0.0, "active_ads": 0}
+                               "spend": 0.0, "t101": 0.0, "t10m": 0.0,
+                               "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
+                               "active_ads": 0}
             if aid and aid not in ads:
                 ads[aid] = {"id": aid, "name": r.get("ad_name", ""), "status": ad_status,
                             "active": ad_active, "adset_id": sid, "adset": r.get("adset_name", ""),
                             "campaign_id": cid, "campaign": r.get("campaign_name", ""),
                             "account": a["name"], "account_id": a["id"],
-                            "spend": 0.0, "t101": 0.0, "t10m": 0.0}
+                            "spend": 0.0, "t101": 0.0, "t10m": 0.0,
+                            "imp": 0.0, "clk": 0.0, "imp_spend": 0.0}
             if aid:
                 ads[aid]["spend"] += sp
+                # Only rows that actually report impressions feed CTR and CPM, and their
+                # spend is kept apart so CPM divides like by like. A day stored before
+                # these fields were fetched contributes to spend and to nothing else.
+                if has_imp(r):
+                    ads[aid]["imp"] += _num(r.get("impressions"))
+                    ads[aid]["clk"] += _num(r.get("clicks"))
+                    ads[aid]["imp_spend"] += sp
                 ads[aid]["adset"] = ads[aid]["adset"] or r.get("adset_name", "")
                 ads[aid]["campaign"] = ads[aid]["campaign"] or r.get("campaign_name", "")
 
@@ -2606,6 +2672,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
             s[INSTALL_KEY] += x[INSTALL_KEY]
             for k in CP_KEYS:
                 s[k] += x[k]
+            for k in ("imp", "clk", "imp_spend"):
+                s[k] += x[k]
             if x["active"]:
                 s["active_ads"] += 1
     for s in adsets.values():
@@ -2614,6 +2682,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
             c["spend"] += s["spend"]; c["t101"] += s["t101"]; c["t10m"] += s["t10m"]
             c[INSTALL_KEY] += s[INSTALL_KEY]
             for k in CP_KEYS:
+                c[k] += s[k]
+            for k in ("imp", "clk", "imp_spend"):
                 c[k] += s[k]
             c["active_ads"] += s["active_ads"]
             if s["active"]:
@@ -2625,6 +2695,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
             a[INSTALL_KEY] += c[INSTALL_KEY]
             for k in CP_KEYS:
                 a[k] += c[k]
+            for k in ("imp", "clk", "imp_spend"):
+                a[k] += c[k]
             a["budget"] += c["budget"]
 
     combined = {"spend": sum(a["spend"] for a in accounts.values()),
@@ -2632,6 +2704,9 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                 "t101": sum(a["t101"] for a in accounts.values()),
                 "t10m": sum(a["t10m"] for a in accounts.values()),
                 INSTALL_KEY: sum(a[INSTALL_KEY] for a in accounts.values()),
+                "imp": sum(a["imp"] for a in accounts.values()),
+                "clk": sum(a["clk"] for a in accounts.values()),
+                "imp_spend": sum(a["imp_spend"] for a in accounts.values()),
                 "active_adsets": sum(a["active_adsets"] for a in accounts.values()),
                 "active_ads": sum(a["active_ads"] for a in accounts.values())}
     for k in CP_KEYS:
@@ -2643,6 +2718,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     # tables are filtered client-side by the `seg` tag instead, because those rows exist
     # already and shipping three copies of them would treble the payload.
     NUM = (("spend", "budget", "t101", "t10m", INSTALL_KEY,
+            "imp", "clk", "imp_spend",
             "active_adsets", "active_ads") + CP_KEYS)
 
     def _acct_rows(seg):
@@ -2796,6 +2872,11 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         # The two real pulls, each with its own clock. Spend moves minute to minute,
         # trials arrive all evening, and budgets come off a listing cached for up to an
         # hour -- one "last refreshed" for all three was always a fiction.
+        # What fraction of the window's spend has impressions behind it. Below 1.0 the
+        # page must say so: CTR and CPM are then true of that fraction, not of the window.
+        "imp_coverage": (round(combined["imp_spend"] / combined["spend"], 4)
+                         if combined["spend"] else None),
+        "imp_from": IMP_FROM,
         "meta_as_of": _as_of_str(prov.get("meta_at")),
         "meta_age_sec": _age_of(prov.get("meta_at")),
         "trials_as_of": _as_of_str(prov.get("branch_at")),

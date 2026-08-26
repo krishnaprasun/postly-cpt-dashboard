@@ -502,6 +502,10 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <select class="sel" id="sMetric" style="margin-left:6px">
         <option value="spend" selected>Spend</option>
         <option value="bud">Budget/day</option>
+        <option value="imp">Impressions</option>
+        <option value="clk">Clicks</option>
+        <option value="ctr">CTR</option>
+        <option value="cpmille">CPM</option>
         <option value="t101">Trials</option>
         <option value="cpt">CPT</option>
         <option value="inst">Installs</option>
@@ -1044,8 +1048,13 @@ const MEM = new Map();
 
 /* Scoped to the link as well as the brand: one browser can hold two teams' links, and a
    cache that ignored that could hand one team a payload fetched under the other's. */
+const APP_VERSION = {{ app_version | tojson }};
 const CACHE_SCOPE = (() => {
-  let h = 0; const t = String(LINK_KEY || '') + '|' + location.pathname;
+  /* The app version is in here on purpose. A payload's SHAPE is decided by the code that
+     built it, so an entry from before a deploy can be missing fields the new page reads
+     — that is how a CPM column rendered as a row of dashes on a matrix that had every
+     number it needed. A deploy retires the old entries rather than serving them. */
+  let h = 0; const t = String(LINK_KEY || '') + '|' + APP_VERSION + '|' + location.pathname;
   for(let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
   return (h >>> 0).toString(36);
 })();
@@ -1210,6 +1219,17 @@ const METRICS = {
           agg:(sp,r)=>r.t101?sp/r.t101:null, num:'t101'},
   cpi:   {label:'CPI',      of:d=>(d&&d.inst)?d.spend/d.inst:null, fmt:rs,
           agg:(sp,r)=>r.inst?sp/r.inst:null, num:'inst'},
+  /* Impressions and clicks are BLANK, not zero, on a day stored before Meta's reach
+     fields were fetched -- `imp` is simply absent from that day. Same rule as budget. */
+  imp:   {label:'Impressions', of:d=>(d&&d.imp!=null)?d.imp:null, fmt:num, agg:null},
+  clk:   {label:'Clicks',      of:d=>(d&&d.clk!=null)?d.clk:null, fmt:num, agg:null},
+  ctr:   {label:'CTR',      of:d=>(d&&d.imp)?100*d.clk/d.imp:null,
+          fmt:v=>v.toFixed(2)+'%', agg:(sp,r)=>r.imp?100*r.clk/r.imp:null},
+  /* CPM divides the spend that came WITH the impressions (`isp`), never the row's whole
+     spend: over a window with unmeasured days those differ, and the whole-spend version
+     would report a CPM inflated by exactly the unmeasured fraction. */
+  cpmille:{label:'CPM',     of:d=>(d&&d.imp)?1000*d.isp/d.imp:null, fmt:rs,
+          agg:(sp,r)=>r.imp?1000*r.isp/r.imp:null},
 };
 const metricOf = () => METRICS[sMetric()] || METRICS.spend;
 
@@ -1291,9 +1311,11 @@ function matrixRows(){
 const mPages = n => MPER ? Math.max(1, Math.ceil(n / MPER)) : 1;
 
 /* The window total for a row under the current metric. */
+const rowSums = r => ({t101:r.total_t101, inst:r.total_inst,
+                       imp:r.total_imp, clk:r.total_clk, isp:r.total_isp});
 function rowTotal(r){
   const m = metricOf();
-  if(m.agg) return m.agg(r.total_spend, {t101:r.total_t101, inst:r.total_inst});
+  if(m.agg) return m.agg(r.total_spend, rowSums(r));
   if(sMetric() === 'spend') return r.total_spend;
   const v = r['total_' + sMetric()];
   /* undefined, not zero: a row with no snapshot in this window has no budget history,
@@ -1521,19 +1543,25 @@ function renderMatrix(){
      adds up the column above it -- the one job a total has. The all-rows row is the
      answer to "and what is the whole window", which is no longer on screen. */
   const tot = set => {
-    const colTot = d => { let sp=0, t=0, n=0, b=0, bAny=false;
+    const colTot = d => { let sp=0, t=0, n=0, b=0, bAny=false, im=0, ck=0, isp=0;
       set.forEach(r => { const x=r.days[d]; if(!x) return;
         sp+=x.spend; t+=x.t101; n+=x.inst;
+        if(x.imp != null){ im+=x.imp; ck+=x.clk; isp+=x.isp; }
         if(x.bud != null){ b+=x.bud; bAny=true; } });
-      if(m.agg) return m.agg(sp,{t101:t,inst:n});
+      if(m.agg) return m.agg(sp,{t101:t,inst:n,imp:im,clk:ck,isp:isp});
+      if(sMetric()==='imp') return im || null;
+      if(sMetric()==='clk') return im ? ck : null;
       /* A budget column with no snapshot on that day totals to nothing, not to zero. */
       if(sMetric()==='bud') return bAny ? b : null;
       return sMetric()==='spend'?sp:sMetric()==='t101'?t:n; };
-    let sp=0,t=0,n=0,b=0,bAny=false;
+    let sp=0,t=0,n=0,b=0,bAny=false,im=0,ck=0,isp=0;
     set.forEach(r => { sp+=r.total_spend; t+=r.total_t101; n+=r.total_inst;
+      if(r.total_imp != null){ im+=r.total_imp; ck+=r.total_clk; isp+=r.total_isp; }
       if(r.total_bud != null){ b+=r.total_bud; bAny=true; } });
-    const gt = m.agg ? m.agg(sp,{t101:t,inst:n})
+    const gt = m.agg ? m.agg(sp,{t101:t,inst:n,imp:im,clk:ck,isp:isp})
              : sMetric()==='bud' ? (bAny ? b : null)
+             : sMetric()==='imp' ? (im || null)
+             : sMetric()==='clk' ? (im ? ck : null)
              : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n);
     return `<td>${gt===null?'—':m.fmt(gt)}</td>` + dates.map(d => { const v = colTot(d);
       return `<td>${v===null||!isFinite(v)?'—':m.fmt(v)}</td>`; }).join('');
@@ -1673,6 +1701,14 @@ function longRows(){
     let x = a[k], y = b[k];
     if(k === 'cpt'){ x = x===null ? (a.spend>0?Infinity:-1) : x;
                      y = y===null ? (b.spend>0?Infinity:-1) : y; }
+    /* Unmeasured sinks in BOTH directions. Sorting ascending by CTR must answer "who is
+       worst", not "who has no impressions recorded". */
+    if(k === 'ctr' || k === 'cpmille'){
+      const xn = x === null || x === undefined, yn = y === null || y === undefined;
+      if(xn && yn) return 0;
+      if(xn) return 1;
+      if(yn) return -1;
+    }
     if(typeof x === 'string') return d * x.localeCompare(y||'');
     return d * ((x??0) - (y??0));
   });
@@ -1784,6 +1820,8 @@ const COLS = {
     {k:'budget', t:'Budget/day', kind:'rs'},
     {k:'trials', t:'Trials', kind:'num'},
     {k:'cpt', t:'CPT', kind:'cpt'},
+    {k:'ctr', t:'CTR', kind:'ctr'},
+    {k:'cpmille', t:'CPM', kind:'rs'},
     {k:'active_adsets', t:'Ad sets', kind:'num'},
     {k:'active_ads', t:'Ads', kind:'num'}],
   campaigns: [
@@ -1793,6 +1831,8 @@ const COLS = {
     {k:'budget', t:'Budget/day', kind:'rs'},
     {k:'trials', t:'Trials', kind:'num'},
     {k:'cpt', t:'CPT', kind:'cpt'},
+    {k:'ctr', t:'CTR', kind:'ctr'},
+    {k:'cpmille', t:'CPM', kind:'rs'},
     {k:'active_adsets', t:'Ad sets', kind:'num'},
     {k:'active_ads', t:'Ads', kind:'num'}],
   adsets: [
@@ -1802,13 +1842,17 @@ const COLS = {
     {k:'budget', t:'Budget', kind:'rs'},
     {k:'trials', t:'Trials', kind:'num'},
     {k:'cpt', t:'CPT', kind:'cpt'},
+    {k:'ctr', t:'CTR', kind:'ctr'},
+    {k:'cpmille', t:'CPM', kind:'rs'},
     {k:'active_ads', t:'Ads', kind:'num'}],
   ads: [
     {k:'name', t:'Ad', kind:'name'},
     {k:'adset', t:'Ad set', kind:'sub'},
     {k:'spend', t:'Spend', kind:'rs'},
     {k:'trials', t:'Trials', kind:'num'},
-    {k:'cpt', t:'CPT', kind:'cpt'}],
+    {k:'cpt', t:'CPT', kind:'cpt'},
+    {k:'ctr', t:'CTR', kind:'ctr'},
+    {k:'cpmille', t:'CPM', kind:'rs'}],
 };
 
 /* Appended to whichever tab is showing, so signups and mandates sit on the same row as
@@ -1843,6 +1887,12 @@ function rows(tab, filtered){
   const base = tab === 'accounts' ? acctRows() : DATA[tab];
   let r = base.filter(inSeg).map(o => Object.assign({}, o, {
       trials: o[EV], cpt: cpt(o.spend, o[EV]),
+      /* CTR and CPM divide by impressions, and CPM divides the spend that CAME WITH
+         those impressions -- `imp_spend`, not total spend. Over a window whose older
+         days were stored before impressions were fetched those two differ, and using
+         total spend would inflate CPM by exactly the ratio of unmeasured days. */
+      ctr: o.imp ? 100 * o.clk / o.imp : null,
+      cpmille: o.imp ? 1000 * o.imp_spend / o.imp : null,
       cps: cpt(o.spend, o.cp_signups), cpm: cpt(o.spend, o.cp_mandates),
       d0a: o.cp_mandates > 0 ? 100*o.cp_d0a/o.cp_mandates : null,
       d0c: o.cp_mandates > 0 ? 100*o.cp_d0c/o.cp_mandates : null}));
@@ -1935,6 +1985,11 @@ function cell(o, c){
   if(c.kind==='cpm') return `<td class="${cls(o.cpm)}">${cptTxt(o.spend, o.cp_mandates)}</td>`;
   if(c.kind==='pct') return `<td>${o[c.k]===null ? '<span class="dimtxt">—</span>'
                                                  : o[c.k].toFixed(0)+'%'}</td>`;
+  /* A dash, never 0.00%. No impressions recorded is not a click-through rate of nothing;
+     it is the absence of a measurement, and the two must not look alike on a page people
+     kill creatives from. */
+  if(c.kind==='ctr') return `<td>${o[c.k]===null || o[c.k]===undefined
+    ? '<span class="dimtxt">—</span>' : o[c.k].toFixed(2)+'%'}</td>`;
   return `<td>${o[c.k]??'—'}</td>`;
 }
 
@@ -2027,6 +2082,9 @@ function renderTable(){
   const sum = k => r.reduce((s,o)=>s+(o[k]||0),0);
   const sp = sum('spend'), tr = sum('trials'),
         su = sum('cp_signups'), md = sum('cp_mandates');
+  /* Derived from the SUMS, never the mean of the rows' rates: an average CTR across ad
+     sets of wildly different size is a number no impression actually experienced. */
+  const im = sum('imp'), ck = sum('clk'), isp = sum('imp_spend');
   tbl.querySelector('tfoot').innerHTML = '<tr>' + cols.map(c => {
     if(c.kind==='name') return `<td>${r.length} rows shown</td>`;
     if(c.k==='spend') return `<td>${rs(sp)}</td>`;
@@ -2034,6 +2092,10 @@ function renderTable(){
     if(c.kind==='cpt') return `<td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`;
     if(c.k==='cps') return `<td>${cptTxt(sp,su)}</td>`;
     if(c.kind==='cpm') return `<td class="${cls(cpt(sp,md))}">${cptTxt(sp,md)}</td>`;
+    if(c.kind==='ctr') return `<td>${im ? (100*ck/im).toFixed(2)+'%'
+                                        : '<span class="dimtxt">—</span>'}</td>`;
+    if(c.k==='cpmille') return `<td>${im ? rs(1000*isp/im)
+                                        : '<span class="dimtxt">—</span>'}</td>`;
     if(c.k==='d0a') return `<td>${pct(sum('cp_d0a'),md)}</td>`;
     if(c.k==='d0c') return `<td>${pct(sum('cp_d0c'),md)}</td>`;
     if(c.kind==='rs'||c.kind==='num')
@@ -2117,6 +2179,16 @@ function seriesNote(){
            at least one account — so the <i>active only</i> filter is switched off rather
            than shown emptying the grid. `)
     : '';
+  const reach = ['imp','clk','ctr','cpmille'].includes(sMetric()) && SERIES.imp_days != null
+    ? (SERIES.imp_days >= SERIES.dates.length
+        ? `Impressions and clicks are Meta's own, per day. CTR is clicks ÷ impressions;
+           CPM divides the spend that came <i>with</i> those impressions, so it is a true
+           cost per thousand and not the window's spend spread over a partial count. `
+        : `<b>${SERIES.imp_days} of ${SERIES.dates.length} days in this window have
+           impressions.</b> They were added to the stored history on ${SERIES.imp_from};
+           earlier days hold spend and nothing else, and show a blank rather than a zero —
+           a day with no measurement is not a day with no clicks. `)
+    : '';
   const bud = sMetric() !== 'bud' ? ''
     : !SERIES.budget_dim
       ? `<b>Budget does not apply to this dimension</b> — Meta holds a budget against ad
@@ -2147,7 +2219,7 @@ function seriesNote(){
   const src = SERIES.stored_days
     ? `${SERIES.stored_days} of ${SERIES.dates.length} day(s) came from the history store;
        the rest were pulled live. ` : '';
-  return scope + ends + derived + pro + `${dimNote}<br><br>${bud}${trunc}${src}
+  return scope + ends + derived + pro + `${dimNote}<br><br>${reach}${bud}${trunc}${src}
     Trials and installs are split across rows that share an ad name by that
     <i>day's</i> spend share, so nothing lands on a day a row did not spend.
     ${act}${SERIES.cached ? `Folded ${SERIES.age_min || 0} min ago.` : ''}`;
@@ -2277,9 +2349,22 @@ function mainNote(){
                  : 'they were bought on Google, arrived organically, or name an ad no longer in the account'}.
              They are broken out by channel below.`
          : `: some of them were bought somewhere else.`}` : ''}<br><br>`;
+  const cov = DATA.imp_coverage;
+  const impNote = (cov === null || cov === undefined) ? '' :
+    cov >= 0.999
+      ? `<b>CTR and CPM</b> are Meta's own impressions and clicks for this window, rolled
+         up from the ad. CTR is clicks ÷ impressions and CPM is spend ÷ impressions ×
+         1000, both derived from the sums rather than averaged across rows.<br><br>`
+      : `<b>CTR and CPM cover ${(100*cov).toFixed(0)}% of this window's spend.</b>
+         Impressions and clicks were only added to the stored history on
+         ${DATA.imp_from}; days settled before that hold spend and nothing else. The
+         figures shown are true of the measured part — CPM divides the spend that came
+         WITH those impressions, not the window's total, so it is not inflated by the
+         gap — but they are not the whole window yet. A row with nothing measured shows a
+         dash, never a zero.<br><br>`;
   const lag = `Today's numbers are still landing — Meta spend lags a few minutes${
      hasTrials() ? ' and Branch trials keep arriving through the day, so intraday CPT reads high early and settles down' : ''}.`;
-  document.getElementById('note').innerHTML = scope + srcNote() + chanNote() + segNote() + cpNote() + (hasTrials()
+  document.getElementById('note').innerHTML = scope + srcNote() + impNote + chanNote() + segNote() + cpNote() + (hasTrials()
     ? `CPT = Meta spend ÷ Branch trials, joined at <b>ad-name</b> level and rolled up
        (Branch does not expose campaign or account as attribution dimensions).
        ${accts} ${DATA.unattributed[EV]>0
@@ -2398,6 +2483,8 @@ function expCols(level){
   c.push(['spend', o=>o.spend]);
   if(level==='accounts' || level==='campaigns') c.push(['budget_per_day', o=>o.budget]);
   if(hasTrials()) c.push(['trials', o=>o.trials], ['cpt', o=>o.cpt]);
+  c.push(['impressions', o=>o.imp], ['clicks', o=>o.clk],
+         ['ctr_pct', o=>o.ctr], ['cpm', o=>o.cpmille]);
   if(level==='accounts' || level==='campaigns') c.push(['active_adsets', o=>o.active_adsets]);
   if(level!=='ads') c.push(['active_ads', o=>o.active_ads]);
   if(DATA && DATA.classplus && DATA.classplus.available)
