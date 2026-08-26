@@ -1039,14 +1039,22 @@ function kpis(){
      trials would read as a real, smaller number rather than as "we do not know". */
   const gTr = g && g.trials !== null ? g.trials : null;
   const gIn = g && g.inst !== null ? g.inst : null;
+  /* Meta's trials can be missing for exactly the same reason Google's can -- Branch
+     refusing -- and I had this guarded on one side only. Unguarded, a throttled Meta
+     read blended as ZERO Meta trials, so Funda showed both channels' spend over Google's
+     trials alone: Rs354 against a true Rs192. Whichever side is missing, the blend is
+     unknown. */
+  const mTr = hasTrials() ? mc[EV] : null;
+  const mIn = hasTrials() ? (mc.inst || 0) : null;
+  const both = (a, b) => (a === null || b === null) ? null : a + b;
   const c = chanIsMeta() ? mc
     : CHAN === 'google'
       ? {spend: g ? g.spend : 0, [EV]: gTr, budget: 0,
          active_adsets: 0, active_ads: 0, inst: gIn}
       : {spend: mc.spend + (g ? g.spend : 0),
-         [EV]: gTr === null ? null : mc[EV] + gTr,
+         [EV]: both(mTr, gTr),
          budget: mc.budget, active_adsets: mc.active_adsets,
-         active_ads: mc.active_ads, inst: gIn === null ? null : (mc.inst || 0) + gIn};
+         active_ads: mc.active_ads, inst: both(mIn, gIn)};
   const waiting = !chanIsMeta() && !g;
   const tr = c[EV], sp = c.spend;
   const k = (waiting || tr === null) ? null : cpt(sp,tr);
@@ -1087,7 +1095,7 @@ function kpis(){
        <div class="s">${waiting ? 'loading…'
          : tr === null ? `unavailable — ${(gt && gt.why) || 'Branch did not answer'}`
          : CHAN === 'blended'
-           ? `Meta ${num(mc[EV])} · Google ${num(gt.trials)}`
+           ? `Meta ${mTr === null ? '—' : num(mTr)} · Google ${num(gt.trials)}`
            : 'joined to campaigns and ad groups by name'}</div></div>
      <div class="kpi"><div class="k">Installs</div>
        <div class="v">${(waiting || ins === null) ? dash : num(ins)}</div>
@@ -2336,8 +2344,10 @@ function cell(o, c){
 function renderBlended(){
   const tbl = document.getElementById('tbl');
   const m = totals(), g = googTotals();
+  const known = hasTrials();
   const rows = [
-    {n: 'Meta', sp: m.spend, tr: m[EV], ins: m.inst || 0, sure: true},
+    {n: 'Meta', sp: m.spend, tr: known ? m[EV] : null, ins: known ? (m.inst || 0) : null,
+     sure: true, note: known ? '' : 'trials unavailable'},
     {n: 'Google', sp: g ? g.spend : 0, tr: g ? g.trials : null, ins: g ? g.inst : null,
      sure: !!g, note: !g ? '' : !g.ok ? 'spend unavailable'
        : !g.trialsKnown ? 'trials unavailable' : ''},
