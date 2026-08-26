@@ -1615,9 +1615,10 @@ const googFresh = () => !!(GOOG && GOOGKEY === googKey());
 async function loadGoogle(force){
   const key = googKey();
   if(googFresh() && !force) return;
+  GOOGBUSY = true;                         // before the first await; see loadSeries
   const hit = force ? null : await cacheGet('goog|' + key);
   if(hit){
-    GOOG = hit.v; GOOGKEY = key;
+    GOOG = hit.v; GOOGKEY = key; GOOGBUSY = false;
     googPaint();
     if(hit.held < CACHE_SOFT) return;
     return loadGoogle(true);
@@ -1887,10 +1888,14 @@ function rowTotal(r){
 async function loadSeries(force, quiet){
   const key = seriesKey();
   if(seriesFresh() && !force) return;
+  /* Set synchronously, BEFORE the first await. An async cache read is still an await:
+     the render that happens in between finds no payload and no busy flag, and draws the
+     empty state at someone who is in fact waiting for data. */
+  if(!quiet) SERIESBUSY = true;
   const hit = force ? null : await cacheGet('ser|' + key);
   if(hit){
     /* Straight onto the screen, no spinner and no round trip. */
-    SERIES = hit.v; SERIESKEY = key;
+    SERIES = hit.v; SERIESKEY = key; SERIESBUSY = false;
     if(TAB === 'trends' || TAB === 'matrix'){ renderTable(); noteFor(); }
     if(hit.held < CACHE_SOFT) return;
     return loadSeries(true, true);          // refresh behind the numbers on screen
@@ -2249,9 +2254,10 @@ async function loadLongevity(force, quiet){
   const days = document.getElementById('lWin').value;
   const key = longKey();
   if(longFresh() && !force) return;
+  if(!quiet) LONGBUSY = true;              // before the first await; see loadSeries
   const hit = force ? null : await cacheGet('long|' + key);
   if(hit){
-    LONG = hit.v; LONGKEY = key;
+    LONG = hit.v; LONGKEY = key; LONGBUSY = false;
     renderTable(); noteFor();
     if(hit.held < CACHE_SOFT) return;
     /* Always worth a quiet refresh: the today column and the live/paused status are
