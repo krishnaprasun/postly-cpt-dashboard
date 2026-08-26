@@ -403,6 +403,37 @@ def api_series():
         return jsonify({"error": str(e)[:500]}), 500
 
 
+@app.route("/api/google")
+@protected
+def api_google():
+    """Google campaigns and ad groups: trials, installs, and spend when it is available.
+
+    Its own endpoint, not part of /api/data, for the same reason Longevity and the series
+    have their own: it is a different question with a different cost, and the Meta page
+    must not get slower because a Google tab exists.
+    """
+    brand, err, full = _gate(request.args.get("k", ""),
+                             request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    since, until = resolve_range(request.args.get("range", "7d"),
+                                 request.args.get("since"), request.args.get("until"))
+    try:
+        return jsonify(P.google_window(brand, since, until,
+                                       force=full and request.args.get("force") == "1"))
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)[:500]}), 500
+
+
+@app.route("/api/google/status")
+def api_google_status():
+    """Is the Google credential alive, and if not, exactly why. Public and cheap: it
+    returns no numbers, only whether the door is open."""
+    import google_ads as GA
+    return jsonify(GA.status())
+
+
 @app.route("/api/longevity")
 @protected
 def api_longevity():

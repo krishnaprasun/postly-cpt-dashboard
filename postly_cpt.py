@@ -25,6 +25,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 import config as C
+import google_ads as GA
 import history as H
 
 IST = timezone(timedelta(minutes=330))
@@ -1203,6 +1204,198 @@ def branch_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     return out
 
 
+# ---- Google: the trials half -----------------------------------------------
+# Branch fills in no ad NAME for a Google trial, which is why they show up on this
+# dashboard as a bucket with no cost beside them. What it DOES fill in is the Google
+# campaign and the ad group -- and those are the same names Google Ads reports spend
+# against, so a real Google CPT is joinable at the level buying decisions are made at.
+# Measured on 2026-08-20: Funda 16,328 Google trials across 11 campaigns and 23 ad
+# groups; SpeakEasy 689 across 5 and 9; Postly 14, which is noise.
+#
+# A separate query rather than another dimension on the main one: adding campaign and ad
+# group there would multiply every Meta row by two dimensions it already implies, for no
+# gain, and push far more days into Branch's 1000-row paging.
+GOOGLE_PARTNERS = ("google adwords", "google ads", "googleadwords", "adwords")
+
+
+def is_google(partner):
+    return (partner or "").strip().lower() in GOOGLE_PARTNERS
+
+
+def google_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
+    """{date: {event_key: {(campaign, ad_group): unique_count}}} for Google only.
+
+    Names, not ids, because names are all Branch carries -- the same join this dashboard
+    already makes for Meta at ad-name level, one rung up. Rows Branch gives a partner of
+    Google but no campaign are kept under a campaign of "" so they are counted and
+    visible rather than silently dropped.
+    """
+    events, creds = B["events"], B["branch"]
+    out = {}
+    if not (events and creds):
+        return out
+    bkey, bsecret = creds
+    d = datetime.strptime(since, "%Y-%m-%d").date()
+    endd = datetime.strptime(until, "%Y-%m-%d").date()
+    while d <= endd:
+        ce = min(d + timedelta(days=BRANCH_MAX_SPAN - 1), endd)
+        for key, ev in _with_installs(events):
+            rows, _tc = _branch_pages({
+                "branch_key": bkey, "branch_secret": bsecret,
+                "start_date": d.strftime("%Y-%m-%d"), "end_date": ce.strftime("%Y-%m-%d"),
+                "dimensions": [
+                    "last_attributed_touch_data_tilde_advertising_partner_name",
+                    "last_attributed_touch_data_tilde_campaign",
+                    "last_attributed_touch_data_tilde_ad_set_name"],
+                "granularity": "day", "aggregation": "unique_count",
+                **_event_query(key, ev)},
+                tries=tries)
+            for row in rows:
+                day = (row.get("timestamp") or "")[:10]
+                res = row.get("result", {})
+                if not day or not is_google(res.get(
+                        "last_attributed_touch_data_tilde_advertising_partner_name")):
+                    continue
+                k = (res.get("last_attributed_touch_data_tilde_campaign") or "",
+                     res.get("last_attributed_touch_data_tilde_ad_set_name") or "")
+                bucket = out.setdefault(day, {}).setdefault(key, {})
+                bucket[k] = bucket.get(k, 0) + res.get("unique_count", 0)
+        d = ce + timedelta(days=1)
+    return out
+
+
+def google_ns(brand):
+    return f"{brand}gtri"
+
+
+def google_trials_store(brand, day, per_ev):
+    """Persist one day's Google trials. Tuples are not JSON keys, so they are joined
+    with a tab -- neither a campaign nor an ad group name may contain one."""
+    flat = {ev: {"\t".join(k): v for k, v in rows.items()}
+            for ev, rows in (per_ev or {}).items()}
+    return H.put_agg(google_ns(brand), day, {"date": day, "events": flat})
+
+
+def google_trials_read(brand, dates):
+    """{date: {event: {(campaign, ad_group): n}}} for whichever of `dates` are stored."""
+    out = {}
+    for day, art in (H.fetch_raw(google_ns(brand), list(dates)) or {}).items():
+        out[day] = {ev: {tuple(k.split("\t", 1)): v for k, v in rows.items()}
+                    for ev, rows in ((art or {}).get("events") or {}).items()}
+    return out
+
+
+GOOGLE_CUSTOMERS = {}          # {brand: [customer_id]}, discovered and cached per run
+_gcust_lock = threading.Lock()
+
+
+def google_customers(brand):
+    """Which Google Ads accounts belong to this brand.
+
+    Configured per brand when GOOGLE_CUSTOMERS_<BRAND> is set; otherwise every account
+    the credential can see, which is right while there is one manager account over one
+    brand's accounts and is honest about being a guess until it is configured.
+    """
+    env = os.environ.get("GOOGLE_CUSTOMERS_" + brand.upper(), "").strip()
+    if env:
+        return [x.strip().replace("-", "") for x in env.split(",") if x.strip()]
+    with _gcust_lock:
+        if brand in GOOGLE_CUSTOMERS:
+            return GOOGLE_CUSTOMERS[brand]
+    ids = GA.accessible_customers()
+    with _gcust_lock:
+        GOOGLE_CUSTOMERS[brand] = ids
+    return ids
+
+
+def google_window(brand, since, until, force=False):
+    """Google campaigns and ad groups for a window: trials, installs, spend, CPT.
+
+    Trials come from the store for days that have one and from Branch for the rest --
+    the same split the Meta side makes, for the same reason. Spend comes from Google Ads
+    if the credential works; when it does not, every row still carries its trials and
+    installs and simply has no cost beside it, which is strictly better than the nothing
+    the page shows today.
+    """
+    B = C.brand(brand)
+    dates = date_range(since, until)
+    ev_keys = [k for k, _ in _with_installs(B["events"])]
+    stored = google_trials_read(brand, dates) if H.available() else {}
+    missing = [d for d in dates if d not in stored]
+    live = {}
+    err = None
+    if missing:
+        try:
+            live = google_trials_daily(missing[0], missing[-1], B)
+        except Exception as ex:
+            err = f"Branch: {str(ex)[:160]}"
+
+    rows = {}
+
+    def cell(camp, group):
+        return rows.setdefault((camp, group), {
+            "campaign": camp or "(no campaign)", "ad_group": group or "(no ad group)",
+            "spend": 0.0, "imp": 0.0, "clk": 0.0,
+            **{k: 0.0 for k in ev_keys}})
+
+    trial_days = 0
+    for d in dates:
+        per_ev = stored.get(d) or live.get(d)
+        if not per_ev:
+            continue
+        trial_days += 1
+        for k, by_key in per_ev.items():
+            if k not in ev_keys:
+                continue
+            for (camp, group), n in by_key.items():
+                cell(camp, group)[k] += n
+
+    # ---- spend ---------------------------------------------------------------
+    spend_days, spend_err = 0, None
+    if GA.available():
+        seen_days = set()
+        for cid in google_customers(brand):
+            for r in GA.spend_daily(cid, since, until):
+                c = cell(r["campaign"], r["ad_group"])
+                c["spend"] += r["spend"]; c["imp"] += r["imp"]; c["clk"] += r["clk"]
+                c["customer_id"] = r["customer_id"]
+                c["campaign_id"] = r["campaign_id"]
+                c["ad_group_id"] = r["ad_group_id"]
+                seen_days.add(r["date"])
+        spend_days = len(seen_days)
+        spend_err = GA.last_error()
+    else:
+        spend_err = GA.last_error() or "no Google Ads credentials on this instance"
+
+    out_rows = sorted(rows.values(),
+                      key=lambda r: (-r["spend"], -r.get(ev_keys[0], 0)))
+    camps = {}
+    for r in out_rows:
+        c = camps.setdefault(r["campaign"], {
+            "campaign": r["campaign"], "ad_groups": 0, "spend": 0.0,
+            "imp": 0.0, "clk": 0.0, **{k: 0.0 for k in ev_keys}})
+        c["ad_groups"] += 1
+        for k in ("spend", "imp", "clk", *ev_keys):
+            c[k] += r[k]
+    tot = {k: round(sum(r[k] for r in out_rows), 2)
+           for k in ("spend", "imp", "clk", *ev_keys)}
+    return {
+        "brand": brand, "since": since, "until": until,
+        "events": list(B["events"]), "event_labels": B["labels"],
+        "install_key": INSTALL_KEY,
+        "campaigns": sorted(camps.values(), key=lambda c: -c["spend"] or 0),
+        "ad_groups": out_rows,
+        "totals": tot,
+        "trial_days": trial_days, "days": len(dates),
+        "spend_days": spend_days,
+        "spend_ok": bool(spend_days),
+        "spend_error": None if spend_days else spend_err,
+        "trials_error": err,
+        "stored_days": len(stored),
+        "generated_at": now_ist_str(),
+    }
+
+
 def branch_partners_daily(since, until, B, tries=BRANCH_BACKFILL_TRIES):
     """{date: {event_key: {branch_partner_name_or_None: unique_count}}}.
 
@@ -1589,9 +1782,22 @@ def snapshot(brand, date):
         # store, which would make the pro-rata view quietly skip days. Reported, not
         # assumed: this is the step that failed once already.
         chan_ok = chan_index_add(brand, date, branch)
+    # ...and Google's campaigns and ad groups, in the same breath and for the same
+    # reason. It is a second Branch query, but a cheap one -- tens of rows a day against
+    # thousands -- and a day stored without it can never gain it later without a second
+    # pass over the whole history, which is the position the reach fields left us in.
+    goog_ok = None
+    if ok:
+        try:
+            g = google_trials_daily(date, date, B, tries=BRANCH_BACKFILL_TRIES)
+            per_ev = g.get(date) or {}
+            # Nothing to store is not a failure: a brand may simply not buy on Google.
+            goog_ok = google_trials_store(brand, date, per_ev) if per_ev else True
+        except Exception:
+            goog_ok = False
     with _have_lock:
         _have_cache.pop(brand, None)
-    return {"ok": ok, "date": date, "brand": brand,
+    return {"ok": ok, "date": date, "brand": brand, "google": goog_ok,
             "ads": sum(len(v) for v in meta.values()),
             "spend": round(sum(float(r.get("spend") or 0)
                                for v in meta.values() for r in v), 2),

@@ -1335,3 +1335,54 @@ sentences, useless as section names.
 What deliberately stays on the page rather than moving into the panel: the freshness
 stamp, the rate-limit banner, warning boxes, and the gold `Pro rata` badge. Those change
 what you should do right now; the panel is for what the numbers mean.
+
+## Google Ads
+
+The half of the buying this dashboard could not see. Every other tab is Meta; this one is
+Google, and the two are never added together on a row.
+
+**Branch already knows which Google campaign and ad group earned a trial.** It leaves the
+ad *name* empty for Google — which is why those trials show up elsewhere as a bucket with
+no cost beside them — but it fills in the campaign and the ad group, and those are the
+same names Google Ads reports spend against. Measured 2026-08-20:
+
+| brand | Google trials | campaigns | ad groups |
+|---|---:|---:|---:|
+| Funda | 16,328 | 11 | 23 |
+| SpeakEasy | 689 | 5 | 9 |
+| Postly | 14 | 3 | 4 |
+
+So the join works at **ad-group level** — where the buying decisions actually are — not
+just as one brand total.
+
+`google_trials_daily()` is a second, cheap Branch query (tens of rows a day against
+thousands) rather than two more dimensions on the main one, which would multiply every
+Meta row by dimensions its ad name already implies. It is written by `snapshot()` in the
+same breath as the rest of the day: a day stored without it can never gain it later
+without a second pass over the whole history, which is exactly the hole the impressions
+fields left.
+
+`google_ads.py` pulls spend, impressions and clicks per campaign per ad group per day
+(`FROM ad_group`, so campaign totals are the sum of their ad groups and never need a
+second query). **Never load-bearing**: with no credential, an expired one, or Google
+refusing, it returns empty and says why, and the page renders exactly as it does now.
+
+### The join is on names
+
+Branch carries the campaign and ad group name and no ids, so the name is the only shared
+key — the same trade the Meta side already makes at ad-name level. A campaign renamed in
+Google Ads mid-window shows as two rows until the window rolls past the rename. Stated in
+the tab's info panel rather than left to be discovered.
+
+### Current state: trials yes, spend no
+
+The stored refresh token is dead — `invalid_grant`. A refresh token minted while the OAuth
+consent screen is in **Testing** expires after 7 days regardless of how it is stored. The
+fix is to publish the consent screen in the project owning the OAuth client, then re-run
+`tools/google_ads_token.py`. `/api/google/status` reports exactly this, and the tab says it
+in place of the missing figures.
+
+Until then the tab shows every Google campaign and ad group with its **trials and
+installs** — 46,090 trials and 258,180 installs over three Funda days, all of it
+previously invisible — with Spend, CPT and CPI as a **dash, never a zero**. "We do not
+know what this cost" and "this cost nothing" are opposite claims.

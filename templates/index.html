@@ -507,9 +507,16 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <button data-t="campaigns">Campaigns <i id="n-campaigns"></i></button>
     <button data-t="adsets">Ad sets <i id="n-adsets"></i></button>
     <button data-t="ads">Ads <i id="n-ads"></i></button>
+    <button data-t="google">Google <i id="n-google"></i></button>
     <button data-t="longevity">Longevity <i id="n-longevity"></i></button>
     <button data-t="trends">Trends</button>
     <button data-t="matrix">Matrix</button>
+  </div>
+
+  <div class="ctl" id="gctl" style="display:none">
+    <input type="search" id="gq" placeholder="Filter by campaign or ad group…">
+    <label class="chk"><input type="checkbox" id="gCamp"> campaigns only</label>
+    <span class="meta" id="gcount"></span>
   </div>
 
   <div class="ctl" id="ctl">
@@ -1238,6 +1245,90 @@ function sparkline(daily){
    top twenty. They share a fetch because they share a fold, and that fold is the
    expensive part. */
 let SERIES = null, SERIESKEY = null, SERIESBUSY = false;
+/* Google is its own payload for the same reason Longevity is: a different question with
+   a different cost, fetched when the tab is opened and never before. */
+let GOOG = null, GOOGKEY = null, GOOGBUSY = false;
+const googKey = () => `${BRAND}|${RANGE}|${CUSTOM ? CUSTOM.since+CUSTOM.until : ''}`;
+const googFresh = () => !!(GOOG && GOOGKEY === googKey());
+
+async function loadGoogle(force){
+  const key = googKey();
+  if(googFresh() && !force) return;
+  const hit = force ? null : await cacheGet('goog|' + key);
+  if(hit){
+    GOOG = hit.v; GOOGKEY = key; renderTable(); noteFor();
+    if(hit.held < CACHE_SOFT) return;
+    return loadGoogle(true);
+  }
+  GOOG = null; GOOGKEY = null; GOOGBUSY = true;
+  document.getElementById('gcount').textContent = 'loading…';
+  try{
+    const r = await fetch(`/api/google?${apiQuery()}${force?'&force=1':''}${K}`);
+    const j = await r.json();
+    if(j.error){ document.getElementById('gcount').textContent = 'failed: ' + j.error; return; }
+    cachePut('goog|' + key, j);
+    if(googKey() !== key) return;
+    GOOG = j; GOOGKEY = key;
+  }catch(e){
+    document.getElementById('gcount').textContent = 'failed: ' + e;
+  }finally{
+    GOOGBUSY = false; renderTable(); noteFor();
+  }
+}
+
+function googRows(){
+  if(!GOOG) return [];
+  const q = (document.getElementById('gq').value || '').trim().toLowerCase();
+  const byCamp = document.getElementById('gCamp').checked;
+  const ev = (GOOG.events || [])[0];
+  const src = byCamp ? GOOG.campaigns : GOOG.ad_groups;
+  return src.filter(r => !q ||
+      (r.campaign || '').toLowerCase().includes(q) ||
+      (r.ad_group || '').toLowerCase().includes(q))
+    .map(r => Object.assign({}, r, {
+      trials: r[ev] || 0,
+      /* No spend means no CPT -- a dash, never a zero and never "free". */
+      gcpt: (r.spend && r[ev]) ? r.spend / r[ev] : null,
+      gcpi: (r.spend && r.inst) ? r.spend / r.inst : null}));
+}
+
+function renderGoogle(){
+  const tbl = document.getElementById('tbl');
+  if(!GOOG){
+    tbl.querySelector('thead').innerHTML = '';
+    tbl.querySelector('tbody').innerHTML =
+      `<tr><td class="l">${GOOGBUSY ? 'Loading…' : 'No Google data for this window.'}</td></tr>`;
+    tbl.querySelector('tfoot').innerHTML = '';
+    document.getElementById('rowcount').textContent = '';
+    return;
+  }
+  const byCamp = document.getElementById('gCamp').checked;
+  const r = googRows();
+  document.getElementById('gcount').textContent =
+    `${GOOG.campaigns.length} campaign(s) · ${GOOG.ad_groups.length} ad group(s)`;
+  tbl.querySelector('thead').innerHTML = '<tr>' +
+    `<th class="l">Campaign</th>` + (byCamp ? '' : `<th class="l">Ad group</th>`) +
+    `<th>Spend</th><th>Trials</th><th>CPT</th><th>Installs</th><th>CPI</th></tr>`;
+  const money = v => v ? rs(v) : '<span class="dimtxt">—</span>';
+  tbl.querySelector('tbody').innerHTML = r.map(o => `<tr>
+      <td class="name" title="${(o.campaign||'').replace(/"/g,'&quot;')}">${o.campaign}</td>
+      ${byCamp ? '' : `<td class="sub" title="${(o.ad_group||'').replace(/"/g,'&quot;')}">${o.ad_group}</td>`}
+      <td>${money(o.spend)}</td>
+      <td>${num(o.trials)}</td>
+      <td class="${o.gcpt===null?'':cls(o.gcpt)}">${o.gcpt===null?'<span class="dimtxt">—</span>':rs(o.gcpt)}</td>
+      <td>${num(o.inst||0)}</td>
+      <td>${o.gcpi===null?'<span class="dimtxt">—</span>':rs(o.gcpi)}</td></tr>`).join('')
+    || `<tr><td class="l" colspan="7">No rows match.</td></tr>`;
+  const sum = k => r.reduce((a,o)=>a+(o[k]||0),0);
+  const sp = sum('spend'), tr = sum('trials'), ins = sum('inst');
+  tbl.querySelector('tfoot').innerHTML = `<tr>
+      <td class="l">${r.length} row(s)</td>${byCamp ? '' : '<td></td>'}
+      <td>${money(sp)}</td><td>${num(tr)}</td>
+      <td>${sp && tr ? rs(sp/tr) : '<span class="dimtxt">—</span>'}</td>
+      <td>${num(ins)}</td>
+      <td>${sp && ins ? rs(sp/ins) : '<span class="dimtxt">—</span>'}</td></tr>`;
+  document.getElementById('rowcount').textContent = `${r.length} rows`;
+}
 /* How many series the chart draws. 0 means every row the filters leave. Six was a fixed
    cap and it was hiding the question people actually had -- "how are my live ad sets
    doing" is 110 lines on Postly, 284 on Funda, not six. Above THIN_AT the lines are drawn
@@ -2084,6 +2175,7 @@ function renderTable(){
   const tbl = document.getElementById('tbl');
   const isSeries = TAB==='trends' || TAB==='matrix';
   document.getElementById('lctl').style.display = TAB==='longevity' ? 'flex' : 'none';
+  document.getElementById('gctl').style.display = TAB==='google' ? 'flex' : 'none';
   document.getElementById('sctl').style.display = isSeries ? 'flex' : 'none';
   document.getElementById('trendsWrap').style.display = TAB==='trends' ? 'block' : 'none';
   document.getElementById('matrixWrap').style.display = TAB==='matrix' ? 'block' : 'none';
@@ -2099,6 +2191,12 @@ function renderTable(){
       TAB === 'trends' ? 'inline-flex' : 'none';
     sActiveAvail(); sMetricAvail();
     if(TAB==='trends') renderTrends(); else renderMatrix();
+    return;
+  }
+  if(TAB==='google'){
+    document.getElementById('ctl').style.display='none';
+    if(!googFresh() && !GOOGBUSY) loadGoogle(false);
+    renderGoogle();
     return;
   }
   if(TAB==='longevity'){
@@ -2206,6 +2304,10 @@ function render(){
   for(const t of ['accounts','campaigns','adsets','ads'])
     document.getElementById('n-'+t).textContent =
       (t === 'accounts' ? acctRows() : DATA[t].filter(inSeg)).length;
+  /* Only once the tab has been opened: a count is a promise that the number is real, and
+     guessing one before the fetch would be a promise this cannot keep. */
+  document.getElementById('n-google').textContent =
+    GOOG && googFresh() ? GOOG.ad_groups.length : '';
   document.getElementById('cpWrap').style.display =
     (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
   renderLimits(); kpis(); renderTable();
@@ -2251,6 +2353,7 @@ function noteFor(){
   NOTE_TITLES = [];
   /* Each note builder now returns its own sections, so the panel reads the same on
      every tab: a list of topics, not a paragraph you have to search. */
+  if(TAB === 'google'){ paintNote(googNote()); return; }
   if(TAB === 'longevity'){ paintNote(longNote()); return; }
   if(TAB === 'trends' || TAB === 'matrix'){ paintNote(seriesNote()); return; }
   mainNote();
@@ -2367,6 +2470,41 @@ function seriesNote(){
         Trials and installs are split across rows that share an ad name by that
         <i>day's</i> spend share, so nothing lands on a day a row did not spend.
         ${act}${SERIES.cached ? `Folded ${SERIES.age_min || 0} min ago.` : ''}`);
+}
+
+/* Google is the half of the buying this dashboard could not see. Branch has always known
+   which Google campaign and ad group earned a trial -- it fills those in even though it
+   leaves the ad name empty -- so the trials here are measured, not modelled. What is
+   missing is only the cost, and the note says exactly what is missing and why rather
+   than showing a dash and letting it look like zero. */
+function googNote(){
+  if(!GOOG) return '';
+  const ev = (GOOG.events || [])[0];
+  const t = GOOG.totals || {};
+  const scope = `Google Ads only. These are the campaigns and ad groups Branch attributes
+     trials to under the Google partner — <b>${num(t[ev]||0)} trial(s)</b> and
+     <b>${num(t.inst||0)} install(s)</b> across ${GOOG.campaigns.length} campaign(s) and
+     ${GOOG.ad_groups.length} ad group(s), ${GOOG.since} to ${GOOG.until}. Meta figures
+     are on every other tab and the two are never added together on a row.`;
+  const join = `Joined on <b>names</b>. Branch carries the Google campaign and ad group
+     name and no ids, so the name is the only shared key — the same trade the Meta side
+     makes at ad-name level. A campaign renamed in Google Ads mid-window will appear as
+     two rows until the window rolls past the rename.`;
+  const spend = GOOG.spend_ok
+    ? `Spend, CPT and CPI come from the Google Ads API for
+       ${GOOG.spend_days}/${GOOG.days} day(s) of this window.`
+    : `<b>Spend is not available, so there is no CPT or CPI yet</b> — the columns show a
+       dash rather than a zero, because "we do not know what this cost" and "this cost
+       nothing" are opposite claims. Trials and installs are unaffected: they come from
+       Branch and are complete.
+       <span class="dimtxt">${(GOOG.spend_error||'').replace(/</g,'&lt;')}</span>`;
+  const src = `${GOOG.trial_days}/${GOOG.days} day(s) have trial data${
+     GOOG.stored_days ? `, ${GOOG.stored_days} of them from the history store` : ''}.
+     ${GOOG.trials_error ? `<b>Branch reported an error:</b> ${GOOG.trials_error}` : ''}`;
+  return nsec('Google Ads only', scope)
+    + nsec('How trials join to campaigns', join)
+    + nsec('Spend', spend)
+    + nsec('Where the figures came from', src);
 }
 
 function longNote(){
@@ -2793,6 +2931,7 @@ document.getElementById('tabs').onclick = e => {
   renderTable(); noteFor(); attrAvail();
   // Opening the tab is the request. Anything else means looking at an empty table and
   // wondering what to press.
+  if(TAB==='google' && !googFresh() && !GOOGBUSY) loadGoogle(false);
   if(TAB==='longevity' && !longFresh() && !LONGBUSY) loadLongevity(false);
   if((TAB==='trends' || TAB==='matrix') && !seriesFresh() && !SERIESBUSY) loadSeries(false);
 };
@@ -2823,6 +2962,8 @@ if(CAN_ACT) document.getElementById('lGo').onclick = () => loadLongevity(true);
 document.getElementById('lWin').onchange = () => loadLongevity(false);
 for(const id of ['lq','lFrom','lTo','lActive'])
   document.getElementById(id)[id==='lActive'?'onchange':'oninput'] = renderLongevity;
+document.getElementById('gq').oninput = renderGoogle;
+document.getElementById('gCamp').onchange = renderGoogle;
 /* Refresh is a deliberate act, so it forces everything the automatic pull will not:
    the server payload cache AND Meta's roster, which is where budgets and paused/active
    status come from. Without the second, pressing Refresh could never move a budget
