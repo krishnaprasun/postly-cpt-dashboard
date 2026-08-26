@@ -1271,3 +1271,34 @@ the browser cache key. A payload's *shape* is decided by the code that built it,
 entry from before a deploy can be missing fields the new page reads. That is not
 hypothetical: it is how the CPM column first rendered as a row of dashes on a matrix that
 had every number it needed. A deploy now retires the old entries instead of serving them.
+
+## The info panel
+
+Everything the page has to caveat — scope, attribution, the pro-rata model, testing vs
+trial, Classplus's signup-cohort quirk, how CPT is actually computed — used to sit under
+the table as one unbroken wall of prose. All of it is worth saying and almost none of it
+is worth reading every single time.
+
+It now lives behind **ⓘ How these numbers work**, a right-hand drawer:
+
+- **Sectioned, not a paragraph.** Each note builder returns titled `<section>`s. The
+  headings were already there, in bold at the front of each paragraph — the panel just
+  lifts them out.
+- **The button lists what is inside**, with a count, so nobody has to open it to find out
+  whether the thing they want is in there.
+- **A drawer, not a modal over the middle**: the numbers being explained stay visible
+  while the explanation is read.
+- Closes on the button, the scrim, or **Escape**. A panel that opens over a page someone
+  is reading, with no keyboard way out, is a trap.
+
+Per tab: 6 sections on the main tables, 5 on Trends/Matrix, 5 on Longevity — each built
+from the same data as before, so a note that only applies sometimes still only appears
+sometimes.
+
+Section headings are the ones passed in, never derived from the prose. Deriving them
+produced *"Ends 2026-08-25, not 2026-08-26"* and *"58 ad set(s) show ≤ a date"* — true
+sentences, useless as section names.
+
+What deliberately stays on the page rather than moving into the panel: the freshness
+stamp, the rate-limit banner, warning boxes, and the gold `Pro rata` badge. Those change
+what you should do right now; the panel is for what the numbers mean.

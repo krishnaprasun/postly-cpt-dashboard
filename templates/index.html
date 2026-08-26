@@ -182,8 +182,44 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
   color:var(--muted);margin-left:7px;background:var(--panel2);font-weight:600;
   text-transform:uppercase;letter-spacing:.4px}
 .pill.live{color:var(--green-dk);border-color:#CBE8D8;background:var(--green-lt)}
-.note{font-size:11.5px;color:var(--muted);margin-top:12px;line-height:1.65;max-width:1100px}
+.note{font-size:12.5px;color:var(--muted);line-height:1.7}
 .note b{color:var(--ink)}
+.notebar{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
+.ibtn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line);
+  background:var(--white);color:var(--ink);font:inherit;font-size:12px;font-weight:600;
+  padding:7px 13px;border-radius:9px;cursor:pointer}
+.ibtn:hover{border-color:var(--accent);color:var(--accent-dk)}
+.ibtn .ii{display:grid;place-items:center;width:15px;height:15px;border-radius:50%;
+  background:var(--muted);color:var(--white);font-size:10px;font-weight:800;
+  font-style:italic;font-family:Georgia,serif}
+.ibtn:hover .ii{background:var(--accent)}
+.ibtn .cnt{color:var(--faint);font-weight:500}
+
+/* A drawer, not a modal-over-the-middle: the numbers being explained stay visible on the
+   left while the explanation is read. */
+.drawer{position:fixed;inset:0;z-index:60}
+.drawer[hidden]{display:none}
+.dscrim{position:absolute;inset:0;background:rgba(12,14,26,.34);
+  animation:dfade .16s ease-out}
+.dpanel{position:absolute;top:0;right:0;bottom:0;width:min(560px,100%);
+  background:var(--white);border-left:1px solid var(--line);display:flex;
+  flex-direction:column;box-shadow:-18px 0 48px rgba(0,0,0,.16);
+  animation:dslide .2s cubic-bezier(.22,.7,.3,1)}
+@keyframes dfade{from{opacity:0}}
+@keyframes dslide{from{transform:translateX(28px);opacity:.4}}
+.dpanel header{display:flex;align-items:center;justify-content:space-between;gap:12px;
+  padding:16px 20px;border-bottom:1px solid var(--line);flex:0 0 auto}
+.dpanel h3{margin:0;font-size:14px}
+.dclose{border:0;background:transparent;color:var(--muted);font-size:15px;cursor:pointer;
+  padding:4px 8px;border-radius:7px;line-height:1}
+.dclose:hover{background:var(--panel2);color:var(--ink)}
+.dpanel .note{overflow-y:auto;padding:4px 20px 28px;flex:1 1 auto}
+section.ns{padding:16px 0;border-bottom:1px solid var(--line)}
+section.ns:last-child{border-bottom:0}
+section.ns h4{margin:0 0 6px;font-size:11px;letter-spacing:.4px;text-transform:uppercase;
+  color:var(--accent-dk);font-weight:800}
+section.ns p{margin:0}
+@media(max-width:640px){.dpanel{width:100%}}
 .err{background:var(--red-lt);border:1px solid #EFCFCB;color:var(--red);padding:12px 15px;
   border-radius:11px;margin-bottom:14px;font-size:13px}
 /* A throttle is not a failure — the numbers are still on screen, they are just not
@@ -545,8 +581,29 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   <div id="trendsWrap" style="display:none"></div>
   <div id="matrixWrap" style="display:none"></div>
   <div class="wrap" id="tblWrap"><table id="tbl"><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
-  <div class="note" id="note"></div>
+  <div class="notebar">
+    <button class="ibtn" id="noteBtn" aria-expanded="false" aria-controls="noteDrawer">
+      <span class="ii">i</span> How these numbers work
+      <span class="cnt" id="noteCount"></span>
+    </button>
+    <span class="dimtxt" id="noteHint"></span>
+  </div>
 </main>
+
+<!-- The caveats used to sit under the table as one unbroken wall of prose. Everything
+     in them is worth saying and almost none of it is worth reading every single time, so
+     it lives here: one click away, split into sections, with the section list on the
+     button so nobody has to open it to find out what is in it. -->
+<div class="drawer" id="noteDrawer" hidden>
+  <div class="dscrim" id="noteScrim"></div>
+  <aside class="dpanel" role="dialog" aria-modal="true" aria-labelledby="noteTitle">
+    <header>
+      <h3 id="noteTitle">How these numbers work</h3>
+      <button class="dclose" id="noteClose" aria-label="Close">&#10005;</button>
+    </header>
+    <div class="note" id="note"></div>
+  </aside>
+</div>
 
 <script>
 /* CPT target for the brand on screen. null is a real value meaning "do not colour":
@@ -2129,12 +2186,60 @@ function render(){
 
 /* The footnote belongs to the view, not to the page: the longevity table is answering a
    different question and its caveats are different ones. */
+/* One titled block of the info panel. `strip` removes the piece's own leading bold,
+   because these paragraphs were written with their topic in bold at the front and that
+   becomes the heading — but the heading is the one passed in, never the one derived.
+   Deriving it produced headings like "Ends 2026-08-25, not 2026-08-26" and "58 ad set(s)
+   show ≤ a date": true sentences, useless as a section name. */
+function nsec(title, html, strip){
+  if(!html || !String(html).trim()) return '';
+  let t = title, body = String(html);
+  if(strip){
+    const m = body.match(/^\s*<b>([\s\S]*?)<\/b>\s*/);
+    if(m) body = body.slice(m[0].length);
+  }
+  body = body.replace(/(\s*<br>)+\s*$/, '');
+  NOTE_TITLES.push(t);
+  return `<section class="ns"><h4>${t}</h4><p>${body}</p></section>`;
+}
+let NOTE_TITLES = [];
+
+/* The button says what is inside so nobody has to open it to find out, and the count is
+   the honest measure of how much there is. */
+function paintNote(html){
+  document.getElementById('note').innerHTML = html;
+  const n = NOTE_TITLES.length;
+  document.getElementById('noteCount').textContent = n ? `· ${n}` : '';
+  document.getElementById('noteHint').textContent = NOTE_TITLES.slice(0, 4).join(' · ')
+    + (n > 4 ? ' · …' : '');
+  document.getElementById('noteBtn').title = NOTE_TITLES.join('\n');
+}
+
 function noteFor(){
-  if(TAB === 'longevity'){ document.getElementById('note').innerHTML = longNote(); return; }
-  if(TAB === 'trends' || TAB === 'matrix'){
-    document.getElementById('note').innerHTML = seriesNote(); return; }
+  NOTE_TITLES = [];
+  /* Each note builder now returns its own sections, so the panel reads the same on
+     every tab: a list of topics, not a paragraph you have to search. */
+  if(TAB === 'longevity'){ paintNote(longNote()); return; }
+  if(TAB === 'trends' || TAB === 'matrix'){ paintNote(seriesNote()); return; }
   mainNote();
 }
+
+function noteOpen(on){
+  const d = document.getElementById('noteDrawer');
+  d.hidden = !on;
+  document.getElementById('noteBtn').setAttribute('aria-expanded', on ? 'true' : 'false');
+  if(on) document.getElementById('noteClose').focus();
+}
+/* Bound directly, not on DOMContentLoaded: this script runs after the markup it is
+   wiring, so the event may already have fired and never come again. */
+document.getElementById('noteBtn').onclick = () => noteOpen(true);
+document.getElementById('noteClose').onclick = () => noteOpen(false);
+document.getElementById('noteScrim').onclick = () => noteOpen(false);
+/* Escape closes it. A panel with no keyboard way out is a trap, and this one opens over
+   a page people are reading. */
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape' && !document.getElementById('noteDrawer').hidden) noteOpen(false);
+});
 
 /* What these two views are and are not. The dimension choice needs explaining more than
    anything else here: "Script" is an ad NAME, which is the closest thing this data has
@@ -2219,10 +2324,17 @@ function seriesNote(){
   const src = SERIES.stored_days
     ? `${SERIES.stored_days} of ${SERIES.dates.length} day(s) came from the history store;
        the rest were pulled live. ` : '';
-  return scope + ends + derived + pro + `${dimNote}<br><br>${reach}${bud}${trunc}${src}
-    Trials and installs are split across rows that share an ad name by that
-    <i>day's</i> spend share, so nothing lands on a day a row did not spend.
-    ${act}${SERIES.cached ? `Folded ${SERIES.age_min || 0} min ago.` : ''}`;
+  return nsec('Meta ads only', scope, true)
+    + nsec('The window shown', ends, true)
+    + nsec('How the rates are worked out', derived)
+    + nsec('Pro rata', pro, true)
+    + nsec('Rows', dimNote, true)
+    + nsec('Impressions, CTR and CPM', reach)
+    + nsec('Budget', bud, true)
+    + nsec('Coverage', `${trunc}${src}
+        Trials and installs are split across rows that share an ad name by that
+        <i>day's</i> spend share, so nothing lands on a day a row did not spend.
+        ${act}${SERIES.cached ? `Folded ${SERIES.age_min || 0} min ago.` : ''}`);
 }
 
 function longNote(){
@@ -2253,27 +2365,31 @@ function longNote(){
        trials are not fetched here, and adding today's spend without them would inflate
        the CPT of exactly the ad sets that are running now. Today's spend is shown on its
        own beside the date instead.<br><br>` : '');
-  return scope + t + `<b>Went live</b> is the first day an ad set actually <i>spent</i>, not the day it
-     was created — an ad set built and left paused never ran. <b>Days spent</b> counts days
-     with spend; <b>Span</b> is first to last. The two differing is the interesting case:
-     it means the ad set stopped and restarted.
-     ${cens ? `<br><br><b>${num(cens)} ad set(s) show ≤ a date.</b> They were already
-       spending on the earliest day in the store (${LONG.covered_from}), so they started
-       on or before it and the true date is not knowable from here — an exact date would be
-       invented. Where Meta still holds the ad set, its creation date is shown beside it.
-       Backfilling further back turns these into real dates.` : ''}
-     ${unk.length ? `<br><br><b>Status is unknown for ${unk.join(' and ')}.</b> Meta would
-       not return the ad set listing for ${unk.length>1?'those accounts':'that account'},
-       so whether those ad sets are running right now cannot be read. They are shown as
-       unknown rather than stopped, and "still running only" excludes them — unknown is
-       not a yes.` : ''}
-     <br><br>Daily spend is drawn for the ${num(LONG.series_top)} biggest spenders only;
-     the rest carry their totals but no sparkline.
-     ${LONG.precomputed ? `<br><br>These figures were folded ahead of time and are served
-       as they were computed — that is what makes this table appear instantly instead of
-       taking half a minute. <b>Refresh</b> re-reads Meta and Branch for the most recent
-       days and recomputes; everything older than ${LONG.covered_from ? '' : ''}the settle
-       window cannot have changed since.` : ''}`;
+  return nsec('Meta ads only', scope, true)
+    + nsec('Today', t)
+    + nsec('What the columns mean',
+       `<b>Went live</b> is the first day an ad set actually <i>spent</i>, not the day it
+        was created — an ad set built and left paused never ran. <b>Days spent</b> counts
+        days with spend; <b>Span</b> is first to last. The two differing is the
+        interesting case: it means the ad set stopped and restarted.
+        Daily spend is drawn for the ${num(LONG.series_top)} biggest spenders only; the
+        rest carry their totals but no sparkline.`)
+    + (cens ? nsec('Why some start dates show ≤',
+       `<b>${num(cens)} ad set(s) show ≤ a date.</b> They were already spending on the
+        earliest day in the store (${LONG.covered_from}), so they started on or before it
+        and the true date is not knowable from here — an exact date would be invented.
+        Where Meta still holds the ad set, its creation date is shown beside it.
+        Backfilling further back turns these into real dates.`, true) : '')
+    + (unk.length ? nsec('Unknown statuses',
+       `Meta would not return the ad set listing for
+        ${unk.join(' and ')}, so whether those ad sets are running right now cannot be
+        read. They are shown as unknown rather than stopped, and "still running only"
+        excludes them — unknown is not a yes.`) : '')
+    + (LONG.precomputed ? nsec('Why this tab is instant',
+       `These figures were folded ahead of time and are served as they were computed —
+        that is what makes this table appear at once instead of taking half a minute.
+        <b>Refresh</b> re-reads Meta and Branch for the most recent days and recomputes;
+        everything older than the settle window cannot have changed since.`) : '');
 }
 
 /* The breakdown behind the attribution figure. Written out in full because "44%
@@ -2352,7 +2468,7 @@ function mainNote(){
   const cov = DATA.imp_coverage;
   const impNote = (cov === null || cov === undefined) ? '' :
     cov >= 0.999
-      ? `<b>CTR and CPM</b> are Meta's own impressions and clicks for this window, rolled
+      ? `<b>CTR and CPM.</b> These are Meta's own impressions and clicks for this window, rolled
          up from the ad. CTR is clicks ÷ impressions and CPM is spend ÷ impressions ×
          1000, both derived from the sums rather than averaged across rows.<br><br>`
       : `<b>CTR and CPM cover ${(100*cov).toFixed(0)}% of this window's spend.</b>
@@ -2364,7 +2480,14 @@ function mainNote(){
          dash, never a zero.<br><br>`;
   const lag = `Today's numbers are still landing — Meta spend lags a few minutes${
      hasTrials() ? ' and Branch trials keep arriving through the day, so intraday CPT reads high early and settles down' : ''}.`;
-  document.getElementById('note').innerHTML = scope + srcNote() + impNote + chanNote() + segNote() + cpNote() + (hasTrials()
+  paintNote(
+      nsec('Meta ads only', scope, true)
+    + nsec('Where the figures came from', srcNote())
+    + nsec('CTR and CPM', impNote, true)
+    + nsec('Which channel earned these trials', chanNote(), true)
+    + nsec('Testing vs trial', segNote(), true)
+    + nsec('Signups and mandates', cpNote(), true)
+    + nsec(hasTrials() ? 'How CPT is calculated' : 'No trial feed for this brand', (hasTrials()
     ? `CPT = Meta spend ÷ Branch trials, joined at <b>ad-name</b> level and rolled up
        (Branch does not expose campaign or account as attribution dimensions).
        ${accts} ${DATA.unattributed[EV]>0
@@ -2376,7 +2499,7 @@ function mainNote(){
     : `<b>Spend, budgets and statuses only.</b> ${DATA.brand_label} has no Branch app
        configured here, so there are no trial counts and therefore no CPT. Everything
        above comes straight from Meta. Adding the Branch key and naming the two events
-       fills the trial and CPT columns in with no other change. ${accts} ${dup}${lag}`);
+       fills the trial and CPT columns in with no other change. ${accts} ${dup}${lag}`)));
 }
 
 /* What the testing/trial split is, and which campaigns fell on each side. Named rather
@@ -2395,7 +2518,7 @@ function segNote(){
     ? `Testing here is ${t.testing.map(n=>`<i>${n}</i>`).join(', ')}; everything else counts
        as trial.`
     : `No campaign matched the testing rule in this window, so everything counts as trial.`;
-  return `<b>Testing vs trial</b> is decided on the CAMPAIGN — name matching
+  return `<b>Testing vs trial.</b> The split is decided on the CAMPAIGN — name matching
      <code>${DATA.segment_rule}</code> — and inherited by its ad sets and ads. ${names}
      ${line('trial')} &nbsp;·&nbsp; ${line('testing')}.
      They are separated because they buy different things: testing is looking for a
@@ -2438,7 +2561,7 @@ function cpNote(){
   if(!p.available) return p.note ? `<span class="dimtxt">${p.note}</span><br><br>` : '';
   if(!cpOn()) return '';                 // columns switched off — the checkbox says why
   const u = p.unmatched;
-  return `<b>Signups &amp; mandates</b> come from the Classplus DB (query
+  return `<b>Signups &amp; mandates.</b> These come from the Classplus DB (query
      ${p.window[0]}${p.window[1]!==p.window[0]?' → '+p.window[1]:''}, read
      ${p.retrieved_at}), joined on the same <b>ad name</b> Branch uses.
      A mandate is counted against the ad the user <i>signed up</i> through, so it is a
