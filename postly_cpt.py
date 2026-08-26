@@ -278,6 +278,107 @@ def ad_preview(ad_id, fmt="MOBILE_FEED_STANDARD"):
 # budget history cannot be reconstructed backwards -- it can only be recorded forward,
 # starting the first time this runs. Nothing here pretends otherwise: a day with no
 # snapshot is absent, never zero.
+# ---- reach backfill --------------------------------------------------------
+# Re-fetching a stored day with impressions and clicks costs a full ad-level insights
+# pull, 5-7 seconds, against a limit that binds on TIME. Ninety-odd days across three
+# brands is half an hour of it, which is far too long for one request and far too rude
+# to do in one burst -- so the work is done in bounded batches and the batch is what gets
+# scheduled. A run that finds nothing to do costs one cheap call and says so, which is
+# what lets the schedule sit there harmlessly after it has finished.
+def _day_has_reach(day):
+    """True when every Meta row in a stored day already reports impressions."""
+    rows = [r for rs in ((day or {}).get("meta") or {}).values() for r in rs]
+    return bool(rows) and all(has_imp(r) for r in rows)
+
+
+def reach_ns(brand):
+    return f"{brand}reachdone"
+
+
+def reach_done(brand):
+    """(set of dates known to carry impressions, ok). A tiny artifact -- a list of date
+    strings -- kept so a batch does not have to re-read ninety days of raw rows just to
+    work out what is left. Without it every call, including the ones that find nothing to
+    do, paid fifteen seconds to prove it; with it the steady state is two cheap reads."""
+    art, ok = H.get_agg_raw(reach_ns(brand))
+    return set((art or {}).get("days") or []), ok
+
+
+def reach_backfill(brand, budget_s=90, max_days=0, dry=False):
+    """Re-fetch as many pending days as fit in the budget. Never raises.
+
+    Newest first on purpose: if the run is cut short, the days people actually look at
+    are the ones that landed.
+    """
+    started = time.time()
+    have = sorted(H.have(brand) or [], reverse=True)
+    done, ok = reach_done(brand)
+    out = {"brand": brand, "stored": len(have), "written": 0, "failed": 0,
+           "days": [], "throttled": False, "marker_ok": ok}
+    todo = [d for d in have if d not in done]
+    out["pending_before"] = len(todo)
+    if not todo:
+        out["pending_after"] = 0
+        out["took"] = round(time.time() - started, 1)
+        return out
+
+    B = C.brand(brand)
+    # Only the slice this batch could possibly reach, so the scan cost is bounded by the
+    # budget rather than by how much history exists.
+    slice_ = todo[:max_days] if max_days else todo[:24]
+    raw = H.fetch_raw(brand, slice_)
+    fresh_done = set()
+    for d in slice_:
+        if time.time() - started > budget_s:
+            break
+        stored_day = raw.get(d)
+        # Already good -- a day stored after the fields were added, or one this ran on
+        # before the marker existed. Mark it and move on rather than paying for it again.
+        if _day_has_reach(stored_day):
+            fresh_done.add(d)
+            out["days"].append({"date": d, "skipped": "already has impressions"})
+            continue
+        t = time.time()
+        try:
+            got = {a["id"]: meta_insights_daily(a["id"], d, d) for a in B["accounts"]}
+        except RateLimited:
+            # Meta saying stop. Feeding it makes the wait longer and the run resumes on
+            # the next tick anyway, so stopping costs nothing but time.
+            out["throttled"] = True
+            break
+        except Exception as ex:
+            out["failed"] += 1
+            out["days"].append({"date": d, "error": str(ex)[:120]})
+            continue
+        n = sum(len(v) for v in got.values())
+        imp = sum(_num(r.get("impressions")) for v in got.values() for r in v)
+        # The stored day's Branch half is written back exactly as it was. Losing a day's
+        # trials to a reach backfill would be an absurd trade.
+        wrote = True if dry else H.put(brand, d, got,
+                                       (stored_day or {}).get("branch") or {})
+        if wrote:
+            out["written"] += 1
+            if not dry:
+                fresh_done.add(d)
+        else:
+            out["failed"] += 1
+        out["days"].append({"date": d, "rows": n, "impressions": int(imp),
+                            "took": round(time.time() - t, 1), "stored": bool(wrote)})
+
+    # One write at the end, and only when the read that produced `done` succeeded --
+    # otherwise this would stamp a fresh marker over an existing one and lose every day
+    # already recorded. Same rule as the channel index.
+    if fresh_done and not dry:
+        if ok:
+            H.put_agg(reach_ns(brand), today_ist(),
+                      {"days": sorted(done | fresh_done)})
+        else:
+            out["marker_write_skipped"] = "could not read the marker; not overwriting it"
+    out["pending_after"] = max(0, len(todo) - len(fresh_done))
+    out["took"] = round(time.time() - started, 1)
+    return out
+
+
 def budget_ns(brand):
     return f"{brand}budg"
 

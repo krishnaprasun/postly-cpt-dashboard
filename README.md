@@ -1241,10 +1241,28 @@ the activity log is, so stored days can be asked for again with the extra fields
     python3 tools/backfill_reach.py --all --dry-run
 
 It is not free — 5–7 seconds per brand-day measured, so ~97 days across three brands is
-around half an hour of the request time Meta rate-limits on. Hence resumable, one day at a
-time, skipping days that already have impressions, and stopping on a throttle rather than
-feeding it. The stored day's **Branch trials are read and written back untouched**; losing
-a day's trials to a reach backfill would be an absurd trade.
+around half an hour of the request time Meta rate-limits on. So the unit of work is a
+**bounded batch**, not the whole job: `/api/backfill/reach?brand=&budget=90` does as much
+as fits in ninety seconds and reports `pending_after`. The CLI drives the same function in
+a loop, so the two cannot drift apart.
+
+Scheduled `2,12,22,32,42,52 0-2` IST (staggered per brand, 18 firings each), which is
+~12 days per firing against 97 needed — plenty of headroom, and it finishes well before
+the 03:40 raw-history job.
+
+Three things make it safe to leave scheduled after it finishes:
+
+- **Newest first.** If a run is cut short, the days people actually look at are the ones
+  that landed.
+- **A completion marker** (`{brand}reachdone`, a list of date strings) means a batch does
+  not re-read ninety days of raw rows to work out what is left. Without it every call,
+  including the ones with nothing to do, paid fifteen seconds to prove it. Written once
+  at the end of a batch, and **only when the read that produced it succeeded** — the same
+  rule as the channel index, for the same reason.
+- **A throttle stops the run** rather than feeding it. It resumes on the next tick.
+
+The stored day's **Branch trials are read and written back untouched**; losing a day's
+trials to a reach backfill would be an absurd trade.
 
 ## Cache versioning
 

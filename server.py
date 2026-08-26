@@ -436,6 +436,51 @@ def api_longevity():
         return jsonify({"error": str(e)[:500]}), 500
 
 
+@app.route("/api/backfill/reach", methods=["POST", "GET"])
+def api_backfill_reach():
+    """Re-fetch stored days so they carry impressions and clicks, in bounded batches.
+
+    Token-gated: it spends real Meta request time, which is the budget this app is
+    rate-limited on. One call does as much as fits in `budget` seconds and reports what
+    is left, so the schedule can simply fire until `pending_after` reaches zero -- after
+    which every call is one cheap store read that changes nothing.
+
+    ?brand=postly   one brand (default: all)
+    ?budget=90      seconds of work per call
+    ?max=0          hard cap on days per call, 0 for none
+    ?dry=1          fetch and report, write nothing
+    """
+    want = H.TOKEN
+    if not want or not hmac.compare_digest(request.headers.get("Authorization", ""),
+                                           "Bearer " + want):
+        return jsonify({"error": "unauthorized"}), 401
+    if not H.available():
+        return jsonify({"error": "no history store configured"}), 503
+    brands = [request.args.get("brand")] if request.args.get("brand") else list(C.BRANDS)
+    bad = [b for b in brands if b not in C.BRANDS]
+    if bad:
+        return jsonify({"error": f"unknown brand(s): {bad}"}), 400
+    try:
+        budget = max(10, min(int(request.args.get("budget", "90")), 240))
+    except ValueError:
+        budget = 90
+    try:
+        cap = max(0, int(request.args.get("max", "0")))
+    except ValueError:
+        cap = 0
+    dry = request.args.get("dry") == "1"
+    out = []
+    for b in brands:
+        try:
+            out.append(P.reach_backfill(b, budget_s=budget, max_days=cap, dry=dry))
+        except Exception as e:
+            traceback.print_exc()
+            out.append({"brand": b, "error": str(e)[:200]})
+    return jsonify({"dry": dry, "budget_s": budget,
+                    "pending": sum(r.get("pending_after") or 0 for r in out),
+                    "results": out})
+
+
 @app.route("/api/budgets/snapshot", methods=["POST", "GET"])
 def api_budget_snapshot():
     """Record every level's budget as it stands now, under today's date.
