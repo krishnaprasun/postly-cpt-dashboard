@@ -2023,56 +2023,44 @@ function rows(tab, filtered){
   return r;
 }
 
-/* ---------- Ads Manager links ---------- */
-/* Every row that IS a real Meta object links to it, opened on the same window the page is
-   showing. The account is required: Ads Manager resolves an object id only inside an
-   `act=`, so a row that does not know its account gets no link rather than a dead one.
-   Script rows in the Matrix never link -- a name maps to many ads by design, which is
-   the whole reason that dimension exists. */
-const FB_PATH = {account:'campaigns', campaign:'campaigns', adset:'adsets', ad:'ads'};
-const FB_SEL  = {campaign:'selected_campaign_ids', adset:'selected_adset_ids',
-                 ad:'selected_ad_ids'};
-function fbUrl(level, id, acct, since, until){
+/* ---------- links off a row ---------- */
+/* Exactly one kind of row links, and it links to one thing: an AD, to its creative.
+   Everything above an ad -- ad set, campaign, ad account -- has no single piece of media,
+   and Ads Manager is not what a table of numbers makes you want to open. A link that
+   lands somewhere other than the thing you clicked is worse than no link, and on rows
+   whose names are long and worth copying it is worse still.
+
+   The one exception is the small arrow beside an ad's name, which does go to Ads Manager:
+   on the row that IS a Meta object, having the manager a click away is worth a 11px mark
+   that never gets in the way of selecting the name. */
+function adManagerUrl(adId, acct, since, until){
   const n = String(acct || '').replace(/^act_/, '');
-  if(!n || !/^\d+$/.test(n)) return null;
-  if(level !== 'account' && !id) return null;
-  const q = ['act=' + n];
-  if(FB_SEL[level]) q.push(FB_SEL[level] + '=' + encodeURIComponent(id));
+  if(!n || !/^\d+$/.test(n) || !adId) return null;
+  const q = ['act=' + n, 'selected_ad_ids=' + encodeURIComponent(adId)];
   /* Landing on a different window than the one that produced the number is how people
      end up believing the dashboard and Ads Manager disagree. */
   if(since && until) q.push('date=' + since + '_' + until);
-  return `https://adsmanager.facebook.com/adsmanager/manage/${FB_PATH[level]}?` + q.join('&');
+  return 'https://adsmanager.facebook.com/adsmanager/manage/ads?' + q.join('&');
 }
-/* Ad sets are absent on purpose: they have no single creative, so the only thing a link
-   could open is Ads Manager, and on a table of long ad set names that gets in the way of
-   reading and copying them more than it helps. */
-const fbLevel = tab => ({accounts:'account', campaigns:'campaign',
-                         ads:'ad'})[tab] || null;
 
-/* An AD opens its creative -- the rendered ad as it runs -- because that is what somebody
-   scanning a list of ad names actually wants to see. So does a Script row in the Matrix,
-   through the biggest-spending ad carrying that name. Campaigns and ad accounts have no
-   single piece of media, so those still go to Ads Manager; ad sets link nowhere.
-   The server resolves the preview at click time: Meta's preview link is signed and
-   expires, so a URL baked into this page would be dead by the time anyone clicked it. */
+/* The rendered ad as it runs. A Script row in the Matrix uses this too, through the
+   biggest-spending ad carrying that name. The server resolves the preview at click time:
+   Meta's preview link is signed and expires, so a URL baked into this page would be dead
+   by the time anyone clicked it. */
 const adMedia = id => id
   ? `/api/preview?ad=${encodeURIComponent(id)}&brand=${BRAND}${K}` : null;
 
 function cell(o, c){
   if(c.kind==='name'){
     const live = o.active || o.status==='ACTIVE';
-    const lv = fbLevel(TAB);
-    const mgr = lv ? fbUrl(lv, o.id, o.account_id || o.id, DATA.since, DATA.until) : null;
     const isAd = TAB === 'ads';
-    const url = isAd ? adMedia(o.id) : mgr;
+    const url = isAd ? adMedia(o.id) : null;
+    const mgr = isAd
+      ? adManagerUrl(o.id, o.account_id, DATA.since, DATA.until) : null;
     return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">` +
       (url ? `<a class="fbl" href="${url}" target="_blank" rel="noopener noreferrer"
-         title="${isAd ? 'Open the creative' : 'Open in Meta Ads Manager'}">${
-         o.name||'—'}</a>` : (o.name||'—')) +
-      /* Ads Manager stays one click away on an ad row, as a small mark rather than a
-         second underlined name -- the creative is the common case, the manager is the
-         occasional one. */
-      (isAd && mgr ? ` <a class="mgr" href="${mgr}" target="_blank" rel="noopener noreferrer"
+         title="Open the creative">${o.name||'—'}</a>` : (o.name||'—')) +
+      (mgr ? ` <a class="mgr" href="${mgr}" target="_blank" rel="noopener noreferrer"
          title="Open in Meta Ads Manager">&#8599;</a>` : '') +
       (TAB!=='accounts' && !live ? `<span class="pill">paused</span>`:'') +
       (o.shared_name ? `<span class="pill">shared name</span>`:'') + `</td>`;

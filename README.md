@@ -975,26 +975,28 @@ Every row that **is** a real Meta object links to it, opening in a new tab on th
 window the page is showing (`&date=<since>_<until>`) — landing on a different window is
 how people end up believing the dashboard and Ads Manager disagree.
 
+**Exactly one kind of row links, and it links to one thing: an ad, to its creative.**
+
 | view | opens |
 |---|---|
-| **Ads** | **the creative itself** — see below |
+| **Ads** — the name | **the creative itself** — see below |
 | **Matrix `dim=script`** | **the creative**, via the biggest-spending ad carrying that name |
-| Ads (the small ↗) | `manage/ads?act=…&selected_ad_ids=…` |
-| Campaigns | `manage/campaigns?act=…&selected_campaign_ids=…` |
-| Ad accounts | `manage/campaigns?act=…` |
-| **Ad sets, Longevity, Matrix `dim=adset` / `campaign` / `account`** | **nothing — plain text** |
+| Ads — the small ↗ | `manage/ads?act=…&selected_ad_ids=…&date=…` |
+| Everything else — Ad sets, Campaigns, Ad accounts, Longevity, all other Matrix dimensions | **nothing — plain text** |
 
-**A Matrix row opens the creative or it opens nothing.** Script is the only dimension that
-resolves to an ad, and the ad is what a grid of numbers makes you want: *which one is
-this?* is answered by the video, not by Ads Manager. So folded Script rows carry `ad` —
-the id of the biggest-spending ad with that name, because a name can be carried by several
-and that is the one the row's numbers are mostly of. 1,890 of 1,912 Postly script rows
-resolve; the rest are Branch-only rows with no Meta spend behind them.
+Everything above an ad has no single piece of media, and Ads Manager is not what a table
+of numbers makes you want to open. A link that lands somewhere other than the thing you
+clicked is worse than no link, and on rows whose names are long and worth copying it is
+worse still.
 
-**Ad sets are deliberately not clickable**, on the Ad sets tab, on Longevity, and in the
-Matrix. An ad set has no single creative, so the only thing a link could open is Ads
-Manager — and on a table of long ad set names that gets in the way of reading and copying
-them more than it helps.
+The one exception is the small arrow beside an ad's name. On the row that *is* a Meta
+object, having the manager a click away is worth an 11px mark that never gets in the way
+of selecting the name.
+
+Script rows carry `ad` — the id of the biggest-spending ad with that name, because a name
+can be carried by several and that is the one the row's numbers are mostly of. 1,890 of
+1,912 Postly script rows resolve; the rest are Branch-only rows with no Meta spend behind
+them, so they stay plain text rather than linking somewhere arbitrary.
 
 Two rules the code holds:
 
