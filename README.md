@@ -1404,3 +1404,36 @@ Until then the tab shows every Google campaign and ad group with its **trials an
 installs** — 46,090 trials and 258,180 installs over three Funda days, all of it
 previously invisible — with Spend, CPT and CPI as a **dash, never a zero**. "We do not
 know what this cost" and "this cost nothing" are opposite claims.
+
+## The channel switch
+
+`Meta | Google | Blended`, beside the segment switch. It decides **whose money the page is
+about**, before the tab decides which slice of it.
+
+| | KPI tiles | tabs |
+|---|---|---|
+| **Meta** | Meta spend ÷ Meta trials | everything |
+| **Google** | Google spend ÷ Google trials | Campaigns, Ad groups |
+| **Blended** | both channels added | Combined only |
+
+**Blended is the only view where the two are added**, and the only one that answers *what
+is a trial actually costing us*. Funda, last 7 days: Meta ₹1.61 Cr / 82,528 trials /
+₹195, Google ₹1.84 Cr / 97,249 / ₹189, **both ₹3.44 Cr / 1,79,777 / ₹192**. Google is the
+larger half of that buying and had never appeared on this page.
+
+Three rules the switch holds:
+
+- **Tabs that mean nothing are disabled with the reason on them**, not hidden and not
+  silently inert. Google buying has campaigns and ad groups and nothing below them — no ad
+  sets, no ads, no creative to track. Blended has no per-row view at all: a Meta ad set and
+  a Google ad group are not rows of the same table, so it stops at the level where the two
+  genuinely are comparable.
+- **"Not loaded yet" is never read as zero.** Google figures are fetched on demand, so
+  until they land the hero says *loading Google…* rather than showing a Meta-only CPT
+  under a Blended heading.
+- **Ad sets is relabelled Ad groups** on Google rather than adding a fourth button: it is
+  the same slot, one rung below campaign, and two buttons meaning the same thing on
+  different channels is worse than one that renames itself.
+
+Remembered per browser, and `?chan=google` carries it in a link — `?chan=meta` included,
+so someone who once picked Blended has a link back.

@@ -272,6 +272,11 @@ section.ns p{margin:0}
 .segsw button:hover:not(.on){color:var(--ink)}
 .segsw button.on{background:var(--accent);color:#fff}
 .segsw button[disabled]{opacity:.4;cursor:default}
+/* Google is Google-blue and Blended is ink: three states that must never be
+   mistaken for each other, on a page where the difference is whose money you are
+   looking at. */
+.chansw button[data-c="google"].on{background:#1A73E8;color:#fff}
+.chansw button[data-c="blended"].on{background:var(--ink);color:#fff}
 /* There is no measured/modelled switch any more -- pro rata is the only reading. What
    survives is the gold, which has one job: nothing on this page is a raw measurement, and
    a screenshot of it has to carry that on its face. The badge is deliberately not a
@@ -448,6 +453,12 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   <div class="hrow">
     <div class="brand"><img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt=""><h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span> <em>Performance</em> <span class="scope" title="Meta ad accounts only — Google Ads and other channels are not included in any figure on this page">Meta ads only</span> <span id="win"></span></h1></div>
     {% if brands|length > 1 %}<div class="brandsw" id="brandsw">{% for b in brands %}<button data-b="{{ b.key }}"{% if b.key == default_brand %} class="on"{% endif %}>{{ b.label }}</button>{% endfor %}</div>{% else %}<div class="brandsw" id="brandsw" style="display:none"></div>{% endif %}
+    <div class="segsw chansw" id="chansw"
+         title="Which channel's money this page is about. Meta and Google are bought separately, reported separately, and only add up at the Blended level.">
+      <button data-c="meta" class="on">Meta</button>
+      <button data-c="google">Google</button>
+      <button data-c="blended">Blended</button>
+    </div>
     <div class="segsw" id="segsw">
       <button data-s="trial" class="on">Trial</button>
       <button data-s="testing">Testing</button>
@@ -507,7 +518,6 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <button data-t="campaigns">Campaigns <i id="n-campaigns"></i></button>
     <button data-t="adsets">Ad sets <i id="n-adsets"></i></button>
     <button data-t="ads">Ads <i id="n-ads"></i></button>
-    <button data-t="google">Google <i id="n-google"></i></button>
     <button data-t="longevity">Longevity <i id="n-longevity"></i></button>
     <button data-t="trends">Trends</button>
     <button data-t="matrix">Matrix</button>
@@ -1019,7 +1029,20 @@ function chanOf(){ return (DATA && DATA.channels && DATA.channels[EV]) || null; 
 
 /* ---------- KPIs ---------- */
 function kpis(){
-  const c = totals(), tr = c[EV], sp = c.spend, k = cpt(sp,tr);
+  const mc = totals();
+  const g = googTotals();
+  /* Blended adds the two channels; Google shows only Google. Both wait for the Google
+     payload rather than treating "not loaded yet" as zero -- a CPT that quietly reads
+     Meta-only under a Blended heading is the worst thing this switch could do. */
+  const c = chanIsMeta() ? mc
+    : CHAN === 'google'
+      ? {spend: g ? g.spend : 0, [EV]: g ? g.trials : 0, budget: 0,
+         active_adsets: 0, active_ads: 0, inst: g ? g.inst : 0}
+      : {spend: mc.spend + (g ? g.spend : 0), [EV]: mc[EV] + (g ? g.trials : 0),
+         budget: mc.budget, active_adsets: mc.active_adsets,
+         active_ads: mc.active_ads, inst: (mc.inst || 0) + (g ? g.inst : 0)};
+  const waiting = !chanIsMeta() && !g;
+  const tr = c[EV], sp = c.spend, k = waiting ? null : cpt(sp,tr);
   const trials = hasTrials();
   const pace = c.budget ? 100*sp/c.budget : 0;
   const days = Math.round((new Date(DATA.until) - new Date(DATA.since))/864e5) + 1;
@@ -1032,7 +1055,8 @@ function kpis(){
     : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`;
   /* Spend leads instead when the brand has no trial feed: promoting a CPT tile that
      could only ever read "—" would make a missing Branch key look like zero trials. */
-  const segLbl = SEG === 'blended' ? 'blended' : SEG;
+  const segLbl = (chanIsMeta() ? '' : CHAN_LABEL[CHAN].toLowerCase() + ' · ')
+    + (SEG === 'blended' ? 'blended' : SEG);
   /* Pro rata changes what CPT means, so it is named on the tile itself and not only in
      the header badge — a screenshot of this page has to carry its own caveat. The label
      is the whole caveat: the size of the lift and the measured figure under it belong in
@@ -1040,9 +1064,9 @@ function kpis(){
   const modLbl = proOn() ? ' · <span class="modelled">pro rata</span>' : '';
   document.getElementById('kpis').innerHTML =
    (trials ? `
-   <div class="kpi hero"><div class="k">Current CPT · ${segLbl}${modLbl}</div>
+   <div class="kpi hero"><div class="k">Current CPT · ${segLbl}${chanIsMeta()?modLbl:''}</div>
      <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
-     <div class="s">${heroSub}</div></div>` : '') + `
+     <div class="s">${waiting ? 'loading Google…' : heroSub}</div></div>` : '') + `
    <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend</div><div class="v">${rs(sp)}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
@@ -1248,6 +1272,53 @@ let SERIES = null, SERIESKEY = null, SERIESBUSY = false;
 /* Google is its own payload for the same reason Longevity is: a different question with
    a different cost, fetched when the tab is opened and never before. */
 let GOOG = null, GOOGKEY = null, GOOGBUSY = false;
+/* Which channel's money the page is about. Meta is everything that was here before;
+   Google is its own buying with its own campaigns; Blended is the only view where the
+   two are added, and the only one that answers "what is a trial actually costing us". */
+let CHAN = 'meta';
+const chanIsMeta = () => CHAN === 'meta';
+/* Google totals for the CURRENT window, or null while they are still loading. Kept
+   separate from GOOG so a half-loaded payload can never be silently read as zeros. */
+/* Which tabs mean anything for the channel on screen. Google has campaigns and ad
+   groups and nothing below them -- no ad sets, no ads, no creative to be longevity-tracked
+   -- and Blended has no per-row view at all, because a Meta ad set and a Google ad group
+   are not rows of the same table. Disabled with the reason on them, never quietly inert. */
+const CHAN_TABS = {
+  meta: null,                                   // null = everything
+  google: ['campaigns', 'adsets'],              // adsets is relabelled "Ad groups"
+  blended: ['combined'],
+};
+const CHAN_LABEL = {meta: 'Meta', google: 'Google', blended: 'Meta + Google'};
+
+function chanTabsAvail(){
+  const allow = CHAN_TABS[CHAN];
+  for(const b of document.getElementById('tabs').children){
+    const t = b.dataset.t;
+    const on = !allow || allow.includes(t);
+    b.disabled = !on;
+    b.style.opacity = on ? '' : '.4';
+    b.title = on ? '' : CHAN === 'blended'
+      ? 'Blended has no per-row view: a Meta ad set and a Google ad group are not rows of the same table.'
+      : 'Google buying has campaigns and ad groups and nothing below them.';
+  }
+  /* Relabelled rather than a fourth button: it is the same slot, one rung down from
+     campaign, and two buttons that mean the same thing on different channels is worse. */
+  const as = document.querySelector('#tabs button[data-t="adsets"]');
+  if(as) as.firstChild.textContent = chanIsMeta() ? 'Ad sets ' : 'Ad groups ';
+  if(allow && !allow.includes(TAB)){
+    TAB = allow[0];
+    [...document.getElementById('tabs').children].forEach(
+      b => b.classList.toggle('on', b.dataset.t === TAB));
+  }
+}
+
+function googTotals(){
+  if(!GOOG || !googFresh()) return null;
+  const ev = (GOOG.events || [])[0];
+  const t = GOOG.totals || {};
+  return {spend: t.spend || 0, trials: t[ev] || 0, inst: t.inst || 0,
+          ok: !!GOOG.spend_ok};
+}
 const googKey = () => `${BRAND}|${RANGE}|${CUSTOM ? CUSTOM.since+CUSTOM.until : ''}`;
 const googFresh = () => !!(GOOG && GOOGKEY === googKey());
 
@@ -1256,7 +1327,8 @@ async function loadGoogle(force){
   if(googFresh() && !force) return;
   const hit = force ? null : await cacheGet('goog|' + key);
   if(hit){
-    GOOG = hit.v; GOOGKEY = key; renderTable(); noteFor();
+    GOOG = hit.v; GOOGKEY = key;
+    googPaint();
     if(hit.held < CACHE_SOFT) return;
     return loadGoogle(true);
   }
@@ -1272,8 +1344,19 @@ async function loadGoogle(force){
   }catch(e){
     document.getElementById('gcount').textContent = 'failed: ' + e;
   }finally{
-    GOOGBUSY = false; renderTable(); noteFor();
+    GOOGBUSY = false;
+    googPaint();
   }
+}
+
+/* A full render, not just the table: on Google and Blended the KPI tiles are made of this
+   payload too. Re-rendering only the table left the hero reading "loading Google…" over a
+   table that had already filled in — and it only showed up on the CACHE-HIT path, which
+   is the one that returns before the fetch, so it looked like a race and was not. One
+   function, called from both exits, so the two cannot drift again. */
+function googPaint(){
+  if(!chanIsMeta() && DATA) render();
+  else { renderTable(); noteFor(); }
 }
 
 function googRows(){
@@ -2171,15 +2254,76 @@ function cell(o, c){
   return `<td>${o[c.k]??'—'}</td>`;
 }
 
+/* Blended is the only place the two channels are added, and the only view that answers
+   "what is a trial actually costing us". It is a channel table, not a row table: a Meta
+   ad set and a Google ad group are not rows of the same thing, so it stops at the level
+   where they genuinely are comparable. */
+function renderBlended(){
+  const tbl = document.getElementById('tbl');
+  const m = totals(), g = googTotals();
+  const rows = [
+    {n: 'Meta', sp: m.spend, tr: m[EV], ins: m.inst || 0, sure: true},
+    {n: 'Google', sp: g ? g.spend : 0, tr: g ? g.trials : 0, ins: g ? g.inst : 0,
+     sure: !!g, note: g && !g.ok ? 'trials measured, spend unavailable' : ''},
+  ];
+  const tot = {sp: rows.reduce((a,r)=>a+r.sp,0), tr: rows.reduce((a,r)=>a+r.tr,0),
+               ins: rows.reduce((a,r)=>a+r.ins,0)};
+  const pc = (v, t) => t ? (100*v/t).toFixed(1) + '%' : '—';
+  tbl.querySelector('thead').innerHTML =
+    `<tr><th class="l">Channel</th><th>Spend</th><th>Trials</th><th>CPT</th>
+     <th>Installs</th><th>CPI</th><th>Share of spend</th><th>Share of trials</th></tr>`;
+  tbl.querySelector('tbody').innerHTML = rows.map(r => `<tr>
+      <td class="name">${r.n}${r.note ? `<span class="pill">${r.note}</span>` : ''}${
+        r.sure ? '' : '<span class="pill">loading…</span>'}</td>
+      <td>${r.sp ? rs(r.sp) : '<span class="dimtxt">—</span>'}</td>
+      <td>${num(r.tr)}</td>
+      <td class="${cls(cpt(r.sp,r.tr))}">${r.sp && r.tr ? rs(r.sp/r.tr) : '<span class="dimtxt">—</span>'}</td>
+      <td>${num(r.ins)}</td>
+      <td>${r.sp && r.ins ? rs(r.sp/r.ins) : '<span class="dimtxt">—</span>'}</td>
+      <td>${pc(r.sp, tot.sp)}</td><td>${pc(r.tr, tot.tr)}</td></tr>`).join('');
+  tbl.querySelector('tfoot').innerHTML = `<tr>
+      <td class="l">Both channels</td><td>${rs(tot.sp)}</td><td>${num(tot.tr)}</td>
+      <td class="${cls(cpt(tot.sp,tot.tr))}">${tot.tr ? rs(tot.sp/tot.tr) : '—'}</td>
+      <td>${num(tot.ins)}</td>
+      <td>${tot.ins ? rs(tot.sp/tot.ins) : '—'}</td><td></td><td></td></tr>`;
+  document.getElementById('rowcount').textContent = '';
+}
+
 function renderTable(){
   const tbl = document.getElementById('tbl');
   const isSeries = TAB==='trends' || TAB==='matrix';
   document.getElementById('lctl').style.display = TAB==='longevity' ? 'flex' : 'none';
-  document.getElementById('gctl').style.display = TAB==='google' ? 'flex' : 'none';
+  document.getElementById('gctl').style.display =
+    (CHAN === 'google' && TAB !== 'combined') ? 'flex' : 'none';
   document.getElementById('sctl').style.display = isSeries ? 'flex' : 'none';
   document.getElementById('trendsWrap').style.display = TAB==='trends' ? 'block' : 'none';
   document.getElementById('matrixWrap').style.display = TAB==='matrix' ? 'block' : 'none';
   document.getElementById('tblWrap').style.display = isSeries ? 'none' : 'block';
+  /* The channel switch decides what the table IS, before the tab decides which slice of
+     it. Meta falls through to everything that was here before. */
+  if(CHAN === 'blended'){
+    document.getElementById('ctl').style.display='none';
+    document.getElementById('trendsWrap').style.display='none';
+    document.getElementById('matrixWrap').style.display='none';
+    document.getElementById('tblWrap').style.display='block';
+    if(!googFresh() && !GOOGBUSY) loadGoogle(false);
+    renderBlended();
+    return;
+  }
+  if(CHAN === 'google'){
+    document.getElementById('ctl').style.display='none';
+    document.getElementById('trendsWrap').style.display='none';
+    document.getElementById('matrixWrap').style.display='none';
+    document.getElementById('tblWrap').style.display='block';
+    if(!googFresh() && !GOOGBUSY) loadGoogle(false);
+    /* Campaigns and Ad groups are the same table at two depths, which is exactly what
+       the checkbox already did -- so the tab drives the checkbox rather than duplicating
+       it. Combined shows the channel on its own, the same shape as Blended. */
+    const camp = document.getElementById('gCamp');
+    camp.checked = (TAB === 'campaigns');
+    renderGoogle();
+    return;
+  }
   if(isSeries){
     document.getElementById('ctl').style.display='none';
     // The window or the brand may have moved under us — a re-render must never draw the
@@ -2191,12 +2335,6 @@ function renderTable(){
       TAB === 'trends' ? 'inline-flex' : 'none';
     sActiveAvail(); sMetricAvail();
     if(TAB==='trends') renderTrends(); else renderMatrix();
-    return;
-  }
-  if(TAB==='google'){
-    document.getElementById('ctl').style.display='none';
-    if(!googFresh() && !GOOGBUSY) loadGoogle(false);
-    renderGoogle();
     return;
   }
   if(TAB==='longevity'){
@@ -2297,6 +2435,7 @@ function render(){
   T = DATA.cpt_target;
   applyBrand(DATA.brand);
   segAvail();
+  chanTabsAvail();
   attrAvail();
   document.getElementById('win').textContent =
     DATA.since===DATA.until ? DATA.since : `${DATA.since} → ${DATA.until}`;
@@ -2306,8 +2445,8 @@ function render(){
       (t === 'accounts' ? acctRows() : DATA[t].filter(inSeg)).length;
   /* Only once the tab has been opened: a count is a promise that the number is real, and
      guessing one before the fetch would be a promise this cannot keep. */
-  document.getElementById('n-google').textContent =
-    GOOG && googFresh() ? GOOG.ad_groups.length : '';
+  const gn = document.querySelector('#tabs button[data-t="adsets"] i');
+  if(gn && !chanIsMeta()) gn.textContent = GOOG && googFresh() ? GOOG.ad_groups.length : '';
   document.getElementById('cpWrap').style.display =
     (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
   renderLimits(); kpis(); renderTable();
@@ -2353,7 +2492,7 @@ function noteFor(){
   NOTE_TITLES = [];
   /* Each note builder now returns its own sections, so the panel reads the same on
      every tab: a list of topics, not a paragraph you have to search. */
-  if(TAB === 'google'){ paintNote(googNote()); return; }
+  if(CHAN !== 'meta'){ paintNote(googNote()); return; }
   if(TAB === 'longevity'){ paintNote(longNote()); return; }
   if(TAB === 'trends' || TAB === 'matrix'){ paintNote(seriesNote()); return; }
   mainNote();
@@ -2931,7 +3070,6 @@ document.getElementById('tabs').onclick = e => {
   renderTable(); noteFor(); attrAvail();
   // Opening the tab is the request. Anything else means looking at an empty table and
   // wondering what to press.
-  if(TAB==='google' && !googFresh() && !GOOGBUSY) loadGoogle(false);
   if(TAB==='longevity' && !longFresh() && !LONGBUSY) loadLongevity(false);
   if((TAB==='trends' || TAB==='matrix') && !seriesFresh() && !SERIESBUSY) loadSeries(false);
 };
@@ -3058,6 +3196,18 @@ document.addEventListener('keydown', e => {
 
 /* Switching segment is a pure re-render — the payload already carries both. No fetch,
    so it is instant, and it cannot go stale against the numbers beside it. */
+document.getElementById('chansw').onclick = e => {
+  const ch = e.target.dataset && e.target.dataset.c;
+  if(!ch || ch === CHAN || e.target.disabled) return;
+  CHAN = ch;
+  try{ localStorage.setItem('cpt_chan', ch); }catch(_){}
+  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.c === ch));
+  /* Google numbers are fetched on demand, so switching to a view that needs them has to
+     ask for them -- otherwise the first switch shows an empty page and the second shows
+     the answer, which reads as a bug. */
+  if(!chanIsMeta() && !googFresh() && !GOOGBUSY) loadGoogle(false);
+  render();
+};
 document.getElementById('segsw').onclick = e => {
   const sg = e.target.dataset && e.target.dataset.s;
   if(!sg || sg === SEG || e.target.disabled) return;
@@ -3091,6 +3241,19 @@ try{
      reason to send someone a matrix link. Validated against the columns that exist, so a
      stale date in an old bookmark falls back to the period total rather than sorting by
      nothing. */
+  /* `?chan=google` carries the whole view in a link, and the choice is remembered per
+     browser: whoever works on Google buying opens the page on Google every time. */
+  try{
+    /* `?chan=meta` is accepted too, and deliberately: without it, someone who once
+       picked Blended has no link that takes them back to the Meta view. */
+    const want = q.get('chan') || localStorage.getItem('cpt_chan');
+    if(want === 'google' || want === 'blended' || want === 'meta'){
+      CHAN = want;
+      if(q.get('chan')){ try{ localStorage.setItem('cpt_chan', want); }catch(_){} }
+      [...document.getElementById('chansw').children].forEach(
+        x => x.classList.toggle('on', x.dataset.c === want));
+    }
+  }catch(_){}
   if(q.get('active') === '1') document.getElementById('sActive').checked = true;
   if(q.get('testing') === '1') document.getElementById('sTesting').checked = true;
   const sk = q.get('sort');
