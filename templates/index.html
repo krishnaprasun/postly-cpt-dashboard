@@ -1035,15 +1035,21 @@ function kpis(){
   /* Blended adds the two channels; Google shows only Google. Both wait for the Google
      payload rather than treating "not loaded yet" as zero -- a CPT that quietly reads
      Meta-only under a Blended heading is the worst thing this switch could do. */
+  /* null propagates on purpose: a blended total that silently dropped Google's missing
+     trials would read as a real, smaller number rather than as "we do not know". */
+  const gTr = g && g.trials !== null ? g.trials : null;
+  const gIn = g && g.inst !== null ? g.inst : null;
   const c = chanIsMeta() ? mc
     : CHAN === 'google'
-      ? {spend: g ? g.spend : 0, [EV]: g ? g.trials : 0, budget: 0,
-         active_adsets: 0, active_ads: 0, inst: g ? g.inst : 0}
-      : {spend: mc.spend + (g ? g.spend : 0), [EV]: mc[EV] + (g ? g.trials : 0),
+      ? {spend: g ? g.spend : 0, [EV]: gTr, budget: 0,
+         active_adsets: 0, active_ads: 0, inst: gIn}
+      : {spend: mc.spend + (g ? g.spend : 0),
+         [EV]: gTr === null ? null : mc[EV] + gTr,
          budget: mc.budget, active_adsets: mc.active_adsets,
-         active_ads: mc.active_ads, inst: (mc.inst || 0) + (g ? g.inst : 0)};
+         active_ads: mc.active_ads, inst: gIn === null ? null : (mc.inst || 0) + gIn};
   const waiting = !chanIsMeta() && !g;
-  const tr = c[EV], sp = c.spend, k = waiting ? null : cpt(sp,tr);
+  const tr = c[EV], sp = c.spend;
+  const k = (waiting || tr === null) ? null : cpt(sp,tr);
   /* Named before the tiles are built, because the non-Meta branch below needs it too.
      Spend leads instead of CPT when the brand has no trial feed at all: promoting a CPT
      tile that could only ever read "—" would make a missing Branch key look like zero
@@ -1064,7 +1070,7 @@ function kpis(){
      on screen. */
   if(!chanIsMeta()){
     const gt = googTotals();
-    const ins = c.inst || 0;
+    const ins = c.inst;
     const split = (a, b) => (a + b) ? `${(100*a/(a+b)).toFixed(0)}% / ${(100*b/(a+b)).toFixed(0)}%` : '—';
     const dash = '<span class="dimtxt">—</span>';
     document.getElementById('kpis').innerHTML = `
@@ -1077,13 +1083,16 @@ function kpis(){
        <div class="v">${sp ? rs(sp) : dash}</div>
        <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
      <div class="kpi"><div class="k">Trials</div>
-       <div class="v">${waiting ? dash : num(tr)}</div>
-       <div class="s">${CHAN === 'blended'
-         ? `Meta ${num(mc[EV])} · Google ${gt ? num(gt.trials) : '—'}`
-         : 'joined to campaigns and ad groups by name'}</div></div>
+       <div class="v">${(waiting || tr === null) ? dash : num(tr)}</div>
+       <div class="s">${waiting ? 'loading…'
+         : tr === null ? `unavailable — ${(gt && gt.why) || 'Branch did not answer'}`
+         : CHAN === 'blended'
+           ? `Meta ${num(mc[EV])} · Google ${num(gt.trials)}`
+           : 'joined to campaigns and ad groups by name'}</div></div>
      <div class="kpi"><div class="k">Installs</div>
-       <div class="v">${waiting ? dash : num(ins)}</div>
-       <div class="s">${ins && sp ? `${rs(sp/ins)} each` : 'no CPI yet'}</div></div>` +
+       <div class="v">${(waiting || ins === null) ? dash : num(ins)}</div>
+       <div class="s">${ins && sp ? `${rs(sp/ins)} each`
+         : ins === null ? 'unavailable, not zero' : 'no CPI yet'}</div></div>` +
      (CHAN === 'blended' ? `
      <div class="kpi"><div class="k">Channel split</div>
        <div class="v">${gt ? split(mc.spend, gt.spend) : dash}</div>
@@ -1375,8 +1384,15 @@ function googTotals(){
   if(!GOOG || !googFresh()) return null;
   const ev = (GOOG.events || [])[0];
   const t = GOOG.totals || {};
-  return {spend: t.spend || 0, trials: t[ev] || 0, inst: t.inst || 0,
-          ok: !!GOOG.spend_ok};
+  /* Branch refusing is not zero trials. `trial_days` counts the days that actually
+     answered, so nought of them means the number is UNKNOWN -- and this dashboard's whole
+     rule is that unknown and zero must never look alike. Spend is independent: it comes
+     from Google and is fine either way. */
+  const known = !GOOG.trials_error && GOOG.trial_days > 0;
+  return {spend: t.spend || 0, ok: !!GOOG.spend_ok,
+          trials: known ? (t[ev] || 0) : null,
+          inst: known ? (t.inst || 0) : null,
+          trialsKnown: known, why: GOOG.trials_error || ''};
 }
 const googKey = () => `${BRAND}|${RANGE}|${CUSTOM ? CUSTOM.since+CUSTOM.until : ''}`;
 const googFresh = () => !!(GOOG && GOOGKEY === googKey());
@@ -2322,11 +2338,16 @@ function renderBlended(){
   const m = totals(), g = googTotals();
   const rows = [
     {n: 'Meta', sp: m.spend, tr: m[EV], ins: m.inst || 0, sure: true},
-    {n: 'Google', sp: g ? g.spend : 0, tr: g ? g.trials : 0, ins: g ? g.inst : 0,
-     sure: !!g, note: g && !g.ok ? 'trials measured, spend unavailable' : ''},
+    {n: 'Google', sp: g ? g.spend : 0, tr: g ? g.trials : null, ins: g ? g.inst : null,
+     sure: !!g, note: !g ? '' : !g.ok ? 'spend unavailable'
+       : !g.trialsKnown ? 'trials unavailable' : ''},
   ];
-  const tot = {sp: rows.reduce((a,r)=>a+r.sp,0), tr: rows.reduce((a,r)=>a+r.tr,0),
-               ins: rows.reduce((a,r)=>a+r.ins,0)};
+  /* A total across a missing part is not a total. If either channel's trials are
+     unknown, the blended trial count and CPT are unknown too, and say so. */
+  const anyNull = k => rows.some(r => r[k] === null || r[k] === undefined);
+  const tot = {sp: rows.reduce((a,r)=>a+r.sp,0),
+               tr: anyNull('tr') ? null : rows.reduce((a,r)=>a+r.tr,0),
+               ins: anyNull('ins') ? null : rows.reduce((a,r)=>a+r.ins,0)};
   const pc = (v, t) => t ? (100*v/t).toFixed(1) + '%' : '—';
   tbl.querySelector('thead').innerHTML =
     `<tr><th class="l">Channel</th><th>Spend</th><th>Trials</th><th>CPT</th>
@@ -2335,15 +2356,17 @@ function renderBlended(){
       <td class="name">${r.n}${r.note ? `<span class="pill">${r.note}</span>` : ''}${
         r.sure ? '' : '<span class="pill">loading…</span>'}</td>
       <td>${r.sp ? rs(r.sp) : '<span class="dimtxt">—</span>'}</td>
-      <td>${num(r.tr)}</td>
-      <td class="${cls(cpt(r.sp,r.tr))}">${r.sp && r.tr ? rs(r.sp/r.tr) : '<span class="dimtxt">—</span>'}</td>
-      <td>${num(r.ins)}</td>
+      <td>${r.tr === null ? '<span class="dimtxt">—</span>' : num(r.tr)}</td>
+      <td class="${r.tr ? cls(cpt(r.sp,r.tr)) : ''}">${r.sp && r.tr ? rs(r.sp/r.tr) : '<span class="dimtxt">—</span>'}</td>
+      <td>${r.ins === null ? '<span class="dimtxt">—</span>' : num(r.ins)}</td>
       <td>${r.sp && r.ins ? rs(r.sp/r.ins) : '<span class="dimtxt">—</span>'}</td>
-      <td>${pc(r.sp, tot.sp)}</td><td>${pc(r.tr, tot.tr)}</td></tr>`).join('');
+      <td>${pc(r.sp, tot.sp)}</td>
+      <td>${tot.tr === null ? '<span class="dimtxt">—</span>' : pc(r.tr, tot.tr)}</td></tr>`).join('');
   tbl.querySelector('tfoot').innerHTML = `<tr>
-      <td class="l">Both channels</td><td>${rs(tot.sp)}</td><td>${num(tot.tr)}</td>
-      <td class="${cls(cpt(tot.sp,tot.tr))}">${tot.tr ? rs(tot.sp/tot.tr) : '—'}</td>
-      <td>${num(tot.ins)}</td>
+      <td class="l">Both channels</td><td>${rs(tot.sp)}</td>
+      <td>${tot.tr === null ? '—' : num(tot.tr)}</td>
+      <td class="${tot.tr ? cls(cpt(tot.sp,tot.tr)) : ''}">${tot.tr ? rs(tot.sp/tot.tr) : '—'}</td>
+      <td>${tot.ins === null ? '—' : num(tot.ins)}</td>
       <td>${tot.ins ? rs(tot.sp/tot.ins) : '—'}</td><td></td><td></td></tr>`;
   document.getElementById('rowcount').textContent = '';
 }
