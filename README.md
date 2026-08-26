@@ -1374,6 +1374,24 @@ key — the same trade the Meta side already makes at ad-name level. A campaign 
 Google Ads mid-window shows as two rows until the window rolls past the rename. Stated in
 the tab's info panel rather than left to be discovered.
 
+### Diagnosing the credential
+
+`python3 tools/google_ads_check.py` checks the four things that must all be true, in
+order, and stops at the first that fails. They matter separately because they fail in
+ways that look identical from the outside — an empty result can mean *no spend*, *test
+access only*, *wrong account*, or *token expired*:
+
+1. the credential file is present and complete
+2. the **OAuth refresh token** still exchanges (this is what is broken today)
+3. the **developer token** is accepted for the login customer — a `DEVELOPER_TOKEN_NOT_APPROVED`
+   here means Test access, which reaches test accounts and nothing else
+4. spend actually reads back for the last 7 days — **test-level access shows up here**,
+   as a perfectly successful call that returns nothing
+
+The last check is the one worth having. A test-level developer token authenticates fine
+and returns empty, which is indistinguishable from a quiet week unless something asks the
+question directly.
+
 ### Current state: trials yes, spend no
 
 The stored refresh token is dead — `invalid_grant`. A refresh token minted while the OAuth
