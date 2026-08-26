@@ -443,6 +443,16 @@ def meta_insights(acct, since, until):
         "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend"})
 
 
+def _as_of_str(ts):
+    """'HH:MM:SS' in IST for an epoch, or None. None is not a failure -- it means no live
+    pull happened, because every day asked for was settled history."""
+    return datetime.fromtimestamp(ts, IST).strftime("%H:%M:%S") if ts else None
+
+
+def _age_of(ts):
+    return int(max(0, time.time() - ts)) if ts else None
+
+
 def roster_age(acct, kind):
     """Seconds since this listing was last read from Meta, or None if never."""
     with _roster_lock:
@@ -1384,9 +1394,15 @@ def window_data(since, until, B, today=None):
                 chan_days[d] = idx[d]
 
     prov["live_since"], prov["live_until"] = live_since, live_until
+    # When the numbers were actually PULLED, as opposed to when this dict was assembled.
+    # Those are different things and the page was only ever shown the second one, so
+    # opening it always read as "just refreshed" no matter how old the figures were.
+    # None means no pull happened: every day in the window was settled history.
+    prov["meta_at"] = prov["branch_at"] = None
     if live_since:
         for a in B["accounts"]:
             meta[a["id"]] += meta_insights_daily(a["id"], live_since, live_until)
+        prov["meta_at"] = time.time()
         # Branch failing must not take the page down with it. Spend, budgets, statuses and
         # the whole testing/trial split come from Meta and are perfectly good without it —
         # a Branch throttle used to 500 the entire dashboard, which is how a backfill
@@ -1399,6 +1415,7 @@ def window_data(since, until, B, today=None):
                     for name, n in by_name.items():
                         trials[ev][name] += n
                 chan_days[day] = {ev: chan_of_day(bn) for ev, bn in per_ev.items()}
+            prov["branch_at"] = time.time()
         except Exception as ex:
             kind = ("Branch is rate-limiting this app"
                     if isinstance(ex, BranchThrottled) else str(ex)[:160])
@@ -2776,6 +2793,14 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         # that one has no trials to show, this one has trials it could not read.
         "trials_error": prov.get("trials_error"),
         "budgets_known": budgets_known,
+        # The two real pulls, each with its own clock. Spend moves minute to minute,
+        # trials arrive all evening, and budgets come off a listing cached for up to an
+        # hour -- one "last refreshed" for all three was always a fiction.
+        "meta_as_of": _as_of_str(prov.get("meta_at")),
+        "meta_age_sec": _age_of(prov.get("meta_at")),
+        "trials_as_of": _as_of_str(prov.get("branch_at")),
+        "trials_age_sec": _age_of(prov.get("branch_at")),
+        "all_stored": prov.get("meta_at") is None,
         "budget_age_sec": budget_age,
         "budget_as_of": (datetime.fromtimestamp(time.time() - budget_age, IST)
                          .strftime("%H:%M") if budget_age is not None else ""),

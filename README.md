@@ -1152,3 +1152,44 @@ Four things it is careful about:
 Refresh, the 30-minute auto-pull, the stale re-check and the on-focus re-pull all **skip**
 the cache deliberately. Coming back to a tab after a while is the one moment a held copy
 is exactly the wrong answer — you glance at a CPT and act on it.
+
+## Freshness: when the numbers were pulled
+
+The header used to read `Last refreshed <generated_at>`, which is when the **payload was
+assembled** — not when anything was fetched. Those came apart the moment a cache appeared
+in front of it, first on the server and then in the browser, so opening the page always
+read as "just refreshed" however old the figures actually were.
+
+It now leads with the pull:
+
+```
+Spend from Meta 16:33:27 · 6 min ago · trials 6 min · budgets 31 min · auto 30m
+```
+
+Three separate clocks, because there are three separate pulls and one number for all of
+them was always a fiction. Spend moves minute to minute; Branch trials arrive all evening;
+budgets and statuses come off an ad-set listing cached for up to an hour. Each is stamped
+where it happens — `meta_as_of` / `trials_as_of` in `window_data`, `budget_as_of` from the
+roster's own age — and each warns independently.
+
+The age of any one of them is **three numbers added up**, and all three are needed:
+
+```
+DATA[k]      how far before assembly that thing was pulled
+DATA.age     how long the payload then sat in the SERVER cache
+sinceFetch   how long it has been on this page (browser-cache time folds into .age)
+```
+
+Missing the middle one made a cached serve report a ten-second-old Meta pull however long
+the server had been holding it — the same fiction one layer down. Seven cases unit-tested.
+
+A window whose every day came from the store had no live pull at all, and says so rather
+than inventing a time:
+
+```
+Settled history · every day in this window came from the store, so there is nothing live
+to refresh
+```
+
+The assembly time is not useless — it is what both caches are keyed on — so it moves to
+the tooltip, alongside each pull time and whether this copy came from the browser cache.

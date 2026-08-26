@@ -626,6 +626,16 @@ let staleTimer=null, BUSY=false, lastFetchAt=0, ticker=null;
 function ageSecs(){
   return DATA ? (DATA.age || 0) + Math.max(0, (Date.now() - lastFetchAt) / 1000) : null;
 }
+/* Age of a specific pull, kept live. Three clocks add up and all three are needed:
+     DATA[k]    how far BEFORE the payload was assembled that thing was pulled
+     DATA.age   how long the payload then sat in the server's cache
+     sinceFetch how long it has been on this page (client cache time is folded into .age)
+   Missing the middle one made a cached serve report a ten-second-old Meta pull however
+   long the server had been holding it -- the same fiction one layer down. */
+function pullAge(k){
+  const a = DATA && DATA[k];
+  return (a === null || a === undefined) ? null : a + ageSecs();
+}
 function ago(sec){
   if(sec < 45) return 'just now';
   if(sec < 5400) return Math.round(sec/60) + ' min ago';
@@ -635,9 +645,33 @@ function stampNow(){
   const el = document.getElementById('stamp');
   if(BUSY){ el.innerHTML = '<span class="spin"></span>refreshing…'; return; }
   if(!DATA){ el.textContent = ''; return; }
-  const a = ageSecs();
-  el.innerHTML = `Last refreshed <b>${DATA.generated_at.replace(' IST','')}</b> IST · ` +
-                 `<span class="${a > 2100 ? 'warn' : ''}">${ago(a)}</span> · auto 30m`;
+  /* The headline is when the numbers were PULLED, not when this payload was assembled.
+     Those came apart the moment anything was cached -- on the server, then in the
+     browser -- and the page was showing the second one, so opening it always read as
+     "just refreshed" however old the figures were. */
+  if(DATA.all_stored){
+    el.innerHTML = `<b>Settled history</b> · every day in this window came from the
+      store, so there is nothing live to refresh`;
+    el.title = `Assembled ${DATA.generated_at}`;
+    return;
+  }
+  const m = pullAge('meta_age_sec'), t = pullAge('trials_age_sec'),
+        b = pullAge('budget_age_sec');
+  const bit = (lab, secs, warnAt) => secs === null ? ''
+    : ` · <span class="${secs > warnAt ? 'warn' : ''}">${lab} ${ago(secs)
+        .replace(' ago','').replace('just now','now')}</span>`;
+  el.innerHTML = (m === null
+      ? `Last refreshed <b>${DATA.generated_at.replace(' IST','')}</b> IST`
+      : `Spend from Meta <b>${DATA.meta_as_of}</b> · ` +
+        `<span class="${m > 2100 ? 'warn' : ''}">${ago(m)}</span>`)
+    + bit('trials', t, 2100) + bit('budgets', b, 2400) + ' · auto 30m';
+  /* The assembly time is not useless -- it is what the server cache and the browser
+     cache are keyed on -- it just is not the headline. */
+  el.title = `Meta spend pulled ${DATA.meta_as_of || '—'} IST`
+    + (DATA.trials_as_of ? `\nBranch trials pulled ${DATA.trials_as_of} IST` : '')
+    + (DATA.budget_as_of ? `\nBudgets and statuses as of ${DATA.budget_as_of} IST` : '')
+    + `\nPayload assembled ${DATA.generated_at}`
+    + (DATA.from_cache ? '\nServed from this browser\'s cache' : '');
 }
 
 /* On a cold load there is nothing behind the veil to blur, so lay the real shape of the
@@ -954,8 +988,8 @@ function kpis(){
    old, must not look equally live. Silent under two minutes, because saying "as of now"
    on every render is noise. */
 function budgetAge(){
-  const a = DATA.budget_age_sec;
-  if(a === null || a === undefined || a < 120) return '';
+  const a = pullAge('budget_age_sec');
+  if(a === null || a < 120) return '';
   return ` · budget as of <span class="${a > 2400 ? 'warn' : ''}">${DATA.budget_as_of}</span>`;
 }
 
@@ -1100,6 +1134,9 @@ function cacheSweep(){
 function cacheAge(v, held){
   if(!v || typeof v !== 'object') return v;
   const out = Object.assign({}, v);
+  /* Only `age` moves. meta_age_sec and friends are offsets from the moment the payload
+     was assembled, not from now, so they are already right -- pullAge() adds ageSecs()
+     on top, and bumping them here as well would count the hold twice. */
   out.age = (out.age || 0) + Math.round(held / 1000);
   out.from_cache = true;
   if(held > CACHE_SOFT) out.stale = true;
