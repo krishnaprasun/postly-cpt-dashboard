@@ -1270,22 +1270,28 @@ GOOGLE_DIMS = {"gcampaign": "Campaign", "gadgroup": "Ad group"}
 # a window are IDENTICAL for both dimensions -- Campaign is the Ad group fold summed one
 # level up. Caching the trials by window alone means opening Campaign after Ad group costs
 # no Branch call at all, where before it cost a second full pull and usually got a 429.
-_gtrials_cache, _gseries_cache = {}, {}
+_gtrials_cache, _gseries_cache, _gwin_cache = {}, {}, {}
 _gcache_lock = threading.Lock()
 GSERIES_TTL = int(os.environ.get("GSERIES_TTL", "900"))
+# A FAILED pull is cached too, briefly. Not caching it at all sounded principled -- do not
+# let a transient look permanent -- but it meant that while Branch was throttling, every
+# single interaction paid the full twenty-second failure again. Sixty seconds is short
+# enough that a recovery is picked up almost at once and long enough that clicking around
+# a throttled window is instant instead of unusable.
+GERR_TTL = int(os.environ.get("GERR_TTL", "60"))
 
 
 def _gcache_get(store, key, ttl):
     with _gcache_lock:
         hit = store.get(key)
-    if hit and time.time() - hit["at"] < ttl:
+    if hit and time.time() - hit["at"] < (GERR_TTL if hit.get("err") else ttl):
         return hit["v"], int((time.time() - hit["at"]) // 60)
     return None, None
 
 
-def _gcache_put(store, key, v, keep=8):
+def _gcache_put(store, key, v, keep=8, err=False):
     with _gcache_lock:
-        store[key] = {"at": time.time(), "v": v}
+        store[key] = {"at": time.time(), "v": v, "err": err}
         if len(store) > keep:
             for k in sorted(store, key=lambda k: store[k]["at"])[:len(store) - keep]:
                 store.pop(k, None)
@@ -1314,8 +1320,7 @@ def google_trials_window(brand, dates, force=False):
     out = (stored, err)
     # A throttled pull is not cached: caching it would hold an empty answer for fifteen
     # minutes and make a transient look permanent.
-    if not err:
-        _gcache_put(_gtrials_cache, key, out)
+    _gcache_put(_gtrials_cache, key, out, err=bool(err))
     return out
 
 
@@ -1327,8 +1332,7 @@ def google_series(brand, since, until, dim="gadgroup", force=False):
         if hit is not None:
             return dict(hit, cached=True, age_min=age)
     out = _google_series_build(brand, since, until, dim=dim, force=force)
-    if not out.get("trials_error"):
-        _gcache_put(_gseries_cache, key, out)
+    _gcache_put(_gseries_cache, key, out, err=bool(out.get("trials_error")))
     return dict(out, cached=False, age_min=0)
 
 
@@ -1618,6 +1622,18 @@ def google_customers(brand):
 
 
 def google_window(brand, since, until, force=False):
+    """See _google_window_build. Cached, because switching channel should not re-pull."""
+    key = (brand, since, until)
+    if not force:
+        hit, age = _gcache_get(_gwin_cache, key, GSERIES_TTL)
+        if hit is not None:
+            return dict(hit, cached=True, age_min=age)
+    out = _google_window_build(brand, since, until, force=force)
+    _gcache_put(_gwin_cache, key, out, err=bool(out.get("trials_error")))
+    return dict(out, cached=False, age_min=0)
+
+
+def _google_window_build(brand, since, until, force=False):
     """Google campaigns and ad groups for a window: trials, installs, spend, CPT.
 
     Trials come from the store for days that have one and from Branch for the rest --
@@ -1629,15 +1645,13 @@ def google_window(brand, since, until, force=False):
     B = C.brand(brand)
     dates = date_range(since, until)
     ev_keys = [k for k, _ in _with_installs(B["events"])]
-    stored = google_trials_read(brand, dates) if H.available() else {}
-    missing = [d for d in dates if d not in stored]
+    # The same cached, window-keyed pull the series uses. Opening the Google tab and then
+    # Trends now costs ONE Branch pull between them instead of one each.
+    per_day, err = google_trials_window(brand, dates, force=force)
+    if err:
+        err = f"Branch: {err}"
+    stored = per_day
     live = {}
-    err = None
-    if missing:
-        try:
-            live = google_trials_daily(missing[0], missing[-1], B)
-        except Exception as ex:
-            err = f"Branch: {str(ex)[:160]}"
 
     rows = {}
 

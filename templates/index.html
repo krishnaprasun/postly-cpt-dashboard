@@ -297,6 +297,7 @@ section.ns p{margin:0}
    button; there is nothing to click. */
 .probadge.off{background:transparent;color:var(--muted);
   border:1px solid var(--line);font-weight:600}
+.pill.g{background:#E8F0FE;color:#1A57C4}
 .probadge{display:inline-flex;align-items:center;gap:6px;background:var(--gold-dk);
   color:#fff;font-size:12px;font-weight:700;padding:6px 11px;border-radius:8px;
   letter-spacing:.2px;cursor:help}
@@ -527,7 +528,6 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   <div class="scopebar">
     <span class="scope" id="scopechip"
           title="Which channel's figures the numbers below are">Meta ads only</span>
-    <span class="dimtxt" id="scopesub"></span>
   </div>
   <div class="kpis" id="kpis"></div>
 
@@ -1454,13 +1454,13 @@ const chanIsMeta = () => CHAN === 'meta';
 const CHAN_TABS = {
   meta: null,                                   // null = everything
   google: ['campaigns', 'adsets', 'trends', 'matrix'],  // adsets = "Ad groups"
-  blended: ['combined'],
+  blended: ['combined', 'campaigns'],
 };
 const CHAN_LABEL = {meta: 'Meta', google: 'Google', blended: 'Meta + Google'};
 const CHAN_CHIP = {
-  meta:    ['Meta ads only',
-            'Meta ad accounts only — Google Ads is on the Google tab and is not in any figure here'],
-  google:  ['Google Ads only',
+  meta:    ['Meta ads',
+            'Meta ad accounts only — Google Ads is on the Google channel and is in no figure here'],
+  google:  ['Google Ads',
             'Google Ads only — Meta figures are on the Meta channel and the two are never added on a row'],
   blended: ['Meta + Google',
             'Both channels added. The only view where they are, and the only one that answers what a trial actually costs'],
@@ -1471,24 +1471,17 @@ function chanChip(){
   const [t, tip] = CHAN_CHIP[CHAN];
   el.textContent = t; el.title = tip;
   el.dataset.c = CHAN;
-  const sub = document.getElementById('scopesub');
-  if(sub) sub.textContent = CHAN === 'meta'
-      ? `${DATA ? DATA.accounts.length : ''} Meta ad account(s) · Google is on the Google channel`
-    : CHAN === 'google'
-      ? 'Google campaigns and ad groups · Meta is on the Meta channel'
-      : 'Both channels added — the only view where they are';
 }
 
 function chanTabsAvail(){
   const allow = CHAN_TABS[CHAN];
+  /* Hidden, not greyed. A row of dead buttons is a list of things you cannot have, and
+     on Google that was six of the eight. What the channel does not have does not need
+     explaining every time you look at it -- the info panel says it once. */
   for(const b of document.getElementById('tabs').children){
-    const t = b.dataset.t;
-    const on = !allow || allow.includes(t);
+    const on = !allow || allow.includes(b.dataset.t);
+    b.style.display = on ? '' : 'none';
     b.disabled = !on;
-    b.style.opacity = on ? '' : '.4';
-    b.title = on ? '' : CHAN === 'blended'
-      ? 'Blended has no per-row view: a Meta ad set and a Google ad group are not rows of the same table.'
-      : 'Google buying has campaigns and ad groups and nothing below them.';
   }
   /* Relabelled rather than a fourth button: it is the same slot, one rung down from
      campaign, and two buttons that mean the same thing on different channels is worse. */
@@ -1574,9 +1567,18 @@ function googRows(){
 function renderGoogle(){
   const tbl = document.getElementById('tbl');
   if(!GOOG){
-    tbl.querySelector('thead').innerHTML = '';
-    tbl.querySelector('tbody').innerHTML =
-      `<tr><td class="l">${GOOGBUSY ? 'Loading…' : 'No Google data for this window.'}</td></tr>`;
+    /* The shape of the answer while it is coming, rather than the word "Loading" and an
+       empty box. A skeleton reads as "this is filling in"; an empty table reads as "there
+       is nothing here", which on a 15-second pull is wrong for 15 seconds. */
+    const bar = w => `<div class="skl" style="width:${w}"></div>`;
+    tbl.querySelector('thead').innerHTML =
+      `<tr><th class="l">Campaign</th><th class="l">Ad group</th><th>Spend</th>
+       <th>Trials</th><th>CPT</th><th>Installs</th><th>CPI</th></tr>`;
+    tbl.querySelector('tbody').innerHTML = GOOGBUSY
+      ? Array.from({length: 8}, () => `<tr>${
+          ['70%','52%','60%','48%','44%','52%','44%'].map(w => `<td>${bar(w)}</td>`).join('')
+        }</tr>`).join('')
+      : `<tr><td class="l" colspan="7">No Google data for this window.</td></tr>`;
     tbl.querySelector('tfoot').innerHTML = '';
     document.getElementById('rowcount').textContent = '';
     return;
@@ -2520,6 +2522,55 @@ function renderBlended(){
   document.getElementById('rowcount').textContent = '';
 }
 
+/* Campaigns across both channels, in one table, with the platform said on the row. A
+   campaign is a campaign on either side -- it is the highest level where Meta and Google
+   are genuinely the same kind of thing -- so this is the one per-row view Blended can
+   honestly offer. Below it they diverge: an ad set is not an ad group. */
+function renderPlatform(){
+  const tbl = document.getElementById('tbl');
+  const g = GOOG && googFresh() ? GOOG : null;
+  const ev = g ? (g.events || [])[0] : null;
+  const known = hasTrials();
+  const rows = (acctRows() ? DATA.campaigns.filter(inSeg) : []).map(o => ({
+      name: o.name, plat: 'Meta', spend: o.spend,
+      tr: known ? o[EV] : null, ins: known ? (o.inst || 0) : null}))
+    .concat((g ? g.campaigns : []).map(o => ({
+      name: o.campaign, plat: 'Google Ads', spend: o.spend,
+      tr: o[ev] || 0, ins: o.inst || 0})));
+  const q = (document.getElementById('q').value || '').trim().toLowerCase();
+  const r = rows.filter(x => !q || (x.name || '').toLowerCase().includes(q))
+                .sort((a, b) => b.spend - a.spend);
+  const dash = '<span class="dimtxt">—</span>';
+  const tot = r.reduce((a, x) => ({sp: a.sp + x.spend,
+      tr: (a.tr === null || x.tr === null) ? null : a.tr + x.tr,
+      ins: (a.ins === null || x.ins === null) ? null : a.ins + x.ins}),
+      {sp: 0, tr: 0, ins: 0});
+  tbl.querySelector('thead').innerHTML =
+    `<tr><th class="l">Campaign</th><th class="l">Ad platform</th><th>Spend</th>
+     <th>Trials</th><th>CPT</th><th>Installs</th><th>CPI</th><th>Share of spend</th></tr>`;
+  tbl.querySelector('tbody').innerHTML = r.map(x => {
+    const sh = tot.sp > 0 ? Math.max(0, Math.min(1, x.spend / tot.sp)) : 0;
+    return `<tr>
+      <td class="name" title="${(x.name||'').replace(/"/g,'&quot;')}">${
+        sh > 0.004 ? `<span class="bar" style="width:${(sh*100).toFixed(2)}%"></span>` : ''}${x.name}</td>
+      <td class="sub"><span class="pill ${x.plat === 'Meta' ? '' : 'g'}">${x.plat}</span></td>
+      <td>${x.spend ? rs(x.spend) : dash}</td>
+      <td>${x.tr === null ? dash : num(x.tr)}</td>
+      <td class="${x.tr ? cls(cpt(x.spend, x.tr)) : ''}">${x.spend && x.tr ? rs(x.spend/x.tr) : dash}</td>
+      <td>${x.ins === null ? dash : num(x.ins)}</td>
+      <td>${x.spend && x.ins ? rs(x.spend/x.ins) : dash}</td>
+      <td>${tot.sp ? (100*x.spend/tot.sp).toFixed(1)+'%' : '—'}</td></tr>`;
+  }).join('') || `<tr><td class="l" colspan="8">${
+    g ? 'No campaigns match.' : 'Loading Google…'}</td></tr>`;
+  tbl.querySelector('tfoot').innerHTML = `<tr>
+    <td class="l">${r.length} campaign(s), both channels</td><td></td>
+    <td>${rs(tot.sp)}</td><td>${tot.tr === null ? '—' : num(tot.tr)}</td>
+    <td class="${tot.tr ? cls(cpt(tot.sp, tot.tr)) : ''}">${tot.tr ? rs(tot.sp/tot.tr) : '—'}</td>
+    <td>${tot.ins === null ? '—' : num(tot.ins)}</td>
+    <td>${tot.ins ? rs(tot.sp/tot.ins) : '—'}</td><td>100%</td></tr>`;
+  document.getElementById('rowcount').textContent = `${r.length} rows`;
+}
+
 function renderTable(){
   const tbl = document.getElementById('tbl');
   const isSeries = TAB==='trends' || TAB==='matrix';
@@ -2533,6 +2584,15 @@ function renderTable(){
   /* The channel switch decides what the table IS, before the tab decides which slice of
      it. Meta falls through to everything that was here before. */
   if(CHAN === 'blended' && !isSeries){
+    if(TAB === 'campaigns'){
+      document.getElementById('ctl').style.display='flex';
+      document.getElementById('trendsWrap').style.display='none';
+      document.getElementById('matrixWrap').style.display='none';
+      document.getElementById('tblWrap').style.display='block';
+      if(!googFresh() && !GOOGBUSY) loadGoogle(false);
+      renderPlatform();
+      return;
+    }
     document.getElementById('ctl').style.display='none';
     document.getElementById('trendsWrap').style.display='none';
     document.getElementById('matrixWrap').style.display='none';
@@ -3466,7 +3526,10 @@ document.getElementById('chansw').onclick = e => {
      one being left. Reset both before rendering so the tabs cannot draw Meta's rows
      under a Google heading for a frame. */
   sDimAvail();
-  SERIES = null; SERIESKEY = null;
+  /* SERIES is NOT blanked. The cache key carries the channel, so the fold on screen simply
+     stops being fresh and loadSeries looks the new one up -- from the browser cache first,
+     which is usually instant. Nulling it here threw away a perfectly good Meta fold and
+     guaranteed a full refetch on the way back. */
   render();
 };
 document.getElementById('segsw').onclick = e => {
