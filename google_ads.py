@@ -96,21 +96,108 @@ def _access_token(force=False):
     return _tok["value"]
 
 
-def _headers(c, cid=None):
+def _headers(c, login=None):
+    """`login-customer-id` names the MANAGER you are acting through, never the account
+    you are reading. Pointing it at an ad account -- which is what the stored credential
+    did, at Funda's own id -- makes every single call PERMISSION_DENIED, including calls
+    for accounts the user plainly has access to. Omitted entirely for a directly
+    accessible account, which is what listAccessibleCustomers returns."""
     h = {"Authorization": "Bearer " + _access_token(),
          "developer-token": c["developer_token"],
          "Content-Type": "application/json"}
-    login = (c.get("login_customer_id") or "").replace("-", "")
+    login = (login if login is not None
+             else c.get("login_customer_id") or "").replace("-", "")
     if login:
         h["login-customer-id"] = login
     return h
 
 
-def _post(path, body, c):
+def _post(path, body, c, login=None):
     req = urllib.request.Request(BASE + path, data=json.dumps(body).encode(),
-                                 headers=_headers(c), method="POST")
+                                 headers=_headers(c, login), method="POST")
     with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
         return json.loads(r.read().decode())
+
+
+def _err(e):
+    """Google's error body is four levels deep and the useful part is one enum. Dig it
+    out: `USER_PERMISSION_DENIED` and `DEVELOPER_TOKEN_NOT_APPROVED` are different
+    problems with different fixes and the HTTP code is 403 for both."""
+    body = e.read().decode()
+    try:
+        d = (json.loads(body).get("error", {}).get("details") or [{}])[0]
+        first = (d.get("errors") or [{}])[0]
+        code = json.dumps(first.get("errorCode", {}))
+        return f"Google Ads {e.code} {code}: {first.get('message', '')[:200]}"
+    except Exception:
+        return f"Google Ads {e.code}: {body[:300]}"
+
+
+CLIENTS_GAQL = """
+SELECT customer_client.id, customer_client.descriptive_name,
+       customer_client.manager, customer_client.currency_code
+FROM customer_client WHERE customer_client.status = 'ENABLED'
+"""
+
+
+def manager_clients(manager_id):
+    """[{id, name, manager}] under a manager account, or [].
+
+    listAccessibleCustomers answers with what the USER can reach directly, which for a
+    normal setup is one manager and maybe a stray account -- not the twenty ad accounts
+    beneath it. This is the step that turns the first into the second.
+    """
+    global _last_error
+    c = creds()
+    if not c:
+        _last_error = "no Google Ads credentials"
+        return []
+    mid = str(manager_id).replace("-", "")
+    try:
+        j = _post(f"/customers/{mid}/googleAds:searchStream",
+                  {"query": CLIENTS_GAQL}, c, login=mid)
+    except urllib.error.HTTPError as e:
+        _last_error = _err(e)
+        return []
+    except Exception as e:
+        _last_error = f"Google Ads: {str(e)[:200]}"
+        return []
+    out = []
+    for chunk in (j if isinstance(j, list) else [j]):
+        for row in (chunk.get("results") or []):
+            cc = row.get("customerClient") or {}
+            if cc.get("id"):
+                out.append({"id": str(cc["id"]), "name": cc.get("descriptiveName") or "",
+                            "manager": bool(cc.get("manager")),
+                            "currency": cc.get("currencyCode") or ""})
+    _last_error = None
+    return out
+
+
+def all_customers():
+    """Every non-manager account this credential can read, expanded through managers."""
+    seen, out = set(), []
+    for cid in accessible_customers():
+        try:
+            j = _post(f"/customers/{cid}/googleAds:searchStream",
+                      {"query": "SELECT customer.id, customer.descriptive_name, "
+                                "customer.manager FROM customer"}, creds(), login=None)
+        except Exception:
+            continue
+        rows = [r for ch in (j if isinstance(j, list) else [j])
+                for r in (ch.get("results") or [])]
+        for r in rows:
+            cu = r.get("customer") or {}
+            if cu.get("manager"):
+                for kid in manager_clients(cid):
+                    if not kid["manager"] and kid["id"] not in seen:
+                        seen.add(kid["id"]); out.append(dict(kid, via=cid))
+            elif str(cu.get("id")) not in seen:
+                seen.add(str(cu.get("id")))
+                out.append({"id": str(cu.get("id")),
+                            "name": cu.get("descriptiveName") or "",
+                            "manager": False, "via": None})
+    return out
 
 
 def accessible_customers():
@@ -148,7 +235,7 @@ WHERE segments.date BETWEEN '{since}' AND '{until}'
 """
 
 
-def spend_daily(customer_id, since, until):
+def spend_daily(customer_id, since, until, login=None):
     """[{date, campaign, ad_group, spend, imp, clk}] for one customer.
 
     `ad_group` is the level a Google campaign is actually steered at, and the level
@@ -163,9 +250,9 @@ def spend_daily(customer_id, since, until):
     cid = str(customer_id).replace("-", "")
     body = {"query": GAQL_DAILY.format(since=since, until=until)}
     try:
-        j = _post(f"/customers/{cid}/googleAds:searchStream", body, c)
+        j = _post(f"/customers/{cid}/googleAds:searchStream", body, c, login=login)
     except urllib.error.HTTPError as e:
-        _last_error = f"Google Ads {e.code}: {e.read().decode()[:400]}"
+        _last_error = _err(e)
         return []
     except Exception as e:
         _last_error = f"Google Ads: {str(e)[:200]}"
@@ -201,6 +288,9 @@ def status():
     except Exception as e:
         return {"configured": True, "ok": False, "error": str(e)[:400]}
     ids = accessible_customers()
-    return {"configured": True, "ok": bool(ids), "customers": ids,
-            "error": None if ids else last_error(),
+    kids = all_customers() if ids else []
+    return {"configured": True, "ok": bool(kids), "accessible": ids,
+            "customers": [{"id": k["id"], "name": k["name"]} for k in kids],
+            "login_customer_id": (creds() or {}).get("login_customer_id"),
+            "error": None if kids else last_error(),
             "api_version": API_VERSION}

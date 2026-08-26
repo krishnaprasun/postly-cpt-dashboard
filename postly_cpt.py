@@ -1290,22 +1290,30 @@ _gcust_lock = threading.Lock()
 
 
 def google_customers(brand):
-    """Which Google Ads accounts belong to this brand.
+    """(ids, how) — which Google Ads accounts belong to THIS brand.
 
-    Configured per brand when GOOGLE_CUSTOMERS_<BRAND> is set; otherwise every account
-    the credential can see, which is right while there is one manager account over one
-    brand's accounts and is honest about being a guess until it is configured.
+    Never "all of them". The manager account here holds eighteen accounts across brands
+    that have nothing to do with each other -- Testbook, PrepShots, UPSC, The Legal School
+    -- and summing them into one brand's CPT would not look wrong, it would just be wrong.
+    So: an explicit list if one is configured, otherwise accounts whose Google name
+    matches the brand's label, and otherwise NOTHING, said out loud.
     """
     env = os.environ.get("GOOGLE_CUSTOMERS_" + brand.upper(), "").strip()
     if env:
-        return [x.strip().replace("-", "") for x in env.split(",") if x.strip()]
+        return [x.strip().replace("-", "") for x in env.split(",") if x.strip()], "configured"
     with _gcust_lock:
-        if brand in GOOGLE_CUSTOMERS:
-            return GOOGLE_CUSTOMERS[brand]
-    ids = GA.accessible_customers()
+        hit = GOOGLE_CUSTOMERS.get(brand)
+    if hit is not None:
+        return hit[0], hit[1]
+    label = (C.brand(brand)["label"] or brand).strip().lower()
+    # "Funda" must take "Funda" and "Funda 2" and not "Fundamentals of X"; a word-boundary
+    # prefix does that, where a bare `in` would take anything containing the name.
+    pat = re.compile(r"^" + re.escape(label) + r"(\b|$)", re.I)
+    ids = [a["id"] for a in GA.all_customers() if pat.match((a.get("name") or "").strip())]
+    how = "matched by name" if ids else "no account matched this brand"
     with _gcust_lock:
-        GOOGLE_CUSTOMERS[brand] = ids
-    return ids
+        GOOGLE_CUSTOMERS[brand] = (ids, how)
+    return ids, how
 
 
 def google_window(brand, since, until, force=False):
@@ -1352,9 +1360,11 @@ def google_window(brand, since, until, force=False):
 
     # ---- spend ---------------------------------------------------------------
     spend_days, spend_err = 0, None
+    cust, how = ([], "no credentials")
     if GA.available():
+        cust, how = google_customers(brand)
         seen_days = set()
-        for cid in google_customers(brand):
+        for cid in cust:
             for r in GA.spend_daily(cid, since, until):
                 c = cell(r["campaign"], r["ad_group"])
                 c["spend"] += r["spend"]; c["imp"] += r["imp"]; c["clk"] += r["clk"]
@@ -1363,7 +1373,8 @@ def google_window(brand, since, until, force=False):
                 c["ad_group_id"] = r["ad_group_id"]
                 seen_days.add(r["date"])
         spend_days = len(seen_days)
-        spend_err = GA.last_error()
+        spend_err = GA.last_error() or (
+            None if cust else "no Google Ads account is mapped to this brand")
     else:
         spend_err = GA.last_error() or "no Google Ads credentials on this instance"
 
@@ -1388,6 +1399,7 @@ def google_window(brand, since, until, force=False):
         "totals": tot,
         "trial_days": trial_days, "days": len(dates),
         "spend_days": spend_days,
+        "customers": cust, "customers_how": how,
         "spend_ok": bool(spend_days),
         "spend_error": None if spend_days else spend_err,
         "trials_error": err,
