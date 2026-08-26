@@ -173,9 +173,12 @@ td{padding:6px 13px;border-bottom:1px solid var(--line2);text-align:right;white-
    identical grey hide the shape of the spend: Funda's three accounts are 55/40/5 and read
    the same. A bar costs no width and no reading. */
 td.name{position:relative}
-td.name .bar{position:absolute;left:0;top:0;bottom:0;background:var(--accent);
-  opacity:.09;pointer-events:none;border-radius:0 3px 3px 0}
-tbody tr:hover td.name .bar{opacity:.16}
+/* Low and short: it is a hint at the shape of the spend, read out of the corner of the
+   eye, not a chart. At full height and .09 it drew as a block behind the name and
+   competed with the text it was meant to be under. */
+td.name .bar{position:absolute;left:0;bottom:0;height:3px;background:var(--accent);
+  opacity:.28;pointer-events:none;border-radius:0 2px 2px 0}
+tbody tr:hover td.name .bar{opacity:.5}
 td:first-child{color:var(--navy);font-weight:500}
 tr:last-child td{border-bottom:0}
 tbody tr:hover{background:var(--accent-lt)}
@@ -267,13 +270,9 @@ section.ns p{margin:0}
 /* Brand switcher. A segmented control next to the title rather than another select:
    which brand you are looking at changes every number on the page, so it has to be
    readable without opening anything, and obvious that it is not a filter. */
-.brandsw{display:flex;gap:2px;background:var(--line);border:1px solid var(--line);
-  border-radius:10px;padding:2px;box-shadow:var(--shadow)}
-.brandsw button{border:0;background:transparent;color:var(--dim);font:inherit;
-  font-size:12.5px;font-weight:650;padding:5px 13px;border-radius:8px;cursor:pointer;
-  letter-spacing:.01em}
-.brandsw button:hover{color:var(--ink)}
-.brandsw button.on{background:var(--white);color:var(--ink);box-shadow:var(--shadow)}
+/* The brand switcher is a segmented control like the other two, so it looks like one. */
+.brandsw button{border:0;background:transparent;font:inherit;font-size:12.5px;
+  font-weight:650;padding:5px 13px;border-radius:8px;cursor:pointer;letter-spacing:.01em}
 
 /* Testing vs trial. Same segmented shape as the brand switcher because it does the same
    kind of thing — it changes which numbers you are looking at, not how they are filtered.
@@ -295,13 +294,40 @@ section.ns p{margin:0}
    survives is the gold, which has one job: nothing on this page is a raw measurement, and
    a screenshot of it has to carry that on its face. The badge is deliberately not a
    button; there is nothing to click. */
-.probadge.off{background:transparent;color:var(--muted);
-  border:1px solid var(--line);font-weight:600}
-.pill.g{background:#E8F0FE;color:#1A57C4}
-.probadge{display:inline-flex;align-items:center;gap:6px;background:var(--gold-dk);
-  color:#fff;font-size:12px;font-weight:700;padding:6px 11px;border-radius:8px;
-  letter-spacing:.2px;cursor:help}
 .modelled{color:var(--gold-dk);font-weight:650}
+
+/* ---- the control row ----
+   Four questions in a line, each under its own label. Unlabelled button groups made the
+   reader work out what "Meta / Google / Blended" and "Trial / Testing / Both" were even
+   asking; a 10px label costs nothing and removes the guess. */
+header{padding-bottom:0}
+.ctlrow{display:flex;align-items:flex-start;gap:22px;flex-wrap:wrap;
+  padding:12px 0 14px;border-top:1px solid var(--line);margin-top:12px}
+/* Every control in this row is the same height, so the four labels sit on one line.
+   They did not: the select is taller than a segmented control, and flex-end pushed its
+   label down on its own, which reads as a mistake because it is one. */
+.fgrp{display:flex;flex-direction:column;gap:5px}
+.fgrp>.segsw,.fgrp>.sel{height:34px;box-sizing:border-box}
+.fgrp>.sel{padding-top:0;padding-bottom:0}
+.fgrp>.segsw{align-items:center}
+.fgrp>label{font-size:9.5px;letter-spacing:.8px;text-transform:uppercase;
+  color:var(--faint);font-weight:800;padding-left:2px}
+.fgrp .sel{margin:0}
+.hsep{width:1px;height:15px;background:var(--line);display:inline-block;margin:0 2px}
+h1 em{color:var(--accent-dk);font-style:normal}
+
+/* The moving pill: the selected state slides rather than blinking between buttons, which
+   is what makes a segmented control feel like one control instead of three. */
+.segsw{position:relative;background:var(--panel2);border:1px solid var(--line);
+  border-radius:10px;padding:3px;display:inline-flex;gap:2px}
+.segsw button{position:relative;z-index:1;transition:color .16s ease}
+.segsw button.on{background:transparent}
+.segsw .glide{position:absolute;top:3px;bottom:3px;border-radius:8px;
+  background:var(--accent);transition:left .2s cubic-bezier(.3,.8,.35,1),
+  width .2s cubic-bezier(.3,.8,.35,1),background .2s ease;z-index:0}
+.chansw .glide[data-c="google"]{background:#1A73E8}
+.chansw .glide[data-c="blended"]{background:var(--ink)}
+@media(prefers-reduced-motion:reduce){.segsw .glide{transition:none}}
 /* Underlined only on hover: a table where every name is permanently underlined reads as
    noise, and the pointer is the affordance people actually use. */
 a.fbl{color:inherit;text-decoration:none}
@@ -465,59 +491,81 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     takes 15–30s to answer its first pull</div>
 </div></div>
 <header>
+  <!-- Two rows, and the split is the point. The top row is identity and actions: what
+       this is, how fresh it is, what you can do to it. The second is the question you are
+       asking -- brand, partner, campaign type, period -- each under a label, because four
+       unlabelled button groups in a line is a puzzle, not a control. -->
   <div class="hrow">
-    <div class="brand"><img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt=""><h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span> <em>Performance</em> <span id="win"></span></h1></div>
-    {% if brands|length > 1 %}<div class="brandsw" id="brandsw">{% for b in brands %}<button data-b="{{ b.key }}"{% if b.key == default_brand %} class="on"{% endif %}>{{ b.label }}</button>{% endfor %}</div>{% else %}<div class="brandsw" id="brandsw" style="display:none"></div>{% endif %}
-    <div class="segsw chansw" id="chansw"
-         title="Which channel's money this page is about. Meta and Google are bought separately, reported separately, and only add up at the Blended level.">
-      <button data-c="meta" class="on">Meta</button>
-      <button data-c="google">Google</button>
-      <button data-c="blended">Blended</button>
+    <div class="brand">
+      <img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt="">
+      <h1>Postly <em>Ads Performance</em></h1>
+      <span class="hsep"></span>
+      <span id="win"></span>
     </div>
-    <div class="segsw" id="segsw">
-      <button data-s="trial" class="on">Trial</button>
-      <button data-s="testing">Testing</button>
-      <button data-s="blended">Blended</button>
+    <div class="acts">
+      <div class="meta" id="stamp"></div>
+      {% if can_act %}<div class="expwrap" id="expwrap">
+        <button class="btn" id="expBtn" disabled>Export ▾</button>
+        <div class="expmenu" id="expMenu">
+          <div class="exph">Download CSV</div>
+          <button data-x="accounts">Ad accounts <i id="x-accounts"></i></button>
+          <button data-x="campaigns">Campaigns <i id="x-campaigns"></i></button>
+          <button data-x="adsets">Ad sets <i id="x-adsets"></i></button>
+          <button data-x="ads">Ads <i id="x-ads"></i></button>
+          <div class="expsep"></div>
+          <button data-x="all">All four levels <i>4 files</i></button>
+          <label class="chk"><input type="checkbox" id="expFilters" checked>
+            apply the filters below</label>
+          <div class="expnote" id="expNote"></div>
+        </div>
+      </div>
+      <button class="btn" id="refresh">Refresh</button>
+      {% else %}
+      <!-- Read-only link: the two controls that make the app spend Meta's budget are not
+           rendered. The server refuses them regardless — see _gate — so this is about not
+           offering a button that would not work, not about security. -->
+      <span class="meta" id="viewonly" title="This link is view-only">view-only</span>
+      {% endif %}
     </div>
-    <span class="probadge" id="probadge"
-          title="Every trial and cost-per figure on this page is MODELLED. The trials Branch attributes to no channel are shared between Meta and Google by each one's share of that day's attributed trials, day by day. Google's own trials are not touched.">Pro rata</span>
-    <select class="sel" id="range">
-      <option value="today" selected>Today</option>
-      <option value="yesterday">Yesterday</option>
-      <option value="3d">Last 3 days</option>
-      <option value="7d">Last 7 days</option>
-      <option value="14d">Last 14 days</option>
-      <option value="30d">Last 30 days</option>
-      <option value="custom">Custom range…</option>
-    </select>
+  </div>
+
+  <div class="ctlrow">
+    <div class="fgrp" id="brandgrp">
+      <label>Brand</label>
+      <div class="segsw brandsw" id="brandsw">{% for b in brands %}<button data-b="{{ b.key }}"{% if b.key == default_brand %} class="on"{% endif %}>{{ b.label }}</button>{% endfor %}</div>
+    </div>
+    <div class="fgrp">
+      <label>Ad partner</label>
+      <div class="segsw chansw" id="chansw"
+           title="Whose money this is. Meta and Google are bought separately, reported separately, and only add up at Blended.">
+        <button data-c="meta" class="on">Meta</button>
+        <button data-c="google">Google</button>
+        <button data-c="blended">Blended</button>
+      </div>
+    </div>
+    <div class="fgrp">
+      <label>Campaign type</label>
+      <div class="segsw" id="segsw">
+        <button data-s="trial" class="on">Trial</button>
+        <button data-s="testing">Testing</button>
+        <button data-s="blended">Both</button>
+      </div>
+    </div>
+    <div class="fgrp">
+      <label>Period</label>
+      <select class="sel" id="range">
+        <option value="today" selected>Today</option>
+        <option value="yesterday">Yesterday</option>
+        <option value="3d">Last 3 days</option>
+        <option value="7d">Last 7 days</option>
+        <option value="14d">Last 14 days</option>
+        <option value="30d">Last 30 days</option>
+        <option value="custom">Custom range…</option>
+      </select>
+    </div>
     <div id="customWrap">
       <input type="date" id="cSince"><span>→</span><input type="date" id="cUntil">
       <button class="btn" id="cGo">Apply</button>
-    </div>
-    <div class="acts">
-    <div class="meta" id="stamp"></div>
-    {% if can_act %}<div class="expwrap" id="expwrap">
-      <button class="btn" id="expBtn" disabled>Export ▾</button>
-      <div class="expmenu" id="expMenu">
-        <div class="exph">Download CSV</div>
-        <button data-x="accounts">Ad accounts <i id="x-accounts"></i></button>
-        <button data-x="campaigns">Campaigns <i id="x-campaigns"></i></button>
-        <button data-x="adsets">Ad sets <i id="x-adsets"></i></button>
-        <button data-x="ads">Ads <i id="x-ads"></i></button>
-        <div class="expsep"></div>
-        <button data-x="all">All four levels <i>4 files</i></button>
-        <label class="chk"><input type="checkbox" id="expFilters" checked>
-          apply the filters below</label>
-        <div class="expnote" id="expNote"></div>
-      </div>
-    </div>
-    <button class="btn" id="refresh">Refresh</button>
-    {% else %}
-    <!-- Read-only link: the two controls that make the app spend Meta's budget are not
-         rendered. The server refuses them regardless — see _gate — so this is about not
-         offering a button that would not work, not about security. -->
-    <span class="meta" id="viewonly" title="This link is view-only">view-only</span>
-    {% endif %}
     </div>
   </div>
 </header>
@@ -1036,20 +1084,34 @@ function applyAttr(src){
    chip over measured numbers would be a straight lie about what is on screen. It is also
    dimmed on Longevity, which is deliberately measured -- a gold chip above a measured
    table is the same lie in a smaller font. */
-function attrAvail(){
-  const b = document.getElementById('probadge');
-  if(!b) return;
-  b.style.display = proOn() ? 'inline-flex' : 'none';
-  const off = TAB === 'longevity';
-  b.classList.toggle('off', off);
-  b.textContent = off ? 'Measured' : 'Pro rata';
-  b.title = off
-    ? 'The Longevity tab is measured: spend divided by the trials Branch actually '
-      + 'matched. Every other tab on this page is modelled (pro rata).'
-    : "Every trial and cost-per figure on this page is MODELLED. The trials Branch "
-      + "attributes to no channel are shared between Meta and Google by each one's share "
-      + "of that day's attributed trials, day by day. Google's own trials are not touched.";
+/* The sliding pill. A segmented control that repaints the selection somewhere else reads
+   as three buttons; one where the selection MOVES reads as a single control with a
+   position. It is one element per group, positioned from the active button, and it is
+   re-measured on resize because the buttons are text-width. */
+function glide(sw){
+  if(!sw || sw.style.display === 'none') return;
+  let g = sw.querySelector('.glide');
+  if(!g){ g = document.createElement('span'); g.className = 'glide'; sw.prepend(g); }
+  const on = sw.querySelector('button.on:not([style*="display: none"])');
+  if(!on){ g.style.opacity = '0'; return; }
+  g.style.opacity = '1';
+  g.style.left = (on.offsetLeft) + 'px';
+  g.style.width = (on.offsetWidth) + 'px';
+  if(sw.id === 'chansw') g.dataset.c = on.dataset.c;
 }
+function glideAll(){
+  ['brandsw', 'chansw', 'segsw'].forEach(id => glide(document.getElementById(id)));
+}
+addEventListener('resize', glideAll);
+
+function attrAvail(){
+  /* The gold badge is gone from the UI at the owner's request. The numbers are still
+     modelled, so the honesty has to live somewhere it cannot be missed: the CPT and
+     Trials tiles keep their "pro rata" label, and the info panel spells out the size of
+     the lift and the measured figure underneath it. A badge was a third place saying the
+     same thing. */
+}
+
 
 /* ---------- trials by channel ---------- */
 /* Branch fills in `~ad_name` for Meta ads and leaves it empty for Google, so a trial with
@@ -2738,6 +2800,7 @@ function render(){
   segAvail();
   chanChip();
   chanTabsAvail();
+  glideAll();
   attrAvail();
   document.getElementById('win').textContent =
     DATA.since===DATA.until ? DATA.since : `${DATA.since} → ${DATA.until}`;
@@ -3427,7 +3490,10 @@ if(CAN_ACT) document.getElementById('refresh').onclick = () => load(true, false,
 function applyBrand(b){
   const m = BRANDS[b] || {};
   document.body.dataset.brand = b;
-  document.getElementById('bname').textContent = m.label || b;
+  /* The brand lives in the control row now, not in the title. The title says what the
+     dashboard IS; the controls say what question you are asking of it. */
+  const bb = document.getElementById('brandsw');
+  if(bb) [...bb.children].forEach(x => x.classList.toggle('on', x.dataset.b === b));
   if(m.logo){
     const src = '/static/' + m.logo;
     document.getElementById('blogo').src = src;
@@ -3444,9 +3510,14 @@ document.getElementById('brandsw').onclick = e => {
   const b = e.target.dataset && e.target.dataset.b;
   if(!b || b === BRAND) return;
   BRAND = b;
-  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.b === b));
+  [...e.currentTarget.children].forEach(x =>
+    x.classList && x.classList.toggle('on', x.dataset.b === b));
+  glide(e.currentTarget);
   applyBrand(b);
   RAW = null;
+  GOOG = null; GOOGKEY = null;       // Google is per-brand as well
+  PRIOR = null; PRIORKEY = null;
+  GSPEND = null; GSPENDKEY = null;
   SERIES = null; SERIESKEY = null;   // and never one brand's daily series under another's
   DATA = null;                       // never render one brand's rows under another's name
   LONG = null; LONGKEY = null;       // the longevity payload is per-brand too
@@ -3514,7 +3585,9 @@ document.getElementById('chansw').onclick = e => {
   if(!ch || ch === CHAN || e.target.disabled) return;
   CHAN = ch;
   try{ localStorage.setItem('cpt_chan', ch); }catch(_){}
-  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.c === ch));
+  [...e.currentTarget.children].forEach(x =>
+    x.classList && x.classList.toggle('on', x.dataset.c === ch));
+  glide(e.currentTarget);
   /* Google numbers are fetched on demand, so switching to a view that needs them has to
      ask for them -- otherwise the first switch shows an empty page and the second shows
      the answer, which reads as a bug. */
@@ -3536,7 +3609,9 @@ document.getElementById('segsw').onclick = e => {
   const sg = e.target.dataset && e.target.dataset.s;
   if(!sg || sg === SEG || e.target.disabled) return;
   SEG = sg;
-  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.s === sg));
+  [...e.currentTarget.children].forEach(x =>
+    x.classList && x.classList.toggle('on', x.dataset.s === sg));
+  glide(e.currentTarget);
   render();
 };
 /* `?range=14d` picks the window from the URL, so a link can carry the whole view: which
