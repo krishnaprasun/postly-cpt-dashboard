@@ -1619,18 +1619,20 @@ function renderMatrix(){
     ${dates.map(d => th(d, `${d.slice(8)} ${
       new Date(d+'T00:00:00').toLocaleString('en-GB',{month:'short'})}`)).join('')}</tr>`;
 
-  /* Only the dimensions that ARE a Meta object link. Script is a name that maps to many
-     ads by design, and stage/platform are buckets, not things Ads Manager can open. */
-  const mxLevel = {adset:'adset', campaign:'campaign', account:'account'}[SERIES.dim];
+  /* A Matrix row opens the CREATIVE or it opens nothing. Script is the only dimension
+     that resolves to an ad, and the ad is the thing worth looking at from a grid of
+     numbers — "which one is this?" is answered by the video, not by Ads Manager. Ad set,
+     campaign and account rows are plain text: they have no single creative, and a link
+     that lands somewhere other than the thing you clicked is worse than no link. */
   const body = rows.map((r, i) => {
     const tv = rowTotal(r);
-    const url = mxLevel
-      ? fbUrl(mxLevel, r.key, SERIES.dim === 'account' ? r.key : r.acct,
-              SERIES.since, SERIES.until)
-      : null;
+    const url = (SERIES.dim === 'script' && r.ad) ? adMedia(r.ad) : null;
     return `<tr>
       <td class="l pin nm" title="${(r.label||'').replace(/"/g,'&quot;')}"><span class="rk"
-        >${from + i + 1}</span>${fbName(r.label, url)}</td>
+        >${from + i + 1}</span>${url
+          ? `<a class="fbl" href="${url}" target="_blank" rel="noopener noreferrer"
+               title="Open the creative">${r.label||'—'}</a>`
+          : (r.label||'—')}</td>
       <td class="l">${r.platform}</td><td class="l">${r.stage||'—'}</td>
       <td><b>${tv===null?'—':m.fmt(tv)}</b></td>
       ${dates.map(d => { const v = m.of(r.days[d]);
@@ -1836,8 +1838,9 @@ const LONG_COLS = [
 
 function longCell(o, c){
   if(c.kind === 'name')
-    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">${
-      fbName(o.name, fbUrl('adset', o.id, o.account_id, LONG && LONG.since, LONG && LONG.until))}${
+    /* Same rule as the Ad sets tab: an ad set has no creative to open, so the name is
+       text you can read and select rather than a link to somewhere else. */
+    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">${o.name||'—'}${
       o.new_today ? `<span class="pill" title="First spent today, so it is in no folded window yet — it has no history to show and its Spend and CPT read zero until tonight's fold.">new today</span>` : ''}</td>`;
   if(c.kind === 'sub') return `<td class="sub" title="${o.campaign||''}">${o.campaign||'—'}</td>`;
   if(c.kind === 'live')
@@ -2040,19 +2043,16 @@ function fbUrl(level, id, acct, since, until){
   if(since && until) q.push('date=' + since + '_' + until);
   return `https://adsmanager.facebook.com/adsmanager/manage/${FB_PATH[level]}?` + q.join('&');
 }
-/* The name, linked if it can be, plain text if it cannot -- never a link that goes
-   nowhere. `title` stays on the cell so the full name is still hoverable. */
-function fbName(text, url){
-  const t = text || '—';
-  return url ? `<a class="fbl" href="${url}" target="_blank" rel="noopener noreferrer"
-    title="Open in Meta Ads Manager">${t}</a>` : t;
-}
+/* Ad sets are absent on purpose: they have no single creative, so the only thing a link
+   could open is Ads Manager, and on a table of long ad set names that gets in the way of
+   reading and copying them more than it helps. */
 const fbLevel = tab => ({accounts:'account', campaigns:'campaign',
-                         adsets:'adset', ads:'ad'})[tab] || null;
+                         ads:'ad'})[tab] || null;
 
 /* An AD opens its creative -- the rendered ad as it runs -- because that is what somebody
-   scanning a list of ad names actually wants to see. Everything above it (ad set,
-   campaign, account) has no single piece of media, so those keep going to Ads Manager.
+   scanning a list of ad names actually wants to see. So does a Script row in the Matrix,
+   through the biggest-spending ad carrying that name. Campaigns and ad accounts have no
+   single piece of media, so those still go to Ads Manager; ad sets link nowhere.
    The server resolves the preview at click time: Meta's preview link is signed and
    expires, so a URL baked into this page would be dead by the time anyone clicked it. */
 const adMedia = id => id

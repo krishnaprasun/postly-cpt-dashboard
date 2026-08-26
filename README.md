@@ -978,10 +978,23 @@ how people end up believing the dashboard and Ads Manager disagree.
 | view | opens |
 |---|---|
 | **Ads** | **the creative itself** — see below |
+| **Matrix `dim=script`** | **the creative**, via the biggest-spending ad carrying that name |
 | Ads (the small ↗) | `manage/ads?act=…&selected_ad_ids=…` |
-| Ad sets, Longevity, Matrix `dim=adset` | `manage/adsets?act=…&selected_adset_ids=…` |
-| Campaigns, Matrix `dim=campaign` | `manage/campaigns?act=…&selected_campaign_ids=…` |
-| Ad accounts, Matrix `dim=account` | `manage/campaigns?act=…` |
+| Campaigns | `manage/campaigns?act=…&selected_campaign_ids=…` |
+| Ad accounts | `manage/campaigns?act=…` |
+| **Ad sets, Longevity, Matrix `dim=adset` / `campaign` / `account`** | **nothing — plain text** |
+
+**A Matrix row opens the creative or it opens nothing.** Script is the only dimension that
+resolves to an ad, and the ad is what a grid of numbers makes you want: *which one is
+this?* is answered by the video, not by Ads Manager. So folded Script rows carry `ad` —
+the id of the biggest-spending ad with that name, because a name can be carried by several
+and that is the one the row's numbers are mostly of. 1,890 of 1,912 Postly script rows
+resolve; the rest are Branch-only rows with no Meta spend behind them.
+
+**Ad sets are deliberately not clickable**, on the Ad sets tab, on Longevity, and in the
+Matrix. An ad set has no single creative, so the only thing a link could open is Ads
+Manager — and on a table of long ad set names that gets in the way of reading and copying
+them more than it helps.
 
 Two rules the code holds:
 

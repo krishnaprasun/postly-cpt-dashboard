@@ -1686,7 +1686,7 @@ SERIES_MAX_ROWS = int(os.environ.get("SERIES_MAX_ROWS", "20000"))
 # Bumped when the SHAPE of a folded row changes. Checked alongside dates and row_cap
 # before a stored fold is reused, for the same reason: a fold from before rows carried
 # their account gives the Matrix a grid with no links and no way to tell why.
-SERIES_SHAPE = 4
+SERIES_SHAPE = 5
 # The levels a budget belongs to. A script is an ad name and a stage is a bucket; neither
 # is a thing Meta holds a budget against.
 BUDGET_DIMS = {"adset": "adsets", "campaign": "campaigns", "account": "accounts"}
@@ -1773,10 +1773,16 @@ def _dim_day(meta_rows, branch_day, keys, dim, testing_re, acct_names):
                 # accounts and a link into the wrong one is worse than none.
                 e = rows[k] = {"label": lbl, "stage": stage, "platform": "Meta",
                                "spend": 0.0, "acct": acct, "acct_spend": 0.0,
+                               "ad": None, "ad_spend": 0.0,
                                "imp": 0.0, "clk": 0.0, "isp": 0.0, "impn": 0,
                                **dict(blank)}
             if sp > e["acct_spend"]:
                 e["acct"], e["acct_spend"] = acct, sp
+            # The biggest-spending ad behind this row, so a Script row can open the
+            # creative it is actually about. A name can be carried by several ads; the
+            # one that spent most is the one the row's numbers are mostly of.
+            if r.get("ad_id") and sp > e["ad_spend"]:
+                e["ad"], e["ad_spend"] = r["ad_id"], sp
             e["spend"] += sp
             # `impn` counts rows that actually reported impressions. Zero of them means
             # this day was stored before the fields were fetched, which is not the same
@@ -1966,10 +1972,15 @@ def series(brand, since, until, dim="script", force=False):
             if row is None:
                 row = rows[k] = {"key": k, "label": e["label"], "stage": e["stage"],
                                  "platform": e["platform"], "acct": e.get("acct"),
+                                 "ad": None, "ad_spend": 0.0,
                                  "total_spend": 0.0, "days": {},
                                  **{"total_" + x: 0.0 for x in keys}}
             row["label"] = row["label"] or e["label"]
             row["acct"] = row["acct"] or e.get("acct")
+            # Across the window, not just within a day: the ad that carried this name
+            # for most of the money is the one worth opening.
+            if e.get("ad") and e.get("ad_spend", 0) > row.get("ad_spend", 0):
+                row["ad"], row["ad_spend"] = e["ad"], e["ad_spend"]
             row["stage"] = row["stage"] or e["stage"]
             row["total_spend"] += e["spend"]
             for x in keys:
@@ -2019,6 +2030,7 @@ def series(brand, since, until, dim="script", force=False):
 
     out_rows = sorted(rows.values(), key=lambda r: -r["total_spend"])[:cap]
     for r in out_rows:
+        r.pop("ad_spend", None)      # a working figure, not something the page needs
         r["total_spend"] = round(r["total_spend"], 2)
         for x in keys:
             r["total_" + x] = round(r["total_" + x], 2)
