@@ -1050,6 +1050,10 @@ function kpis(){
      trials. */
   const segLbl = (chanIsMeta() ? '' : CHAN_LABEL[CHAN].toLowerCase() + ' · ')
     + (SEG === 'blended' ? 'blended' : SEG);
+  /* Hoisted above the non-Meta early return with segLbl, for the same reason: `const` is
+     in the temporal dead zone until its own line runs, so reading it from a branch that
+     returns first is a ReferenceError, not an undefined. */
+  const days = Math.round((new Date(DATA.until) - new Date(DATA.since))/864e5) + 1;
   const trials = hasTrials();
 
   /* Google and Blended get their OWN tiles rather than borrowing Meta's. Budget/day and
@@ -1089,7 +1093,6 @@ function kpis(){
   }
 
   const pace = c.budget ? 100*sp/c.budget : 0;
-  const days = Math.round((new Date(DATA.until) - new Date(DATA.since))/864e5) + 1;
   // budgets and statuses are only partly known when an account's roster failed
   const deg = !!(DATA.degraded && DATA.degraded.length);
   /* With a target, the hero says how far off it is. Without one it still leads with
