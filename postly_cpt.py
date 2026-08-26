@@ -991,18 +991,22 @@ def chan_of_day(by_name):
 def prorata_day(ch):
     """(meta_allocation, pool) for one day under the pro-rata model.
 
-    The pool is every trial with no Meta ad name -- Google's, organic, and anything
-    stored before channels were kept. It is shared out between Meta and Google in
-    proportion to the trials each of them is MEASURED to have earned that day, which is
-    the rule as asked for. Organic is absorbed into that split rather than kept aside:
-    "counted in Meta and Google" leaves nowhere else for it to go.
+    The pool is the trials Branch could attribute to NO channel: organic/direct, other
+    partners, and anything stored before partners were recorded. It is shared between
+    Meta and Google in proportion to each one's share of the ATTRIBUTED volume that day.
+
+    Google's own trials are NOT in the pool. Branch names Google as the partner on them,
+    so they are attributed, not unattributed -- and putting them in the pool made the
+    split circular: Google's count set the ratio that then decided how much of Google's
+    own count Google kept. On Funda that handed Meta 7,839 of the 16,106 trials Branch
+    said Google earned, on one day. The pool is what nobody can claim; the ratio is what
+    the two claimants measurably earned.
 
     Returns (0, 0) on a day with no measured paid trials at all, rather than inventing a
     50/50 split out of nothing.
     """
     meta, google = ch.get("meta", 0), ch.get("google", 0)
-    pool = ch.get("google", 0) + ch.get("organic", 0) + ch.get("other", 0) \
-        + ch.get("unknown", 0)
+    pool = ch.get("organic", 0) + ch.get("other", 0) + ch.get("unknown", 0)
     denom = meta + google
     if not pool or not denom:
         return 0.0, pool
@@ -2290,10 +2294,11 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
 
     # ---- pro rata -----------------------------------------------------------
     # A second, MODELLED reading of the same data, asked for explicitly and shipped
-    # alongside the measured one rather than instead of it. Every trial with no Meta ad
-    # name is shared between Meta and Google in proportion to what each is measured to
-    # have earned -- computed for each day separately and then summed, because the mix
-    # moves and one blended ratio over a month would be a different number.
+    # alongside the measured one rather than instead of it. The trials Branch could
+    # attribute to NOBODY are shared between Meta and Google in proportion to each one's
+    # share of the attributed volume -- computed for each day separately and then summed,
+    # because the mix moves and one blended ratio over a month would be a different
+    # number. Google's measured trials stay Google's; see prorata_day.
     #
     # It reaches the tables as a single scalar per event: the whole page divides spend by
     # trials, so multiplying every trial count by the same uplift is exactly equivalent to
@@ -2312,14 +2317,26 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
             a, _pool = prorata_day(ch)
             alloc += a
             covered += 1
-        m = matched[k]
-        meta_pro = chan[k]["meta"] + alloc
+        # Meta's allocation is earned by Meta's WHOLE measured bucket, but only the
+        # `matched` part of it has ad rows to carry it -- the orphans (named ads no
+        # longer live) have nowhere to land, exactly as in the measured view, where the
+        # tables sum to `matched` and not to `meta`. So the rows take the matched share
+        # of the allocation, which makes the uplift 1 + alloc/meta rather than
+        # 1 + alloc/matched. Dumping the whole allocation on the matched rows would
+        # credit them with trials the orphans earned and quietly cut CPT further.
+        m, meta_all = matched[k], chan[k]["meta"]
+        row_alloc = alloc * (m / meta_all) if meta_all else 0.0
+        meta_pro = meta_all + alloc
         prorata[k] = {
-            "uplift": round((m + alloc) / m, 6) if m else 1.0,
+            "uplift": round((m + row_alloc) / m, 6) if m else 1.0,
             "allocated": round(alloc, 1),
+            "row_allocated": round(row_alloc, 1),
+            "pool": round(chan[k]["organic"] + chan[k]["other"] + unknown_chan[k], 1),
             "matched": round(m, 1),
-            "trials": round(m + alloc, 1),
+            "trials": round(m + row_alloc, 1),
             "meta": round(meta_pro, 1),
+            # branch_total - meta_pro == google + google's share of the pool, exactly,
+            # because the pool no longer contains google.
             "google": round(branch_totals[k] - meta_pro, 1),
             "days_covered": covered,
             "days_total": ndays,

@@ -456,13 +456,14 @@ directions — every named trial was Facebook's, and not one nameless trial was:
 So each trial is tagged with the partner Branch names for it, and the page reports
 Meta / Google Ads / Organic / Other as **measured** counts.
 
-**These are not apportioned between Meta and Google pro rata**, and that is the whole
-point. Splitting the nameless pool in proportion to each channel's attributed trials
-would have handed Meta roughly 7,700 of Funda's 17,070 nameless trials on that one
-day, and printed a Meta CPT of ₹134 where the measured figure was ₹209 — a 36% error,
-in the direction that keeps a losing ad set alive against a ₹150 target. The
-dashboard prints that counterfactual next to the breakdown so the claim can be
-checked on whatever window is on screen.
+**Google's trials are never apportioned away from Google**, in either mode, and that is
+the whole point of reading the partner field. The pro-rata model below shares only the
+trials that name *no* channel at all. An earlier version of it put Google's own count in
+the pool as well; because the split ratio is derived from Google's count, that made the
+arithmetic circular and handed Meta 7,839 of the 16,106 trials Branch said Google earned
+on 24 Aug alone — printing a Funda CPT of ₹148.69 where the measured figure was ₹229.09.
+The dashboard prints the model's counterfactual next to the breakdown so the size of it
+can be checked on whatever window is on screen.
 
 Google **spend** is not read by this dashboard, so Google's trials appear as a count
 with no CPT beside them until the Google Ads pull lands.
@@ -508,17 +509,28 @@ render as a stop-and-restart that never happened.
 ### Pro rata — the modelled second reading
 
 `Measured | Pro rata` in the header. **Measured** is the default and is what Branch
-says. **Pro rata** shares every trial with no Meta ad name between Meta and Google in
-proportion to the trials each is *measured* to have earned — organic absorbed into that
-split, since "counted in Meta and Google" leaves nowhere else for it to go.
+says. **Pro rata** shares the trials Branch could attribute to **no** channel — organic
+/ direct, other partners, and any day stored before partners were recorded — between
+Meta and Google in proportion to each one's share of that day's *attributed* volume.
+
+Google's own trials are **not** in the pool: Branch names Google as the partner on them,
+so they are attributed, and the ratio is what the two claimants measurably earned. The
+pool is only what nobody can claim.
 
 It is computed **per day and then summed**, not once over the window aggregate, because
 the Meta/Google mix moves. Over Funda's 27 Jul – 25 Aug window the two give ₹136.80 and
 ₹135.26 — 1.1% apart, which is small but is not nothing and is free to get right.
 
-    per day:  alloc(D) = pool(D) x meta(D) / (meta(D) + google(D))
-              pool(D)  = every trial that day with no Meta ad name
-    window:   uplift   = (Σ matched + Σ alloc) / Σ matched
+    per day:  pool(D)  = organic(D) + other(D) + unrecorded(D)
+              alloc(D) = pool(D) x meta(D) / (meta(D) + google(D))
+    window:   uplift   = 1 + Σ alloc / Σ meta
+
+The uplift divides by Σ **meta**, not Σ **matched**. Meta's allocation is earned by
+Meta's whole measured bucket, but only the matched part of it has ad rows to carry it —
+the orphans (trials naming an ad no longer in the account) have nowhere to land, exactly
+as in the measured view, where the tables sum to `matched` and not to `meta`. Putting
+the whole allocation on the matched rows would credit them with trials the orphans
+earned and cut CPT a further 0.02–0.16%.
 
 The uplift reaches the tables as one scalar per event. Every figure on the page is spend
 over trials, so multiplying trials is exactly equivalent to re-deriving each row, and it
@@ -565,10 +577,12 @@ quietly lost days looks exactly like a correct one, and the only symptom is the 
 view covering fewer days and printing a smaller uplift. The **Meta share · modelled**
 tile shows `days_covered/days_total` for the same reason.
 
-**This is a model, not a measurement.** Branch labels every one of these trials, and on
-20 Aug not one of them was Facebook's. Pro rata deliberately overrides that, on the
-argument that last-touch attribution under-credits upper-funnel Meta spend. Treat the
-CPT it prints as a different question, not a better answer to the same one.
+**This is a model, not a measurement.** Branch labels the pool organic or "other", not
+Meta's. Pro rata deliberately overrides that, on the argument that last-touch
+attribution under-credits upper-funnel Meta spend. Treat the CPT it prints as a
+different question, not a better answer to the same one — and note that with Google's
+trials out of the pool it now sits within a few per cent of measured, so the ₹150
+thresholds stay usable in either mode.
 
 ### Caveats the UI states on every view
 

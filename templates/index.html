@@ -377,7 +377,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <button data-s="blended">Blended</button>
     </div>
     <div class="segsw attrsw" id="attrsw"
-         title="How Branch trials with no Meta ad name are counted. Measured: Branch says which channel earned each one. Pro rata: they are shared between Meta and Google by each channel's measured trials that day.">
+         title="How Branch trials that no channel claims are counted. Measured: they stay in organic/other. Pro rata: they are shared between Meta and Google by each one's share of that day's attributed trials. Google's own trials stay Google's either way.">
       <button data-a="measured" class="on">Measured</button>
       <button data-a="prorata">Pro rata</button>
     </div>
@@ -510,9 +510,10 @@ const BRANDS = {{ brand_meta | tojson }};
    CPT target is set against — a testing ad set judged against Rs150 would be killed for
    doing its job. */
 let SEG = 'trial';
-/* 'measured' = trials as Branch attributes them. 'prorata' = the modelled view: every
-   trial with no Meta ad name shared between Meta and Google in proportion to what each
-   is measured to have earned, worked out for each day separately and then summed.
+/* 'measured' = trials as Branch attributes them. 'prorata' = the modelled view: the
+   trials Branch could attribute to NO channel shared between Meta and Google in
+   proportion to each one's share of that day's attributed volume, day by day and then
+   summed. Google's measured trials are not in that pool -- they are attributed.
    The server does the per-day arithmetic and hands back one multiplier per event, so
    turning this on is a re-render and never a fetch. */
 let ATTR = 'measured';
@@ -1689,9 +1690,9 @@ function chanNote(){
       /* On: the reader is looking at modelled numbers and is owed the size of the model
          and the measured figure it replaced, in the same breath. */
       ? `<br><b class="modelled">Pro rata is on, so the figures above this paragraph are
-          modelled, not measured.</b> The ${num(p.meta - c.meta)} trials with no Meta ad
-          name that this model hands to Meta are trials Branch attributed to Google or to
-          organic. Every trial count on the page is lifted
+          modelled, not measured.</b> Of the ${num(p.pool)} trials no channel claims,
+          this model hands Meta ${num(p.allocated)} and Google the rest, by their measured
+          shares. Google's own trials are untouched. Every trial count on the page is lifted
           <b>×${p.uplift.toFixed(3)}</b> and every CPT divided by it, so brand-wide CPT
           reads ${rs(sp/p.trials)} where the measured figure is ${rs(sp/p.matched)}.
           The lift is worked out for each of the ${p.days_covered} day(s) in this window
@@ -1701,9 +1702,9 @@ function chanNote(){
           Judge one creative against another on the measured view.`
       /* Off: the same arithmetic, as the thing that would happen — the argument for
          leaving it off, checkable on whatever window is on screen. */
-      : `Splitting that pool between Meta and Google in proportion to their measured
-          trials — the <b>Pro rata</b> switch in the header — would credit Meta with
-          ${num(p.meta - c.meta)} trials Branch attributed elsewhere, and print a
+      : `Sharing the ${num(p.pool)} unclaimed trials between Meta and Google by their
+          measured shares — the <b>Pro rata</b> switch in the header — would credit Meta
+          with ${num(p.allocated)} of them, and print a
           brand-wide CPT of ${rs(sp/p.trials)} where the measured figure is
           ${rs(sp/p.matched)}. (Brand-wide: this breakdown covers every campaign, so it
           does not split by testing and trial the way the tiles above do.)`;
