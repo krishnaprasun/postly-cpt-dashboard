@@ -1264,6 +1264,235 @@ def google_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     return out
 
 
+GOOGLE_DIMS = {"gcampaign": "Campaign", "gadgroup": "Ad group"}
+# Two caches, because the two halves cost completely different things. Google Ads spend is
+# cheap and not rate-limited here; Branch is the source that throttles, and the trials for
+# a window are IDENTICAL for both dimensions -- Campaign is the Ad group fold summed one
+# level up. Caching the trials by window alone means opening Campaign after Ad group costs
+# no Branch call at all, where before it cost a second full pull and usually got a 429.
+_gtrials_cache, _gseries_cache = {}, {}
+_gcache_lock = threading.Lock()
+GSERIES_TTL = int(os.environ.get("GSERIES_TTL", "900"))
+
+
+def _gcache_get(store, key, ttl):
+    with _gcache_lock:
+        hit = store.get(key)
+    if hit and time.time() - hit["at"] < ttl:
+        return hit["v"], int((time.time() - hit["at"]) // 60)
+    return None, None
+
+
+def _gcache_put(store, key, v, keep=8):
+    with _gcache_lock:
+        store[key] = {"at": time.time(), "v": v}
+        if len(store) > keep:
+            for k in sorted(store, key=lambda k: store[k]["at"])[:len(store) - keep]:
+                store.pop(k, None)
+
+
+def google_trials_window(brand, dates, force=False):
+    """({date: {event: {(campaign, ad_group): n}}}, error) for a window, cached.
+
+    Stored days come from the store and never expire; the rest are one Branch pull shared
+    by every dimension and every view that asks within the TTL.
+    """
+    key = (brand, dates[0], dates[-1])
+    if not force:
+        hit, _age = _gcache_get(_gtrials_cache, key, GSERIES_TTL)
+        if hit is not None:
+            return hit
+    stored = google_trials_read(brand, dates) if H.available() else {}
+    missing = [d for d in dates if d not in stored]
+    err = None
+    if missing:
+        try:
+            live = google_trials_daily(missing[0], missing[-1], C.brand(brand))
+            stored.update({d: v for d, v in live.items() if d in set(missing)})
+        except Exception as ex:
+            err = str(ex)[:160]
+    out = (stored, err)
+    # A throttled pull is not cached: caching it would hold an empty answer for fifteen
+    # minutes and make a transient look permanent.
+    if not err:
+        _gcache_put(_gtrials_cache, key, out)
+    return out
+
+
+def google_series(brand, since, until, dim="gadgroup", force=False):
+    """See _google_series_build. Wrapped so a repeat view is free."""
+    key = (brand, since, until, dim)
+    if not force:
+        hit, age = _gcache_get(_gseries_cache, key, GSERIES_TTL)
+        if hit is not None:
+            return dict(hit, cached=True, age_min=age)
+    out = _google_series_build(brand, since, until, dim=dim, force=force)
+    if not out.get("trials_error"):
+        _gcache_put(_gseries_cache, key, out)
+    return dict(out, cached=False, age_min=0)
+
+
+def _google_series_build(brand, since, until, dim="gadgroup", force=False):
+    """Per-day Google spend, trials and installs by campaign or ad group.
+
+    Deliberately the SAME SHAPE as series(): `{dates, rows:[{key,label,days:{date:{...}}}]}`.
+    Trends and Matrix read that shape and nothing else, so producing it here gets the
+    chart, the date grid, paging, per-day sorting, the hover read-out and the CSV export
+    for Google without a second implementation of any of them.
+    """
+    dim = dim if dim in GOOGLE_DIMS else "gadgroup"
+    B = C.brand(brand)
+    dates, partial_today = _series_dates(since, until)
+    if not dates:
+        return {"brand": brand, "since": since, "until": until, "dim": dim,
+                "dates": [], "rows": [], "generated_at": now_ist_str()}
+    ev_keys = [k for k, _ in _with_installs(B["events"])]
+
+    rows = {}
+
+    def cell(camp, group):
+        k = camp if dim == "gcampaign" else camp + "\t" + group
+        r = rows.get(k)
+        if r is None:
+            r = rows[k] = {
+                "key": k,
+                "label": camp if dim == "gcampaign" else (group or "(no ad group)"),
+                "stage": "" if dim == "gcampaign" else camp,
+                "platform": "Google", "acct": None, "ad": None,
+                "total_spend": 0.0, "days": {},
+                **{"total_" + x: 0.0 for x in ev_keys}}
+        return r
+
+    def day_of(r, d):
+        rec = r["days"].get(d)
+        if rec is None:
+            rec = r["days"][d] = {"spend": 0.0, **{x: 0.0 for x in ev_keys}}
+        return rec
+
+    # ---- trials, from the store where a day has one and Branch for the rest ----
+    per_day, trials_err = google_trials_window(brand, dates, force=force)
+    stored = per_day
+    trial_days = 0
+    for d in dates:
+        per_ev = per_day.get(d)
+        if not per_ev:
+            continue
+        trial_days += 1
+        for k, by_key in per_ev.items():
+            if k not in ev_keys:
+                continue
+            for (camp, group), n in by_key.items():
+                r = cell(camp, group)
+                day_of(r, d)[k] += n
+                r["total_" + k] += n
+
+    # ---- spend, straight from Google Ads, already per day ---------------------
+    spend_days, spend_err = set(), None
+    cust, how = ([], "no credentials")
+    if GA.available():
+        cust, how = google_customers(brand)
+        for cid in cust:
+            for x in GA.spend_daily(cid, dates[0], dates[-1]):
+                d = x["date"]
+                if d not in r_dates_set(dates):
+                    continue
+                r = cell(x["campaign"], x["ad_group"])
+                rec = day_of(r, d)
+                rec["spend"] += x["spend"]
+                rec["imp"] = rec.get("imp", 0) + x["imp"]
+                rec["clk"] = rec.get("clk", 0) + x["clk"]
+                rec["isp"] = round(rec.get("isp", 0) + x["spend"], 2)
+                r["total_spend"] += x["spend"]
+                r["total_imp"] = (r.get("total_imp") or 0) + x["imp"]
+                r["total_clk"] = (r.get("total_clk") or 0) + x["clk"]
+                r["total_isp"] = round((r.get("total_isp") or 0) + x["spend"], 2)
+                spend_days.add(d)
+        spend_err = GA.last_error() or (None if cust else
+                                        "no Google Ads account is mapped to this brand")
+    else:
+        spend_err = "no Google Ads credentials on this instance"
+
+    out_rows = sorted(rows.values(), key=lambda r: -r["total_spend"])
+    for r in out_rows:
+        r["total_spend"] = round(r["total_spend"], 2)
+        for x in ev_keys:
+            r["total_" + x] = round(r["total_" + x], 2)
+
+    return {"brand": brand, "brand_label": B["label"], "since": dates[0],
+            "until": dates[-1], "dim": dim, "dim_labels": GOOGLE_DIMS,
+            "dates": dates, "keys": ev_keys, "install_key": INSTALL_KEY,
+            "event_labels": B["labels"], "cpt_target": B["cpt_target"],
+            "rows": out_rows, "truncated": False, "row_cap": 0,
+            "shape": SERIES_SHAPE, "channel": "google",
+            "partial_today": partial_today, "excluded_today": today_ist(),
+            "total_rows": len(out_rows), "stored_days": len(stored),
+            "trial_days": trial_days, "trials_error": trials_err,
+            "spend_days": len(spend_days), "spend_error": spend_err,
+            "customers": cust, "customers_how": how,
+            # Google has no budget history here and no live/paused flag on an ad group,
+            # so the controls that depend on those are told plainly rather than left to
+            # render an empty grid.
+            "budget_dim": False, "budget_days": 0,
+            "active_dim": False, "active_known": False,
+            "imp_days": len(spend_days), "imp_from": IMP_FROM,
+            "generated_at": now_ist_str()}
+
+
+def r_dates_set(dates, _cache={}):
+    k = (dates[0], dates[-1], len(dates))
+    if k not in _cache:
+        _cache.clear()
+        _cache[k] = set(dates)
+    return _cache[k]
+
+
+def google_backfill(brand, budget_s=90, max_days=0, dry=False):
+    """Store Google's per-day campaign/ad-group trials for settled days that lack them.
+
+    Same shape and the same reasons as the reach backfill: bounded batches so it can be
+    scheduled and left, newest first so a short run lands the days people look at, and a
+    throttle stops it rather than feeding it. Without this every Trends or Matrix view on
+    the Google channel re-pulls Branch for the whole window, which is both slow and the
+    thing that gets the app rate-limited.
+    """
+    started = time.time()
+    B = C.brand(brand)
+    have = sorted(H.have(brand) or [], reverse=True)          # days the store has at all
+    done = set(H.have(google_ns(brand)) or [])
+    todo = [d for d in have if d not in done]
+    out = {"brand": brand, "stored": len(have), "pending_before": len(todo),
+           "written": 0, "failed": 0, "days": [], "throttled": False}
+    if not todo:
+        out["pending_after"] = 0
+        out["took"] = round(time.time() - started, 1)
+        return out
+    for d in (todo[:max_days] if max_days else todo):
+        if time.time() - started > budget_s:
+            break
+        t = time.time()
+        try:
+            g = google_trials_daily(d, d, B, tries=BRANCH_BACKFILL_TRIES)
+        except BranchThrottled:
+            out["throttled"] = True
+            break
+        except Exception as ex:
+            out["failed"] += 1
+            out["days"].append({"date": d, "error": str(ex)[:120]})
+            continue
+        per_ev = g.get(d) or {}
+        # A day with no Google rows is still a stored answer -- "Google earned nothing
+        # here" is a fact, and without writing it the day stays pending for ever.
+        ok = True if dry else google_trials_store(brand, d, per_ev)
+        out["written"] += 1 if ok else 0
+        out["failed"] += 0 if ok else 1
+        n = sum(sum(v.values()) for v in per_ev.values())
+        out["days"].append({"date": d, "trials": n, "rows": sum(len(v) for v in per_ev.values()),
+                            "took": round(time.time() - t, 1), "stored": bool(ok)})
+    out["pending_after"] = max(0, len(todo) - out["written"])
+    out["took"] = round(time.time() - started, 1)
+    return out
+
+
 def google_spend_only(brand, since, until):
     """{spend, imp, clk, days} for a window -- Google Ads ONLY, no Branch call.
 

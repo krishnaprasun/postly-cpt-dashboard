@@ -450,6 +450,35 @@ def api_google():
         return jsonify({"error": str(e)[:500]}), 500
 
 
+@app.route("/api/google/series")
+@protected
+def api_google_series():
+    """Per-day Google spend and trials by campaign or ad group.
+
+    Same shape as /api/series on purpose — Trends and Matrix read that shape and nothing
+    else, so Google gets both views without a second implementation of either.
+    """
+    brand, err, full = _gate(request.args.get("k", ""),
+                             request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    if request.args.get("since") and request.args.get("until"):
+        since, until = request.args["since"], request.args["until"]
+    else:
+        try:
+            days = int(request.args.get("days", P.SERIES_DEFAULT_DAYS))
+        except ValueError:
+            days = P.SERIES_DEFAULT_DAYS
+        since, until = P.series_window(days)
+    try:
+        return jsonify(P.google_series(brand, since, until,
+                                       dim=request.args.get("dim", "gadgroup"),
+                                       force=full and request.args.get("force") == "1"))
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)[:500]}), 500
+
+
 @app.route("/api/google/spend")
 @protected
 def api_google_spend():
@@ -508,6 +537,39 @@ def api_longevity():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)[:500]}), 500
+
+
+@app.route("/api/backfill/google", methods=["POST", "GET"])
+def api_backfill_google():
+    """Store Google's per-day campaign/ad-group trials for settled days that lack them.
+
+    Token-gated and bounded like the reach backfill, and for the same reason: without it,
+    every Google Trends or Matrix view re-pulls Branch for its whole window.
+    """
+    want = H.TOKEN
+    if not want or not hmac.compare_digest(request.headers.get("Authorization", ""),
+                                           "Bearer " + want):
+        return jsonify({"error": "unauthorized"}), 401
+    if not H.available():
+        return jsonify({"error": "no history store configured"}), 503
+    brands = [request.args.get("brand")] if request.args.get("brand") else list(C.BRANDS)
+    bad = [b for b in brands if b not in C.BRANDS]
+    if bad:
+        return jsonify({"error": f"unknown brand(s): {bad}"}), 400
+    try:
+        budget = max(10, min(int(request.args.get("budget", "90")), 240))
+    except ValueError:
+        budget = 90
+    out = []
+    for b in brands:
+        try:
+            out.append(P.google_backfill(b, budget_s=budget,
+                                         dry=request.args.get("dry") == "1"))
+        except Exception as e:
+            traceback.print_exc()
+            out.append({"brand": b, "error": str(e)[:200]})
+    return jsonify({"pending": sum(r.get("pending_after") or 0 for r in out),
+                    "results": out})
 
 
 @app.route("/api/backfill/reach", methods=["POST", "GET"])

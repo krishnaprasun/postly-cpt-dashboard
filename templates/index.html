@@ -565,12 +565,14 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     </select>
     <label class="chk">Dimension
       <select class="sel" id="sDim" style="margin-left:6px">
-        <option value="script" selected>Script (ad name)</option>
-        <option value="adset">Ad set</option>
-        <option value="campaign">Campaign</option>
-        <option value="account">Ad account</option>
-        <option value="stage">Stage</option>
-        <option value="platform">Platform</option>
+        <option value="script" selected data-c="meta">Script (ad name)</option>
+        <option value="adset" data-c="meta">Ad set</option>
+        <option value="campaign" data-c="meta">Campaign</option>
+        <option value="account" data-c="meta">Ad account</option>
+        <option value="stage" data-c="meta">Stage</option>
+        <option value="platform" data-c="meta">Platform</option>
+        <option value="gadgroup" data-c="google">Ad group</option>
+        <option value="gcampaign" data-c="google">Campaign</option>
       </select></label>
     <label class="chk">Metric
       <select class="sel" id="sMetric" style="margin-left:6px">
@@ -1451,7 +1453,7 @@ const chanIsMeta = () => CHAN === 'meta';
    are not rows of the same table. Disabled with the reason on them, never quietly inert. */
 const CHAN_TABS = {
   meta: null,                                   // null = everything
-  google: ['campaigns', 'adsets'],              // adsets is relabelled "Ad groups"
+  google: ['campaigns', 'adsets', 'trends', 'matrix'],  // adsets = "Ad groups"
   blended: ['combined'],
 };
 const CHAN_LABEL = {meta: 'Meta', google: 'Google', blended: 'Meta + Google'};
@@ -1639,7 +1641,7 @@ let TCH = null;                      // what the trend hover read-out needs
    window. Following the picker meant opening Trends on its default of "Today" and being
    shown a single point and a paragraph explaining why it was useless. */
 const sWin = () => document.getElementById('sWin').value;
-const seriesKey = () => `${BRAND}|${sWin()}|${sDim()}`;
+const seriesKey = () => `${CHAN}|${BRAND}|${sWin()}|${sDim()}`;
 const seriesFresh = () => !!(SERIES && SERIESKEY === seriesKey());
 const sDim = () => document.getElementById('sDim').value;
 const sMetric = () => document.getElementById('sMetric').value;
@@ -1696,6 +1698,21 @@ function seriesRows(){
 /* Budget lives on ad sets, campaigns and accounts. A script is an ad NAME and a stage is
    a bucket; neither is a thing Meta holds a budget against, so the option is disabled
    there rather than drawing an empty grid. */
+/* A dimension belongs to one channel. Showing Meta's six on Google would offer folds
+   that cannot exist, and the picker silently keeping "Script" when you switch would ask
+   the Google endpoint for a dimension it has never heard of. */
+function sDimAvail(){
+  const sel = document.getElementById('sDim');
+  const want = chanIsMeta() ? 'meta' : 'google';
+  let ok = false;
+  for(const o of sel.options){
+    const mine = o.dataset.c === want;
+    o.hidden = !mine; o.disabled = !mine;
+    if(mine && o.value === sel.value) ok = true;
+  }
+  if(!ok) sel.value = chanIsMeta() ? 'script' : 'gadgroup';
+}
+
 function sMetricAvail(){
   const o = document.querySelector('#sMetric option[value="bud"]');
   if(!o) return;
@@ -1781,7 +1798,11 @@ async function loadSeries(force, quiet){
   SERIESBUSY = !quiet;
   document.getElementById('scount').textContent = quiet ? 'updating…' : 'loading…';
   try{
-    const r = await fetch(`/api/series?brand=${BRAND}&days=${sWin()}&dim=${sDim()}${
+    /* Google's series is a different endpoint returning the SAME shape, so everything
+       below this line -- the chart, the grid, paging, sorting, the hover read-out, the
+       export -- is untouched by which channel is on screen. */
+    const path = chanIsMeta() ? '/api/series' : '/api/google/series';
+    const r = await fetch(`${path}?brand=${BRAND}&days=${sWin()}&dim=${sDim()}${
       force && !quiet ? '&force=1' : ''}${K}`);
     const j = await r.json();
     if(j.error){ document.getElementById('scount').textContent = 'failed: ' + j.error; return; }
@@ -2543,7 +2564,7 @@ function renderTable(){
       TAB === 'matrix' ? 'inline-flex' : 'none';
     document.getElementById('sLinesWrap').style.display =
       TAB === 'trends' ? 'inline-flex' : 'none';
-    sActiveAvail(); sMetricAvail();
+    sDimAvail(); sActiveAvail(); sMetricAvail();
     if(TAB==='trends') renderTrends(); else renderMatrix();
     return;
   }
@@ -3437,6 +3458,11 @@ document.getElementById('chansw').onclick = e => {
   /* Warnings are written per channel, so the box is cleared here and refilled by the
      next payload rather than left describing the view you just left. */
   if(!chanIsMeta()) document.getElementById('err').innerHTML = '';
+  /* The dimension list changes with the channel, and the fold on screen belongs to the
+     one being left. Reset both before rendering so the tabs cannot draw Meta's rows
+     under a Google heading for a frame. */
+  sDimAvail();
+  SERIES = null; SERIESKEY = null;
   render();
 };
 document.getElementById('segsw').onclick = e => {
