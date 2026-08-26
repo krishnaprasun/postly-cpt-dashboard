@@ -2532,7 +2532,7 @@ function renderTable(){
   document.getElementById('tblWrap').style.display = isSeries ? 'none' : 'block';
   /* The channel switch decides what the table IS, before the tab decides which slice of
      it. Meta falls through to everything that was here before. */
-  if(CHAN === 'blended'){
+  if(CHAN === 'blended' && !isSeries){
     document.getElementById('ctl').style.display='none';
     document.getElementById('trendsWrap').style.display='none';
     document.getElementById('matrixWrap').style.display='none';
@@ -2541,7 +2541,11 @@ function renderTable(){
     renderBlended();
     return;
   }
-  if(CHAN === 'google'){
+  /* Trends and Matrix are channel-agnostic -- they render whatever fold SERIES holds, and
+     loadSeries picks the endpoint by channel -- so they fall through to the series path
+     below. Intercepting them here was why the Google channel showed an empty grid: the
+     branch returned before the series code could ask for anything. */
+  if(CHAN === 'google' && !isSeries){
     document.getElementById('ctl').style.display='none';
     document.getElementById('trendsWrap').style.display='none';
     document.getElementById('matrixWrap').style.display='none';
