@@ -764,6 +764,21 @@ The footer carries two totals, because with paging one number cannot mean both t
 Export CSV writes every row matching the filter in the order on screen — not just the
 page, which would be a screenshot rather than an export.
 
+**Trends reads back on hover.** Move over the chart and it snaps to the nearest **day** —
+not to the pointer, because the series is daily and a read-out floating between two days
+would imply a value that does not exist. You get a crosshair on that day, a dot on every
+line that has a value there, and a card listing all six with their values, **ordered
+biggest first**: the question a crowded chart raises is which one is on top here.
+
+A blank stays a blank. On CPT/CPI a day with no trials shows `—` and gets **no dot**,
+the same rule the line itself follows — a day a row did not run is not a day it cost
+nothing. On Spend/Trials/Installs an absent day genuinely is zero and reads as zero.
+
+The overlay is HTML, not SVG. The chart uses `preserveAspectRatio="none"`, so a circle in
+viewBox units comes out an ellipse and a 1px line comes out whatever the horizontal scale
+makes it; screen coordinates keep the dots round at any width. The card flips to the
+other side of the crosshair near the right edge and is clamped to the chart vertically.
+
 **Active only.** A checkbox in the control bar keeps just the rows still running. It
 applies to the dimensions that are a thing which can be paused — **Ad set**, **Campaign**
 and **Script** — and is disabled, with the reason on it, for Stage, Platform and Ad

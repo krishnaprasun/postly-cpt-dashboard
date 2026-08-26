@@ -264,6 +264,27 @@ a.mgr:hover{color:var(--accent-dk)}
 .chartbox .axis{fill:var(--faint);font-size:10px}
 .chartbox path.ln{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
 .chartbox circle.pt{stroke:var(--white);stroke-width:1.5}
+/* Hover read-out. Drawn as HTML over the chart rather than inside the SVG: the SVG uses
+   preserveAspectRatio="none", so a circle in viewBox units comes out an ellipse. Screen
+   coordinates keep the dots round and the crosshair one pixel wide at any width. */
+.chartbox .xhair{position:absolute;top:0;bottom:22px;width:1px;background:var(--faint);
+  opacity:.55;pointer-events:none;display:none}
+.chartbox .hdot{position:absolute;width:9px;height:9px;margin:-5px 0 0 -5px;
+  border-radius:50%;border:2px solid var(--white);pointer-events:none;
+  box-shadow:0 0 0 1px rgba(0,0,0,.06)}
+.chartbox .ttip{position:absolute;z-index:5;pointer-events:none;display:none;
+  background:var(--white);border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 8px 24px rgba(0,0,0,.13);padding:9px 11px;font-size:11.5px;
+  min-width:190px;max-width:340px;color:var(--ink)}
+.chartbox .ttip h4{margin:0 0 6px;font-size:11px;letter-spacing:.3px;
+  text-transform:uppercase;color:var(--muted);font-weight:700}
+.chartbox .ttip .tr{display:flex;align-items:center;gap:7px;padding:2px 0}
+.chartbox .ttip .tr i{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
+.chartbox .ttip .tr span{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.chartbox .ttip .tr b{font-variant-numeric:tabular-nums;font-weight:700}
+.chartbox .ttip .tr.none b{color:var(--faint);font-weight:500}
+.chartbox{cursor:crosshair}
 .legend{display:flex;flex-wrap:wrap;gap:6px 16px;margin-top:12px;font-size:11px;
   color:var(--ink)}
 .legend span.it{display:inline-flex;align-items:center;gap:6px;max-width:100%}
@@ -990,6 +1011,7 @@ function niceMax(v, ticks){
   return step * ticks;
 }
 const LINE_COLOURS = ['#2563EB','#E8A017','#20A75D','#B3342C','#7C3AED','#0891B2'];
+let TCH = null;                      // what the trend hover read-out needs
 
 /* Deliberately NOT keyed on the page's range picker: these two tabs carry their own
    window. Following the picker meant opening Trends on its default of "Today" and being
@@ -1157,14 +1179,87 @@ function renderTrends(){
       <b title="${(r.label||'').replace(/"/g,'&quot;')}">${r.label||'—'}</b>
       <em>· ${r.platform}${r.stage ? ' · '+r.stage : ''} · ${
         tv===null ? '—' : m.fmt(tv)}</em></span>`; }).join('');
+  /* Everything the hover read-out needs, captured at draw time. Recomputing it from the
+     DOM on every pointer move would re-read the metric and the filters mid-gesture and
+     could disagree with the line actually on screen. */
+  TCH = {dates, rows, vals, m, W, H, L, R, Bt,
+         px, py, cols: rows.map((_,i) => LINE_COLOURS[i % LINE_COLOURS.length])};
   box.innerHTML = `<div class="panel">
     <h3>${m.label} by ${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}</h3>
     <p class="sub">Top ${rows.length} row${rows.length===1?'':'s'} by spend in the current
       filters, ${SERIES.since} to ${SERIES.until}. Ranked by spend so the same rows stay
       on screen when you change metric.</p>
-    <div class="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-      ${g}${lines}</svg></div>
+    <div class="chartbox" id="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+      ${g}${lines}</svg><div class="xhair" id="xhair"></div>
+      <div id="hdots"></div><div class="ttip" id="ttip"></div></div>
     <div class="legend">${legend}</div></div>`;
+  bindTrendHover();
+}
+
+/* ---------- trend hover read-out ---------- */
+
+function trendHide(){
+  const x = document.getElementById('xhair'), t = document.getElementById('ttip'),
+        d = document.getElementById('hdots');
+  if(x) x.style.display = 'none';
+  if(t) t.style.display = 'none';
+  if(d) d.innerHTML = '';
+}
+
+/* Snap to the nearest DAY rather than following the pointer: the series is daily, and a
+   read-out floating between two days would imply a value that does not exist. */
+function trendIndexAt(C, vx){
+  if(C.dates.length === 1) return 0;
+  const i = Math.round((vx - C.L) * (C.dates.length - 1) / (C.W - C.L - C.R));
+  return Math.max(0, Math.min(C.dates.length - 1, i));
+}
+
+/* One day's read-out. Ordered by value, biggest first, because the question a crowded
+   chart raises is "which one is on top here". Blanks sink and are shown AS blanks, never
+   as zero — a day a row did not run is not a day it cost nothing. */
+function trendReadout(C, i){
+  const rows = C.rows.map((row, ri) => {
+    const v = C.vals[ri][i], none = v === null || !isFinite(v);
+    return {row, col: C.cols[ri], v, none};
+  }).sort((a, b) => (a.none && b.none) ? 0 : a.none ? 1 : b.none ? -1 : b.v - a.v);
+  const d = C.dates[i];
+  const html = `<h4>${new Date(d+'T00:00:00').toLocaleDateString('en-GB',
+      {weekday:'short', day:'numeric', month:'short'})}</h4>` +
+    rows.map(o => `<div class="tr${o.none ? ' none' : ''}"><i style="background:${o.col}"></i>
+        <span title="${(o.row.label||'').replace(/"/g,'&quot;')}">${o.row.label||'—'}</span>
+        <b>${o.none ? '—' : C.m.fmt(o.v)}</b></div>`).join('');
+  return {rows, html, date: d};
+}
+
+function bindTrendHover(){
+  const box = document.getElementById('chartbox');
+  if(!box || !TCH) return;
+  box.onpointerleave = trendHide;
+  box.onpointermove = e => {
+    const C = TCH, r = box.getBoundingClientRect();
+    if(!r.width || !C.dates.length) return;
+    const sx = r.width / C.W, sy = r.height / C.H;
+    const i = trendIndexAt(C, (e.clientX - r.left) / sx);
+    const left = C.px(i) * sx;
+
+    const xh = document.getElementById('xhair');
+    xh.style.display = 'block'; xh.style.left = left.toFixed(1) + 'px';
+
+    const out = trendReadout(C, i);
+    document.getElementById('hdots').innerHTML = out.rows.filter(o => !o.none).map(o =>
+      `<div class="hdot" style="left:${left.toFixed(1)}px;top:${
+        (C.py(o.v) * sy).toFixed(1)}px;background:${o.col}"></div>`).join('');
+    const tip = document.getElementById('ttip');
+    tip.innerHTML = out.html;
+    tip.style.display = 'block';
+    /* Flip to the other side near the right edge, and never let the box run off the top:
+       a read-out you have to scroll to is not a read-out. */
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = (left + 14 + tw > r.width ? Math.max(0, left - 14 - tw)
+                                               : left + 14).toFixed(1) + 'px';
+    const ty = e.clientY - r.top - th / 2;
+    tip.style.top = Math.max(0, Math.min(r.height - th, ty)).toFixed(1) + 'px';
+  };
 }
 
 function renderMatrix(){
