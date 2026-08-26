@@ -1032,6 +1032,34 @@ accounts   {id: {n, b}}          b = its ACTIVE campaigns + ad sets
 total, at, first_at, samples, moved[], degraded[]
 ```
 
+### What "everything" actually covers
+
+**Every campaign**, active or paused — the campaigns listing carries no status filter, so
+recording the paused ones is free, and a campaign that goes to zero because it was paused
+is exactly what a budget history is for.
+
+**Every ad set that is live, plus every one we were already tracking that has since
+stopped being live.** An ad set that lapses out of active is chased **by id** and recorded
+with its new status, so it reads as paused instead of vanishing — a row that disappears is
+indistinguishable from one that never existed.
+
+It is not a full sweep, and that is deliberate. Listing every ad set including paused ones
+is **24,717 rows against the 980 that are live**, and **78 seconds** of Meta request time
+per pass across these accounts — against a limit that binds on *time*, not calls. Three
+passes a day would be four minutes of listing daily to re-record ad sets that were paused
+weeks ago and will never change again. Fetching the handful that changed, by id, costs
+tens of lookups.
+
+So the gap is exactly this: **an ad set paused before recording started is not in the
+history**, and never can be. Everything live on 26 Aug 2026, and everything that goes
+quiet afterwards, is.
+
+**Status counts as a change even when the number does not.** An ad set paused at its own
+budget still stopped spending, and a history that watched only the rupees would call that
+day identical to the last — so `moved` carries `from_st`/`to_st` alongside `from`/`to`.
+
+**Ads have no budget in Meta**, so there is nothing to store below ad-set level.
+
 Only **active** ad sets count towards a campaign or an account — the same rule the
 Budget/day tile uses, so the stored total agrees with the page. Verified on first run:
 Postly ₹5,00,932 stored against ₹5,00,933 on the tile.

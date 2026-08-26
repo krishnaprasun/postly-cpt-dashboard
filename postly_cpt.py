@@ -290,6 +290,44 @@ def _rupees(v):
         return 0.0
 
 
+def _prior_budget_day(brand, day):
+    """(snapshot, date) for the most recent recorded day BEFORE `day`, or (None, None)."""
+    try:
+        dates = [d for d in (H.have(budget_ns(brand)) or []) if d < day]
+    except Exception:
+        return None, None
+    if not dates:
+        return None, None
+    d = max(dates)
+    got, ok = H.get_day_raw(budget_ns(brand), d)
+    return (got, d) if ok else (None, None)
+
+
+def _adsets_by_id(ids):
+    """{id: fields} for specific ad sets, whatever their status.
+
+    Listing every ad set including paused ones costs 78 seconds of Meta request time
+    across these accounts -- 24,717 rows against the 980 that are live -- and Meta's limit
+    here binds on TIME. Fetching by id is how a paused ad set keeps its budget history
+    without paying for twenty-four thousand dead ones every snapshot.
+    """
+    out = {}
+    ids = [i for i in ids if i]
+    for i in range(0, len(ids), 50):
+        chunk = ids[i:i + 50]
+        try:
+            j = _graph("", {"ids": ",".join(chunk),
+                            "fields": "id,name,effective_status,daily_budget,"
+                                      "lifetime_budget,campaign_id,account_id"},
+                       rl_retries=0, raw=True)
+        except Exception:
+            continue
+        for k, v in (j or {}).items():
+            if isinstance(v, dict) and v.get("id"):
+                out[k] = v
+    return out
+
+
 def budget_snapshot(brand, force=False, store=True):
     """Record every level's budget as it stands now, under today's date.
 
@@ -299,7 +337,7 @@ def budget_snapshot(brand, force=False, store=True):
     """
     B = C.brand(brand)
     day = today_ist()
-    sets_, camps_, accts_, degraded = {}, {}, {}, []
+    sets_, camps_, accts_, degraded, live_accounts = {}, {}, {}, [], []
     for a in B["accounts"]:
         camps, live_sets, _ads, ok = meta_roster(a["id"], force)
         if not (ok["campaigns"] and ok["adsets"]):
@@ -307,25 +345,49 @@ def budget_snapshot(brand, force=False, store=True):
             # the account as degraded and leave its rows out entirely.
             degraded.append(a["id"])
             continue
-        cname = {c["id"]: c.get("name", "") for c in camps}
         acct_total = 0.0
+        # EVERY campaign, with its status. The campaigns listing carries no status filter,
+        # so recording the paused ones is free -- and a campaign that goes to zero because
+        # it was paused is exactly what a budget history is for.
         for c in camps:
-            if (c.get("effective_status") or "") != "ACTIVE":
-                continue
+            st = c.get("effective_status") or ""
             b = _rupees(c.get("daily_budget"))
-            lt = _rupees(c.get("lifetime_budget"))
-            camps_[c["id"]] = {"n": c.get("name", ""), "b": b, "lt": lt, "a": a["id"]}
-            acct_total += b
+            camps_[c["id"]] = {"n": c.get("name", ""), "b": b,
+                               "lt": _rupees(c.get("lifetime_budget")),
+                               "st": st, "a": a["id"]}
+            if st == "ACTIVE":
+                acct_total += b
         for x in live_sets:
             b = _rupees(x.get("daily_budget"))
-            lt = _rupees(x.get("lifetime_budget"))
-            sets_[x["id"]] = {"n": x.get("name", ""), "b": b, "lt": lt,
+            sets_[x["id"]] = {"n": x.get("name", ""), "b": b,
+                              "lt": _rupees(x.get("lifetime_budget")), "st": "ACTIVE",
                               "c": x.get("campaign_id", ""), "a": a["id"]}
             acct_total += b
         accts_[a["id"]] = {"n": a["name"], "b": round(acct_total, 2)}
+        live_accounts.append(a["id"])
+
+    # ---- ad sets that were here yesterday and are not today ------------------
+    # Without this an ad set does not read as paused, it VANISHES -- and a row that
+    # disappears is indistinguishable from one that never existed. Only the ones we were
+    # already tracking are chased, by id, so the cost is tens of lookups and not a sweep.
+    prev_snap, prev_date = _prior_budget_day(brand, day)
+    lapsed = 0
+    if prev_snap and live_accounts:
+        gone = [k for k, v in (prev_snap.get("adsets") or {}).items()
+                if k not in sets_ and v.get("a") in live_accounts]
+        for k, v in _adsets_by_id(gone).items():
+            sets_[k] = {"n": v.get("name", ""), "b": _rupees(v.get("daily_budget")),
+                        "lt": _rupees(v.get("lifetime_budget")),
+                        "st": v.get("effective_status") or "UNKNOWN",
+                        "c": v.get("campaign_id", ""),
+                        "a": "act_" + str(v.get("account_id") or "").replace("act_", "")}
+            lapsed += 1
 
     snap = {"brand": brand, "date": day, "at": now_ist_str(),
+            "lapsed": lapsed, "since_day": prev_date,
             "adsets": sets_, "campaigns": camps_, "accounts": accts_,
+            # Still the ACTIVE-only figure, so it keeps matching the Budget/day tile:
+            # a paused ad set's number is not money that will be spent.
             "total": round(sum(v["b"] for v in accts_.values()), 2),
             "degraded": degraded, "samples": 1}
 
@@ -345,13 +407,20 @@ def budget_snapshot(brand, force=False, store=True):
         # just because the day only keeps one row.
         moved = list(prev.get("moved") or [])
         for lvl, cur in (("adsets", sets_), ("campaigns", camps_)):
-            old = prev.get(lvl) or {}
+            was = prev.get(lvl) or {}
             for k, v in cur.items():
-                o = old.get(k)
-                if o is not None and round(float(o.get("b") or 0), 2) != v["b"]:
+                o = was.get(k)
+                if o is None:
+                    continue
+                ob = round(float(o.get("b") or 0), 2)
+                # Status counts as a change even when the number does not: an ad set
+                # paused at its own budget still stopped spending, and a history that
+                # only watched the rupees would call that day identical to the last.
+                ost, nst = o.get("st") or "", v.get("st") or ""
+                if ob != v["b"] or (ost and nst and ost != nst):
                     moved.append({"lvl": lvl[:-1], "id": k, "n": v.get("n", ""),
-                                  "from": round(float(o.get("b") or 0), 2),
-                                  "to": v["b"], "at": snap["at"]})
+                                  "from": ob, "to": v["b"],
+                                  "from_st": ost, "to_st": nst, "at": snap["at"]})
         snap["moved"] = moved[-500:]
     else:
         snap["first_at"] = snap["at"]
