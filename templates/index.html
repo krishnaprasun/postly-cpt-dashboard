@@ -684,13 +684,26 @@ function veil(on){
    otherwise cached server-side for 30-60 min. Only the Refresh button and the throttle
    retry set it; the automatic 30-minute pull deliberately does not, because the ads
    listing is the most expensive call this makes. */
-async function load(force, silent, hard){
+async function load(force, silent, hard, skipCache){
   clearTimeout(staleTimer);
+  const ckey = 'data|' + apiQuery();
+  if(!force && !hard && !skipCache){
+    const hit = await cacheGet(ckey);
+    if(hit){
+      /* Straight onto the screen: no veil, no skeleton, no round trip. The window you
+         had open a minute ago comes back instantly instead of rebuilding. */
+      RAW = cacheAge(hit.v, hit.held); DATA = applyAttr(RAW); lastFetchAt = Date.now();
+      render(); stampNow();
+      document.getElementById('err').innerHTML = '';
+      if(hit.held < CACHE_SOFT) return;
+      return load(false, true, false, true);   // refresh behind the numbers on screen
+    }
+  }
   BUSY = true;
   document.getElementById('bar').classList.add('on');
   const rb = document.getElementById('refresh');
   if(rb){ rb.disabled = true; rb.textContent = 'Refreshing…'; }
-  showSkeleton();
+  if(!silent) showSkeleton();
   if(!silent) veil(true);
   stampNow();
   try{
@@ -699,6 +712,10 @@ async function load(force, silent, hard){
     lastFetchAt = Date.now();
     if(j.error){ document.getElementById('err').innerHTML =
       `<div class="err"><b>Could not load.</b> ${j.error}</div>`; return; }
+    /* Cached even when a warning came with it -- the figures are still figures, and the
+       warning rides along in the payload so it is shown again next time too. Only a
+       hard error skips the cache, and that returns above. */
+    cachePut(ckey, j);
     RAW = j; DATA = applyAttr(RAW); render();
     // Warnings still carry figures — render them, then explain what is off.
     const notes = [];
@@ -723,7 +740,7 @@ async function load(force, silent, hard){
       ? `<div class="warnbox">${notes.join('<br><br>')}</div>` : '';
     // Served from a stale cache while a refresh runs behind the request — come back
     // for the fresh numbers instead of leaving old ones on screen.
-    if(j.stale) staleTimer = setTimeout(()=>load(false, true), 12000);
+    if(j.stale) staleTimer = setTimeout(()=>load(false, true, false, true), 12000);
   }catch(e){
     document.getElementById('err').innerHTML =
       `<div class="err"><b>Fetch failed.</b> ${e}</div>`;
@@ -972,6 +989,123 @@ let LONG = null, LONGKEY = null, LONGBUSY = false;
    the tab-open guard tested `!LONG`, so it never reloaded — SpeakEasy's ad sets rendered
    under Postly's name. That is the exact thing `DATA = null` two hundred lines below
    exists to prevent, and this view had quietly opted out of it. */
+/* ---------- client-side cache ---------- */
+/* The server already serves stale-while-revalidate; this does the same one layer out, so
+   a view you have already opened does not go back to the network at all. It is what makes
+   flipping between tabs, windows and dimensions instant instead of a fresh 15-25s fold
+   each time, and it survives a reload.
+   Three bands, because "cached" is not one decision:
+     < SOFT   serve it and do not even ask again -- nothing moves in ninety seconds
+     < TTL    serve it INSTANTLY and refresh behind you; the view updates in place
+     < HARD   too old to show; fetch normally
+   The middle band is the important one. Longevity's today column and the Matrix's
+   live/paused flag are stamped by the server on every request, so a held copy is right
+   about the fold and can be minutes stale about today -- serving it and revalidating
+   gives you both, where serving it alone would quietly freeze today. */
+const CACHE_SOFT = 90 * 1000;
+const CACHE_TTL  = 15 * 60 * 1000;
+const CACHE_HARD = 12 * 60 * 60 * 1000;
+const CACHE_MEM_MAX = 24;
+const MEM = new Map();
+
+/* Scoped to the link as well as the brand: one browser can hold two teams' links, and a
+   cache that ignored that could hand one team a payload fetched under the other's. */
+const CACHE_SCOPE = (() => {
+  let h = 0; const t = String(LINK_KEY || '') + '|' + location.pathname;
+  for(let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) | 0;
+  return (h >>> 0).toString(36);
+})();
+const cacheKey = k => CACHE_SCOPE + ':' + k;
+
+/* IndexedDB rather than localStorage. These payloads are 1-2 MB each -- a 30-day script
+   fold is 1.7 MB -- and localStorage is about 5 MB for the entire origin AND stores
+   strings, so it held NOTHING: every entry was over the size guard and the persistent
+   layer never engaged. IndexedDB takes the objects as they are, with no stringify. */
+const IDB_NAME = 'cpt-cache', IDB_STORE = 'v1';
+let _idb = null;
+function idb(){
+  if(_idb) return _idb;
+  _idb = new Promise(res => {
+    let req;
+    try{ req = indexedDB.open(IDB_NAME, 1); }
+    catch(_){ return res(null); }          // private window, storage disabled
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if(!db.objectStoreNames.contains(IDB_STORE)) db.createObjectStore(IDB_STORE);
+    };
+    req.onsuccess = () => res(req.result);
+    req.onerror = () => res(null);
+    req.onblocked = () => res(null);
+  });
+  return _idb;
+}
+function idbRun(mode, fn){
+  return idb().then(db => db ? new Promise(res => {
+    let tx;
+    try{ tx = db.transaction(IDB_STORE, mode); }catch(_){ return res(null); }
+    const r = fn(tx.objectStore(IDB_STORE));
+    tx.oncomplete = () => res(r && 'result' in r ? r.result : null);
+    tx.onerror = tx.onabort = () => res(null);
+  }) : null).catch(() => null);
+}
+
+async function cacheGet(k){
+  const key = cacheKey(k);
+  let e = MEM.get(key);
+  if(!e){
+    e = await idbRun('readonly', st => st.get(key));
+    if(e) MEM.set(key, e);
+  }
+  if(!e || !e.at) return null;
+  const held = Date.now() - e.at;
+  if(held > CACHE_HARD){ cacheDrop(k); return null; }
+  return {v: e.v, held};
+}
+
+function cachePut(k, v){
+  const key = cacheKey(k), e = {at: Date.now(), v};
+  MEM.set(key, e);
+  /* Oldest out first. A Map iterates in insertion order and every put re-inserts, so the
+     memory copy stays bounded even when the browser lets the disk copy grow. */
+  if(MEM.size > CACHE_MEM_MAX){
+    for(const old of [...MEM.keys()].slice(0, MEM.size - CACHE_MEM_MAX)) MEM.delete(old);
+  }
+  idbRun('readwrite', st => st.put(e, key));   // fire and forget; failure is survivable
+}
+
+function cacheDrop(k){
+  const key = cacheKey(k);
+  MEM.delete(key);
+  idbRun('readwrite', st => st.delete(key));
+}
+
+/* Anything older than HARD is dead weight on someone's disk. Swept once per page load,
+   after the first paint, because it is housekeeping and not the reason anyone is here. */
+function cacheSweep(){
+  idbRun('readonly', st => st.getAllKeys()).then(keys => {
+    if(!keys || !keys.length) return;
+    return idbRun('readonly', st => st.getAll()).then(vals => {
+      const now = Date.now(), dead = [];
+      (vals || []).forEach((v, i) => {
+        if(!v || !v.at || now - v.at > CACHE_HARD) dead.push(keys[i]);
+      });
+      if(dead.length) idbRun('readwrite', st => dead.forEach(kk => st.delete(kk)));
+    });
+  }).catch(() => {});
+}
+
+/* A payload served from cache must not claim to be as fresh as when it was fetched. The
+   server sends `age` in seconds and `stale`; both are corrected by however long we held
+   it, so the "last refreshed" line stays true. */
+function cacheAge(v, held){
+  if(!v || typeof v !== 'object') return v;
+  const out = Object.assign({}, v);
+  out.age = (out.age || 0) + Math.round(held / 1000);
+  out.from_cache = true;
+  if(held > CACHE_SOFT) out.stale = true;
+  return out;
+}
+
 const longKey = () => `${BRAND}|${document.getElementById('lWin').value}`;
 const longFresh = () => !!(LONG && LONGKEY === longKey());
 
@@ -1130,19 +1264,35 @@ function rowTotal(r){
   return v === undefined ? null : v;
 }
 
-async function loadSeries(force){
+async function loadSeries(force, quiet){
   const key = seriesKey();
   if(seriesFresh() && !force) return;
-  SERIES = null; SERIESKEY = null; SERIESBUSY = true;
-  document.getElementById('scount').textContent = 'loading…';
+  const hit = force ? null : await cacheGet('ser|' + key);
+  if(hit){
+    /* Straight onto the screen, no spinner and no round trip. */
+    SERIES = hit.v; SERIESKEY = key;
+    if(TAB === 'trends' || TAB === 'matrix'){ renderTable(); noteFor(); }
+    if(hit.held < CACHE_SOFT) return;
+    return loadSeries(true, true);          // refresh behind the numbers on screen
+  }
+  /* Only blank the view when there is nothing to show. A background refresh must never
+     replace real rows with "Loading…" -- that is the flicker this whole layer removes. */
+  if(!quiet){ SERIES = null; SERIESKEY = null; }
+  SERIESBUSY = !quiet;
+  document.getElementById('scount').textContent = quiet ? 'updating…' : 'loading…';
   try{
     const r = await fetch(`/api/series?brand=${BRAND}&days=${sWin()}&dim=${sDim()}${
-      force ? '&force=1' : ''}${K}`);
+      force && !quiet ? '&force=1' : ''}${K}`);
     const j = await r.json();
     if(j.error){ document.getElementById('scount').textContent = 'failed: ' + j.error; return; }
+    /* The picker may have moved while this was in flight. Cache it anyway -- it is a
+       perfectly good answer to the question it was asked -- but do not put it on screen
+       under a heading that now means something else. */
+    cachePut('ser|' + key, j);
+    if(seriesKey() !== key) return;
     SERIES = j; SERIESKEY = key;
   }catch(e){
-    document.getElementById('scount').textContent = 'failed: ' + e;
+    if(!quiet) document.getElementById('scount').textContent = 'failed: ' + e;
   }finally{
     SERIESBUSY = false;
   }
@@ -1420,24 +1570,37 @@ function matrixCsv(){
 }
 const round2 = v => Math.round(v * 100) / 100;
 
-async function loadLongevity(force){
+async function loadLongevity(force, quiet){
   const days = document.getElementById('lWin').value;
   const key = longKey();
   if(longFresh() && !force) return;
+  const hit = force ? null : await cacheGet('long|' + key);
+  if(hit){
+    LONG = hit.v; LONGKEY = key;
+    renderTable(); noteFor();
+    if(hit.held < CACHE_SOFT) return;
+    /* Always worth a quiet refresh: the today column and the live/paused status are
+       stamped by the server per request, so a held copy is right about the fold and
+       stale about today. */
+    return loadLongevity(true, true);
+  }
   // Drop the old payload BEFORE awaiting, so a slow fetch cannot leave another brand's
-  // rows on screen while it runs.
-  LONG = null; LONGKEY = null;
-  LONGBUSY = true;
-  document.getElementById('lcount').textContent = 'loading…';
+  // rows on screen while it runs. A quiet refresh keeps them: it is the same question.
+  if(!quiet){ LONG = null; LONGKEY = null; }
+  LONGBUSY = !quiet;
+  document.getElementById('lcount').textContent = quiet ? 'updating…' : 'loading…';
   const lb = document.getElementById('lGo');
-  if(lb) lb.disabled = true;
+  if(lb && !quiet) lb.disabled = true;
   try{
-    const r = await fetch(`/api/longevity?brand=${BRAND}&days=${days}${force?'&force=1':''}${K}`);
+    const r = await fetch(`/api/longevity?brand=${BRAND}&days=${days}${
+      force && !quiet ? '&force=1' : ''}${K}`);
     const j = await r.json();
     if(j.error){ document.getElementById('lcount').textContent = 'failed: ' + j.error; return; }
+    cachePut('long|' + key, j);
+    if(longKey() !== key) return;
     LONG = j; LONGKEY = key;
   }catch(e){
-    document.getElementById('lcount').textContent = 'failed: ' + e;
+    if(!quiet) document.getElementById('lcount').textContent = 'failed: ' + e;
   }finally{
     LONGBUSY = false;
     if(lb) lb.disabled = false;
@@ -2572,12 +2735,15 @@ ticker = setInterval(stampNow, 15000);
 
 /* Coming back to the tab is exactly when stale numbers do damage — you glance at a CPT
    and act on it. Anything older than two minutes gets re-pulled on focus. */
-const refocus = () => { if(!BUSY && ageSecs() > 120) load(false, true); };
+/* Skips the client cache on purpose. Coming back to the tab after a while is the one
+   moment a held copy is exactly the wrong answer -- you glance at a CPT and act on it. */
+const refocus = () => { if(!BUSY && ageSecs() > 120) load(false, true, false, true); };
 document.addEventListener('visibilitychange',
   () => { if(document.visibilityState === 'visible') refocus(); });
 window.addEventListener('focus', refocus);
 
-load(false);   // veiled: the cold pull is exactly what the veil is for
+load(false);   // veiled only on a real cold pull; a cached view paints at once
+setTimeout(cacheSweep, 4000);
 </script>
 </body>
 </html>

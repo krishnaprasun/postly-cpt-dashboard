@@ -1093,3 +1093,62 @@ out would make "every ad set" untrue, and a budget with no spend behind it is wo
 
 **Raw**, at `/api/budgets?brand=<b>&days=<n>&k=<key>`, which returns the stored days plus
 an explicit `missing` list and `recording_from`.
+
+## Client-side cache
+
+The server serves stale-while-revalidate. This does the same one layer further out, so a
+view you have already opened does not go back to the network at all.
+
+Three bands, because "cached" is not one decision:
+
+| age | behaviour |
+|---|---|
+| < 90s | serve it, do not even ask again |
+| < 15 min | serve it **instantly**, refresh behind you, update in place |
+| < 12 h | too old to show; fetch normally |
+
+The middle band is the important one. Longevity's today column and the Matrix's
+live/paused flag are stamped by the server on *every* request, so a held copy is right
+about the fold and can be minutes stale about today. Serving it **and** revalidating gives
+you both; serving it alone would quietly freeze today.
+
+**IndexedDB, not localStorage.** These payloads are 1–2 MB each — a 30-day script fold is
+1.7 MB — and localStorage is about 5 MB for the whole origin and stores *strings*. The
+first version used it with a size guard and persisted **nothing**: every entry was over
+the guard, so the layer never engaged and a reload was still cold. IndexedDB takes the
+objects as they are.
+
+Measured on a reload with the cache warm:
+
+```
+page payload on screen after   13 ms   from_cache=true
+matrix rows on screen after    80 ms   4,136 rows
+network requests                0
+```
+
+And across a session (requests to `/api/*` counted at the protocol level):
+
+```
+open Longevity (cold)                    1 fetch
+leave it and come straight back          0
+open Matrix                              0   (from disk)
+switch dimension to Ad set               1 fetch
+switch back to Script                    0   4,136 rows still there
+```
+
+Four things it is careful about:
+
+- **A background refresh never blanks the view.** `quiet` keeps the rows on screen and
+  says `updating…` instead of replacing them with `Loading…` — that flicker is most of
+  what this layer exists to remove.
+- **A late reply cannot land under the wrong heading.** If the picker moved while a fetch
+  was in flight, the answer is still cached (it is a perfectly good answer to the question
+  it was asked) but not rendered.
+- **Age is corrected for time held**, so "last refreshed" stays true and a cached payload
+  is marked `stale` once it is past the soft band.
+- **Scoped to the link, not just the brand.** One browser can hold two teams' links, and a
+  cache that ignored that could hand one team a payload fetched under the other's.
+
+Refresh, the 30-minute auto-pull, the stale re-check and the on-focus re-pull all **skip**
+the cache deliberately. Coming back to a tab after a while is the one moment a held copy
+is exactly the wrong answer — you glance at a CPT and act on it.
