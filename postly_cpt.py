@@ -272,6 +272,101 @@ def ad_preview(ad_id, fmt="MOBILE_FEED_STANDARD"):
     return url, acct
 
 
+# ---- daily budget history --------------------------------------------------
+# Meta exposes a budget only as it is RIGHT NOW. Insights carry spend per day but never
+# the budget that produced it, and this app's activity-log access retains one day. So
+# budget history cannot be reconstructed backwards -- it can only be recorded forward,
+# starting the first time this runs. Nothing here pretends otherwise: a day with no
+# snapshot is absent, never zero.
+def budget_ns(brand):
+    return f"{brand}budg"
+
+
+def _rupees(v):
+    """Meta returns money in the account's minor unit."""
+    try:
+        return round(int(v) / 100, 2)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def budget_snapshot(brand, force=False, store=True):
+    """Record every level's budget as it stands now, under today's date.
+
+    Only ACTIVE ad sets count towards a campaign or an account, which is the same rule
+    the dashboard's Budget/day tile uses: a paused ad set's number is not money that will
+    be spent, and adding it would make the stored total disagree with the page.
+    """
+    B = C.brand(brand)
+    day = today_ist()
+    sets_, camps_, accts_, degraded = {}, {}, {}, []
+    for a in B["accounts"]:
+        camps, live_sets, _ads, ok = meta_roster(a["id"], force)
+        if not (ok["campaigns"] and ok["adsets"]):
+            # A partial snapshot would look like a budget cut that never happened. Record
+            # the account as degraded and leave its rows out entirely.
+            degraded.append(a["id"])
+            continue
+        cname = {c["id"]: c.get("name", "") for c in camps}
+        acct_total = 0.0
+        for c in camps:
+            if (c.get("effective_status") or "") != "ACTIVE":
+                continue
+            b = _rupees(c.get("daily_budget"))
+            lt = _rupees(c.get("lifetime_budget"))
+            camps_[c["id"]] = {"n": c.get("name", ""), "b": b, "lt": lt, "a": a["id"]}
+            acct_total += b
+        for x in live_sets:
+            b = _rupees(x.get("daily_budget"))
+            lt = _rupees(x.get("lifetime_budget"))
+            sets_[x["id"]] = {"n": x.get("name", ""), "b": b, "lt": lt,
+                              "c": x.get("campaign_id", ""), "a": a["id"]}
+            acct_total += b
+        accts_[a["id"]] = {"n": a["name"], "b": round(acct_total, 2)}
+
+    snap = {"brand": brand, "date": day, "at": now_ist_str(),
+            "adsets": sets_, "campaigns": camps_, "accounts": accts_,
+            "total": round(sum(v["b"] for v in accts_.values()), 2),
+            "degraded": degraded, "samples": 1}
+
+    if not store or not H.available():
+        return snap
+    prev, ok = H.get_day_raw(budget_ns(brand), day)
+    if not ok:
+        # Refusing beats overwriting: a failed read that we treated as "nothing there"
+        # would drop today's earlier samples and the record of what moved.
+        snap["stored"] = False
+        snap["store_error"] = "could not read today's snapshot; not overwriting it"
+        return snap
+    if prev:
+        snap["first_at"] = prev.get("first_at") or prev.get("at")
+        snap["samples"] = int(prev.get("samples") or 1) + 1
+        # What actually moved TODAY, so a budget change made at noon is not invisible
+        # just because the day only keeps one row.
+        moved = list(prev.get("moved") or [])
+        for lvl, cur in (("adsets", sets_), ("campaigns", camps_)):
+            old = prev.get(lvl) or {}
+            for k, v in cur.items():
+                o = old.get(k)
+                if o is not None and round(float(o.get("b") or 0), 2) != v["b"]:
+                    moved.append({"lvl": lvl[:-1], "id": k, "n": v.get("n", ""),
+                                  "from": round(float(o.get("b") or 0), 2),
+                                  "to": v["b"], "at": snap["at"]})
+        snap["moved"] = moved[-500:]
+    else:
+        snap["first_at"] = snap["at"]
+        snap["moved"] = []
+    snap["stored"] = H.put_agg(budget_ns(brand), day, snap)
+    return snap
+
+
+def budget_days(brand, dates):
+    """{date: snapshot} for the dates that have one. Missing days are simply absent."""
+    if not (H.available() and dates):
+        return {}
+    return H.fetch_raw(budget_ns(brand), list(dates))
+
+
 def meta_insights(acct, since, until):
     """Ad-level spend for the window. Re-pulled on every refresh; this is the number."""
     return _graph(f"{acct}/insights", {
@@ -333,11 +428,12 @@ def meta_roster(acct, force=False):
     TTL exists to keep it off the hourly time budget.
     """
     camps, ok_c = _part(acct, "campaigns", lambda: _graph(
-        f"{acct}/campaigns", {"fields": "id,name,effective_status,daily_budget"},
+        f"{acct}/campaigns", {"fields": "id,name,effective_status,daily_budget,"
+                                         "lifetime_budget"},
         rl_retries=0), ROSTER_TTL, force)
     sets, ok_s = _part(acct, "adsets", lambda: _graph(
         f"{acct}/adsets", {"fields": "id,name,effective_status,daily_budget,campaign_id,"
-                                     "created_time",
+                                     "created_time,lifetime_budget",
                            "effective_status": json.dumps(["ACTIVE"])},
         rl_retries=0), ROSTER_TTL, force)
     ads_, ok_a = _part(acct, "ads", lambda: _graph(
@@ -1360,7 +1456,10 @@ SERIES_MAX_ROWS = int(os.environ.get("SERIES_MAX_ROWS", "20000"))
 # Bumped when the SHAPE of a folded row changes. Checked alongside dates and row_cap
 # before a stored fold is reused, for the same reason: a fold from before rows carried
 # their account gives the Matrix a grid with no links and no way to tell why.
-SERIES_SHAPE = 2
+SERIES_SHAPE = 3
+# The levels a budget belongs to. A script is an ad name and a stage is a bucket; neither
+# is a thing Meta holds a budget against.
+BUDGET_DIMS = {"adset": "adsets", "campaign": "campaigns", "account": "accounts"}
 # Folds are now 1.5-2 MB each, so an unbounded dict of them is an OOM on a 512 MB
 # instance. Keep the few most recently used and let the store serve the rest.
 SERIES_CACHE_MAX = int(os.environ.get("SERIES_CACHE_MAX", "8"))
@@ -1640,6 +1739,38 @@ def series(brand, since, until, dim="script", force=False):
                                 **{x: round(e[x], 2) for x in keys}}
 
     cap = SERIES_TOP if SERIES_TOP > 0 else SERIES_MAX_ROWS
+    # ---- day-on-day budgets -------------------------------------------------
+    # Baked into the fold rather than applied at serve time, unlike `active`: a past day's
+    # budget is a fact that cannot change, and series windows end yesterday. A day with no
+    # snapshot stays ABSENT -- never zero, which would draw as a budget cut to nothing on
+    # every day before this feature existed.
+    lvl = BUDGET_DIMS.get(dim)
+    bud_days = 0
+    if lvl:
+        for day, snap in (budget_days(brand, dates) or {}).items():
+            entries = (snap or {}).get(lvl) or {}
+            if not entries:
+                continue
+            bud_days += 1
+            for k, v in entries.items():
+                row = rows.get(k)
+                if row is None:
+                    # Budgeted but never spent in this window. It still has a budget
+                    # history, and leaving it out would make "every ad set" untrue.
+                    row = rows[k] = {"key": k, "label": v.get("n", ""), "stage": "",
+                                     "platform": "Meta", "acct": v.get("a"),
+                                     "total_spend": 0.0, "days": {},
+                                     **{"total_" + x: 0.0 for x in keys}}
+                row["label"] = row["label"] or v.get("n", "")
+                row["acct"] = row["acct"] or v.get("a")
+                day_rec = row["days"].get(day)
+                if day_rec is None:
+                    day_rec = row["days"][day] = {"spend": 0.0,
+                                                  **{x: 0.0 for x in keys}}
+                day_rec["bud"] = v.get("b") or 0.0
+                row["total_bud"] = round((row.get("total_bud") or 0.0)
+                                         + (v.get("b") or 0.0), 2)
+
     out_rows = sorted(rows.values(), key=lambda r: -r["total_spend"])[:cap]
     for r in out_rows:
         r["total_spend"] = round(r["total_spend"], 2)
@@ -1652,6 +1783,13 @@ def series(brand, since, until, dim="script", force=False):
             "event_labels": B["labels"], "cpt_target": B["cpt_target"],
             "rows": out_rows, "truncated": len(rows) > len(out_rows), "row_cap": cap,
             "shape": SERIES_SHAPE,
+            # How many of the window's days have a budget snapshot at all. The page needs
+            # this to say "recording started on the 26th" instead of drawing a cliff.
+            "budget_dim": bool(lvl), "budget_days": bud_days,
+            "budget_from": (min((d for d in dates
+                                 if any((r["days"].get(d) or {}).get("bud") is not None
+                                        for r in out_rows)), default=None)
+                            if lvl else None),
             "partial_today": partial_today, "excluded_today": today,
             "total_rows": len(rows), "stored_days": len(stored),
             "generated_at": now_ist_str()}

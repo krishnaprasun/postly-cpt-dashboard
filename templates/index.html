@@ -501,6 +501,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <label class="chk">Metric
       <select class="sel" id="sMetric" style="margin-left:6px">
         <option value="spend" selected>Spend</option>
+        <option value="bud">Budget/day</option>
         <option value="t101">Trials</option>
         <option value="cpt">CPT</option>
         <option value="inst">Installs</option>
@@ -1028,6 +1029,10 @@ const sMetric = () => document.getElementById('sMetric').value;
    not the window's CPT, and on a row that spent nothing on most days it is not close. */
 const METRICS = {
   spend: {label:'Spend',    of:d=>d?d.spend:0,  fmt:rs,  agg:null},
+  /* Budget is the one metric where a missing day is NOT zero: it means no snapshot was
+     taken, because budget history only runs forward from the day recording started.
+     Drawing that as zero would show a cut to nothing on every earlier day. */
+  bud:   {label:'Budget/day', of:d=>(d && d.bud != null) ? d.bud : null, fmt:rs, agg:null},
   t101:  {label:'Trials',   of:d=>d?d.t101:0,   fmt:num, agg:null},
   inst:  {label:'Installs', of:d=>d?d.inst:0,   fmt:num, agg:null},
   cpt:   {label:'CPT',      of:d=>(d&&d.t101)?d.spend/d.t101:null, fmt:rs,
@@ -1056,6 +1061,21 @@ function seriesRows(){
    ad account is not switched off the way an ad set is, and a roster Meta would not hand
    over leaves every row's status unknown. Disabled with the reason on it, never silently
    inert. */
+/* Budget lives on ad sets, campaigns and accounts. A script is an ad NAME and a stage is
+   a bucket; neither is a thing Meta holds a budget against, so the option is disabled
+   there rather than drawing an empty grid. */
+function sMetricAvail(){
+  const o = document.querySelector('#sMetric option[value="bud"]');
+  if(!o) return;
+  /* Only judge once a fold has arrived. Treating "not loaded yet" as "no budget here"
+     silently reset a ?metric=bud link back to Spend before the answer existed. */
+  if(!SERIES){ o.disabled = false; return; }
+  o.disabled = !SERIES.budget_dim;
+  if(!SERIES.budget_dim && sMetric() === 'bud'){
+    document.getElementById('sMetric').value = 'spend';
+  }
+}
+
 function sActiveAvail(){
   const b = document.getElementById('sActive');
   const ok = !!(SERIES && SERIES.active_dim && SERIES.active_known);
@@ -1103,7 +1123,11 @@ const mPages = n => MPER ? Math.max(1, Math.ceil(n / MPER)) : 1;
 function rowTotal(r){
   const m = metricOf();
   if(m.agg) return m.agg(r.total_spend, {t101:r.total_t101, inst:r.total_inst});
-  return sMetric() === 'spend' ? r.total_spend : r['total_' + sMetric()];
+  if(sMetric() === 'spend') return r.total_spend;
+  const v = r['total_' + sMetric()];
+  /* undefined, not zero: a row with no snapshot in this window has no budget history,
+     which is a different statement from a budget of nothing. */
+  return v === undefined ? null : v;
 }
 
 async function loadSeries(force){
@@ -1310,15 +1334,20 @@ function renderMatrix(){
      adds up the column above it -- the one job a total has. The all-rows row is the
      answer to "and what is the whole window", which is no longer on screen. */
   const tot = set => {
-    const colTot = d => { let sp=0, t=0, n=0;
+    const colTot = d => { let sp=0, t=0, n=0, b=0, bAny=false;
       set.forEach(r => { const x=r.days[d]; if(!x) return;
-        sp+=x.spend; t+=x.t101; n+=x.inst; });
-      return m.agg ? m.agg(sp,{t101:t,inst:n})
-           : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n); };
-    let sp=0,t=0,n=0;
-    set.forEach(r => { sp+=r.total_spend; t+=r.total_t101; n+=r.total_inst; });
+        sp+=x.spend; t+=x.t101; n+=x.inst;
+        if(x.bud != null){ b+=x.bud; bAny=true; } });
+      if(m.agg) return m.agg(sp,{t101:t,inst:n});
+      /* A budget column with no snapshot on that day totals to nothing, not to zero. */
+      if(sMetric()==='bud') return bAny ? b : null;
+      return sMetric()==='spend'?sp:sMetric()==='t101'?t:n; };
+    let sp=0,t=0,n=0,b=0,bAny=false;
+    set.forEach(r => { sp+=r.total_spend; t+=r.total_t101; n+=r.total_inst;
+      if(r.total_bud != null){ b+=r.total_bud; bAny=true; } });
     const gt = m.agg ? m.agg(sp,{t101:t,inst:n})
-                     : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n);
+             : sMetric()==='bud' ? (bAny ? b : null)
+             : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n);
     return `<td>${gt===null?'—':m.fmt(gt)}</td>` + dates.map(d => { const v = colTot(d);
       return `<td>${v===null||!isFinite(v)?'—':m.fmt(v)}</td>`; }).join('');
   };
@@ -1724,7 +1753,7 @@ function renderTable(){
     if(!seriesFresh() && !SERIESBUSY){ loadSeries(false); }
     document.getElementById('sPerWrap').style.display =
       TAB === 'matrix' ? 'inline-flex' : 'none';
-    sActiveAvail();
+    sActiveAvail(); sMetricAvail();
     if(TAB==='trends') renderTrends(); else renderMatrix();
     return;
   }
@@ -1888,6 +1917,20 @@ function seriesNote(){
            at least one account — so the <i>active only</i> filter is switched off rather
            than shown emptying the grid. `)
     : '';
+  const bud = sMetric() !== 'bud' ? ''
+    : !SERIES.budget_dim
+      ? `<b>Budget does not apply to this dimension</b> — Meta holds a budget against ad
+         sets, campaigns and accounts, not against an ad name or a stage. `
+      : !SERIES.budget_days
+        ? `<b>No budget snapshot falls inside this window yet.</b> Budget history only runs
+           forward from the day recording started — Meta reports a budget as it stands now
+           and never as it stood on a past day, so there is nothing to backfill. Today's
+           snapshot is taken, and this window ends yesterday, so the first budgets appear
+           here tomorrow. `
+        : `Budget is <b>as recorded</b>, from ${SERIES.budget_from} onwards — the value
+           standing at each day's last snapshot, not an average. A day before recording
+           started is blank, never zero: no snapshot is a different fact from a budget of
+           nothing. `;
   const trunc = SERIES.truncated
     ? `<b>Folded ${num(SERIES.total_rows)} rows and kept the ${num(SERIES.rows.length)}
        biggest by spend</b> — the fold's safety ceiling, not a view limit; the rest are
@@ -1904,7 +1947,7 @@ function seriesNote(){
   const src = SERIES.stored_days
     ? `${SERIES.stored_days} of ${SERIES.dates.length} day(s) came from the history store;
        the rest were pulled live. ` : '';
-  return scope + ends + derived + pro + `${dimNote}<br><br>${trunc}${src}
+  return scope + ends + derived + pro + `${dimNote}<br><br>${bud}${trunc}${src}
     Trials and installs are split across rows that share an ad name by that
     <i>day's</i> spend share, so nothing lands on a day a row did not spend.
     ${act}${SERIES.cached ? `Folded ${SERIES.age_min || 0} min ago.` : ''}`;

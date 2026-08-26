@@ -439,6 +439,78 @@ def api_longevity():
         return jsonify({"error": str(e)[:500]}), 500
 
 
+@app.route("/api/budgets/snapshot", methods=["POST", "GET"])
+def api_budget_snapshot():
+    """Record every level's budget as it stands now, under today's date.
+
+    Token-gated like the other writing endpoints -- it spends Meta quota and writes to the
+    store. Cheap enough to run several times a day: it reads the roster, which is cached,
+    so most calls cost nothing at all.
+
+    Budget history can only run FORWARD. Meta reports a budget as it is now, insights
+    never carry the budget behind a day's spend, and this app's activity-log access
+    retains one day -- so there is nothing to backfill and this endpoint does not pretend
+    there is.
+    """
+    want = H.TOKEN
+    if not want or not hmac.compare_digest(request.headers.get("Authorization", ""),
+                                           "Bearer " + want):
+        return jsonify({"error": "unauthorized"}), 401
+    if not H.available():
+        return jsonify({"error": "no history store configured"}), 503
+    brands = [request.args.get("brand")] if request.args.get("brand") else list(C.BRANDS)
+    bad = [b for b in brands if b not in C.BRANDS]
+    if bad:
+        return jsonify({"error": f"unknown brand(s): {bad}"}), 400
+    out = []
+    for b in brands:
+        try:
+            snap = P.budget_snapshot(b)
+            out.append({"brand": b, "date": snap["date"], "at": snap["at"],
+                        "adsets": len(snap["adsets"]), "campaigns": len(snap["campaigns"]),
+                        "accounts": len(snap["accounts"]), "total": snap["total"],
+                        "samples": snap.get("samples"), "moved": len(snap.get("moved") or []),
+                        "degraded": snap.get("degraded") or [],
+                        "stored": snap.get("stored"),
+                        "error": snap.get("store_error")})
+        except Exception as e:
+            traceback.print_exc()
+            out.append({"brand": b, "stored": False, "error": str(e)[:200]})
+    return jsonify({"results": out})
+
+
+@app.route("/api/budgets")
+@protected
+def api_budgets():
+    """The stored budget history for one brand: {date: {level: {id: {...}}}}.
+
+    Read-only and link-gated like the rest of the page. Days with no snapshot are absent
+    from `dates` rather than present with zeros.
+    """
+    brand, err, _full = _gate(request.args.get("k", ""),
+                              request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    try:
+        days = max(1, min(int(request.args.get("days", "30")), 400))
+    except ValueError:
+        days = 30
+    today = P.today_ist()
+    since = (datetime.strptime(today, "%Y-%m-%d")
+             - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    dates = P.date_range(since, today)
+    got = P.budget_days(brand, dates) or {}
+    have = sorted(got)
+    return jsonify({
+        "brand": brand, "since": since, "until": today,
+        "dates": have, "missing": [d for d in dates if d not in got],
+        "days": got,
+        "recording_from": have[0] if have else None,
+        "note": ("Budget history only runs forward from the first snapshot. Days before "
+                 "that were never recorded and are absent, not zero."),
+    })
+
+
 @app.route("/api/precompute", methods=["POST", "GET"])
 def api_precompute():
     """Fold the settled days for each longevity window and store the result.

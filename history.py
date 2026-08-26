@@ -154,6 +154,24 @@ def fetch_raw(brand, dates):
     return out
 
 
+def get_day_raw(ns, date):
+    """(payload_or_None, ok) for ONE date in a namespace.
+
+    The ok flag exists for the same reason get_agg_raw's does: a writer that does
+    read-modify-write must be able to tell "nothing stored yet" from "could not reach the
+    store", because treating the second as the first destroys whatever was there.
+    """
+    global _last_error
+    if not available():
+        return None, False
+    try:
+        j = _call("GET", "/v1/history", {"brand": ns, "dates": date})
+    except Exception as ex:
+        _last_error = f"{type(ex).__name__}: {str(ex)[:160]}"
+        return None, False
+    return (j.get("days") or {}).get(date), True
+
+
 def put(brand, date, meta_by_account, branch_by_event):
     """Store one settled day. Returns True on success; never raises."""
     global _last_error

@@ -1013,3 +1013,49 @@ parties.
 When Meta renders no preview — deleted creative, a placement this ad does not run in — the
 route serves a plain page saying so, with a link onward to Ads Manager. A blank tab would
 look like the dashboard was broken.
+
+## Budget history
+
+Meta reports a budget **as it stands now**. Insights carry spend per day but never the
+budget behind it, and this app's activity-log access retains one day. So budget history
+cannot be reconstructed backwards — it can only be recorded forward, from the first
+snapshot. Nothing here pretends otherwise: **a day with no snapshot is absent, never
+zero**, at every level from the stored artifact to the chart.
+
+`/api/budgets/snapshot` (token-gated, like the other writing endpoints) records every
+level as it stands and files it under today's date in the `{brand}budg` namespace:
+
+```
+adsets     {id: {n: name, b: daily, lt: lifetime, c: campaign_id, a: account_id}}
+campaigns  {id: {n, b, lt, a}}
+accounts   {id: {n, b}}          b = its ACTIVE campaigns + ad sets
+total, at, first_at, samples, moved[], degraded[]
+```
+
+Only **active** ad sets count towards a campaign or an account — the same rule the
+Budget/day tile uses, so the stored total agrees with the page. Verified on first run:
+Postly ₹5,00,932 stored against ₹5,00,933 on the tile.
+
+It runs several times a day, and that is the point of `samples` and `moved`. The last
+sample sets the day's value; `moved` records every change seen between samples, so a
+budget raised at noon is not invisible just because a day keeps one row. An account whose
+roster Meta would not return is listed in `degraded` and its rows are left out entirely —
+a partial snapshot would read as a budget cut that never happened.
+
+The same read-modify-write guard as everywhere else: the day's existing snapshot is read
+with an ok flag, and a failed read **refuses to write** rather than overwriting the
+morning's samples with an empty one.
+
+### Reading it
+
+**In the Matrix and Trends**, as a `Budget/day` metric on the Ad set, Campaign and Ad
+account dimensions — so it inherits paging, sorting by any day, the active-only filter,
+CSV export and the hover read-out for free. Disabled on Script and Stage: Meta holds no
+budget against an ad name or a bucket. A day before recording started is blank in the
+grid, breaks the line in the chart, and totals to nothing rather than to zero.
+
+An ad set that was **budgeted but never spent** in the window still gets a row. Leaving it
+out would make "every ad set" untrue, and a budget with no spend behind it is worth seeing.
+
+**Raw**, at `/api/budgets?brand=<b>&days=<n>&k=<key>`, which returns the stored days plus
+an explicit `missing` list and `recording_from`.
