@@ -1446,7 +1446,12 @@ def series(brand, since, until, dim="script", force=False):
         # EXACTLY: a window that has rolled forward by a day is a different question, and
         # answering it with yesterday's fold would be wrong without looking wrong.
         art = H.get_agg(_series_ns(brand, dim))
-        if art and art.get("dates") == want:
+        # The row cap has to match as well as the dates. A fold stored under the old
+        # top-60 cap has the right dates and the wrong rows, and restoring it would put
+        # the truncation back silently -- which is exactly what happened to SpeakEasy on
+        # the first deploy of the uncapped fold.
+        if art and art.get("dates") == want \
+                and art.get("row_cap") == (SERIES_TOP if SERIES_TOP > 0 else SERIES_MAX_ROWS):
             _series_cache_put(key, art)
             return dict(art, cached=True, restored=True, age_min=0)
 
@@ -1521,7 +1526,7 @@ def series(brand, since, until, dim="script", force=False):
             "until": dates[-1], "dim": dim, "dim_labels": DIM_LABELS,
             "dates": dates, "keys": keys, "install_key": INSTALL_KEY,
             "event_labels": B["labels"], "cpt_target": B["cpt_target"],
-            "rows": out_rows, "truncated": len(rows) > len(out_rows),
+            "rows": out_rows, "truncated": len(rows) > len(out_rows), "row_cap": cap,
             "partial_today": partial_today, "excluded_today": today,
             "total_rows": len(rows), "stored_days": len(stored),
             "generated_at": now_ist_str()}

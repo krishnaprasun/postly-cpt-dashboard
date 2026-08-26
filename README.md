@@ -775,9 +775,14 @@ on the wire. And the in-process series cache is now bounded (`SERIES_CACHE_MAX`,
 8, least-recently-used evicted): an unbounded dict of 2 MB folds is an OOM on a 512 MB
 instance. `SERIES_TOP` still exists and still caps the fold, but defaults to `0`, meaning
 no cap; `SERIES_MAX_ROWS` (20,000) is a safety net against a dimension nobody has tried,
-and when it bites the note says the fold was capped. The nightly precompute warms the default combination (14 days, script) for each
-brand; the artifact is only reused when its dates match the request **exactly**, because
-a window that has rolled forward a day is a different question.
+and when it bites the note says the fold was capped.
+
+The nightly precompute warms the default combination (14 days, script) for each brand.
+A stored artifact is reused only when its dates match the request **exactly** — a window
+that has rolled forward a day is a different question — **and** its `row_cap` matches the
+running code. Dates alone was not enough: on the first deploy of the uncapped fold,
+SpeakEasy restored a 60-row artifact the previous code had written (right dates, wrong
+rows) and silently put the truncation back.
 
 Both tabs are deep-linkable, sort and page size included:
 `?tab=matrix&win=30&dim=adset&metric=cpi&per=250&sort=2026-08-21&dir=asc`. A `sort` that
