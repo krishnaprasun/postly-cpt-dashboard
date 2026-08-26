@@ -18,9 +18,11 @@ import threading
 import time
 import traceback
 from datetime import datetime, timedelta
+from html import escape
 from functools import wraps
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import (Flask, Response, jsonify, redirect, render_template,
+                   request)
 
 import config as C
 import history as H
@@ -595,6 +597,61 @@ def _gzip(resp):
     resp.headers["Content-Length"] = str(len(packed))
     resp.headers.add("Vary", "Accept-Encoding")
     return resp
+
+
+@app.route("/api/preview")
+@protected
+def api_preview():
+    """Redirect to the rendered ad -- the creative as it actually runs.
+
+    A redirect rather than an embedded URL: Meta's preview link is signed and expires, so
+    resolving it at click time is the only way the link is never dead. It also keeps a
+    credential-bearing URL out of a page that lists two thousand ads.
+    """
+    brand, err, _full = _gate(request.args.get("k", ""),
+                              request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    ad = (request.args.get("ad") or "").strip()
+    if not ad.isdigit():
+        return _preview_problem("That is not an ad id.", None)
+    fmt = request.args.get("format") or P.PREVIEW_FORMATS[0]
+    try:
+        url, acct = P.ad_preview(ad, fmt)
+    except Exception as e:
+        traceback.print_exc()
+        return _preview_problem(_friendly(e)["text"], ad)
+    # A valid team link must not become a way to read another brand's creatives. The
+    # account comes from Meta on the same request, so this cannot be spoofed by the
+    # caller -- and an ad in no account this brand owns is refused, not previewed.
+    allowed = {a["id"].replace("act_", "") for a in C.brand(brand)["accounts"]}
+    if not acct or str(acct).replace("act_", "") not in allowed:
+        return _preview_problem(
+            "That ad is not in this brand's ad accounts.", None), 403
+    if not url:
+        return _preview_problem(
+            "Meta returned no preview for this ad in that placement. It may render in a "
+            "different one, or the creative may have been deleted.", ad)
+    resp = redirect(url, code=302)
+    # Without this the browser hands business.facebook.com a Referer containing this
+    # request's URL -- and this request's URL contains the team's link key. The whole
+    # point of a per-team secret link is that it does not travel to third parties.
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    return resp
+
+
+def _preview_problem(msg, ad):
+    """A plain page saying what went wrong, with a way onward. Better than a blank tab."""
+    link = (f'<p><a href="https://adsmanager.facebook.com/adsmanager/manage/ads?'
+            f'selected_ad_ids={ad}">Open it in Ads Manager instead</a></p>') if ad else ""
+    return Response(
+        "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
+        "<title>Preview unavailable</title>"
+        "<style>body{font:15px/1.55 -apple-system,system-ui,sans-serif;margin:12vh auto;"
+        "max-width:34rem;padding:0 1.2rem;color:#1c1e21}h1{font-size:17px}"
+        "a{color:#1877f2}</style>"
+        f"<h1>Preview unavailable</h1><p>{escape(msg)}</p>{link}",
+        mimetype="text/html")
 
 
 @app.route("/robots.txt")

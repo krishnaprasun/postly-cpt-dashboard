@@ -19,6 +19,7 @@ Meta ad name on 2026-08-20, so it rolls up through the identical path.
 
 Read-only. This module never writes to Meta.
 """
+import html
 import json, os, re, sys, threading, time, urllib.error, urllib.parse, urllib.request
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
@@ -149,7 +150,7 @@ def _clear_throttle(acct, edge):
         _throttle.pop((acct, edge), None)
 
 
-def _graph(path, params, tries=6, rl_retries=2):
+def _graph(path, params, tries=6, rl_retries=2, raw=False):
     pr = dict(params); pr["access_token"] = C.META_TOKEN; pr.setdefault("limit", "500")
     url = f"{C.GRAPH}/{path}?" + urllib.parse.urlencode(pr)
     acct, edge = _acct_of(path), path.split("/")[-1]
@@ -195,6 +196,10 @@ def _graph(path, params, tries=6, rl_retries=2):
                 if i < tries - 1:
                     time.sleep(4 * (i + 1)); continue
                 raise RuntimeError(f"Meta {path}: {ex}")
+        if raw:
+            # A single object read has no `data` and no paging; accumulating it the
+            # normal way would quietly return an empty list.
+            return j
         out += j.get("data", [])
         url = j.get("paging", {}).get("next")
     return out
@@ -225,6 +230,46 @@ ADS_ROSTER_TTL = int(os.environ.get("ADS_ROSTER_TTL", "3300"))  # < 2 ticks
 ROSTER_RETRY = int(os.environ.get("ROSTER_RETRY", "300"))
 _roster_cache, _roster_lock = {}, threading.Lock()
 _roster_fail_until = {}
+
+
+# ---- ad creative preview ---------------------------------------------------
+# The rendered ad -- the actual image or video with its copy, as it runs. Resolved ON
+# DEMAND rather than folded into the payload, for three reasons: the signed URL expires,
+# so a payload restored from the store hours later would carry dead links; it is ~530
+# bytes per ad, which is another 1 MB on a 1,866-ad brand; and it is a credential-bearing
+# URL, so it should not sit in the page for every ad whether or not anyone looks.
+PREVIEW_FORMATS = ("MOBILE_FEED_STANDARD", "INSTAGRAM_STANDARD", "INSTAGRAM_STORY",
+                   "INSTAGRAM_REELS", "DESKTOP_FEED_STANDARD", "FACEBOOK_STORY_MOBILE")
+PREVIEW_TTL = int(os.environ.get("PREVIEW_TTL", "900"))
+_preview_cache, _preview_lock = {}, threading.Lock()
+
+
+def ad_preview(ad_id, fmt="MOBILE_FEED_STANDARD"):
+    """(preview_url, account_id) for one ad, or (None, account_id) if Meta renders none.
+
+    The account comes back on the same request so the caller can check the ad actually
+    belongs to the brand whose link was used. Without that check any valid team link
+    would preview any ad the token can see, including another brand's.
+    """
+    fmt = fmt if fmt in PREVIEW_FORMATS else PREVIEW_FORMATS[0]
+    key = (str(ad_id), fmt)
+    with _preview_lock:
+        hit = _preview_cache.get(key)
+        if hit and time.time() - hit["at"] < PREVIEW_TTL:
+            return hit["url"], hit["acct"]
+    j = _graph(str(ad_id), {"fields": f"account_id,previews.ad_format({fmt})"},
+               rl_retries=0, raw=True)
+    acct = j.get("account_id") or ""
+    body = ((j.get("previews") or {}).get("data") or [{}])[0].get("body") or ""
+    m = re.search(r'src="([^"]+)"', body)
+    url = html.unescape(m.group(1)) if m else None
+    with _preview_lock:
+        _preview_cache[key] = {"at": time.time(), "url": url, "acct": acct}
+        if len(_preview_cache) > 600:
+            for k in sorted(_preview_cache,
+                            key=lambda k: _preview_cache[k]["at"])[:200]:
+                _preview_cache.pop(k, None)
+    return url, acct
 
 
 def meta_insights(acct, since, until):

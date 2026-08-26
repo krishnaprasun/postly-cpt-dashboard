@@ -921,7 +921,8 @@ how people end up believing the dashboard and Ads Manager disagree.
 
 | view | opens |
 |---|---|
-| Ads | `manage/ads?act=…&selected_ad_ids=…` |
+| **Ads** | **the creative itself** — see below |
+| Ads (the small ↗) | `manage/ads?act=…&selected_ad_ids=…` |
 | Ad sets, Longevity, Matrix `dim=adset` | `manage/adsets?act=…&selected_adset_ids=…` |
 | Campaigns, Matrix `dim=campaign` | `manage/campaigns?act=…&selected_campaign_ids=…` |
 | Ad accounts, Matrix `dim=account` | `manage/campaigns?act=…` |
@@ -944,3 +945,39 @@ linkless grid that looks exactly like a broken link.
 
 Links are underlined on hover only: a table where every name is permanently underlined
 reads as noise.
+
+### The ad creative
+
+Clicking an **ad name** opens the rendered ad — the actual image or video with its copy,
+as it runs — not Ads Manager. That is what somebody scanning a list of ad names wants to
+see. Ads Manager stays one click away as a small `↗` beside the name: the creative is the
+common case, the manager is the occasional one. Every level above an ad (ad set,
+campaign, account) has no single piece of media, so those still open Ads Manager.
+
+It goes through `/api/preview?ad=<id>&brand=<b>&k=<key>`, which asks Meta for
+`previews.ad_format(MOBILE_FEED_STANDARD)` and **302s** to the URL it returns.
+A redirect rather than a URL baked into the payload, for three reasons:
+
+- Meta's preview link is **signed and expires**, so one folded into a payload restored
+  from the store hours later would be dead — the one thing the link rules forbid.
+- It is ~530 bytes per ad. On an 1,866-ad brand that is another megabyte in every payload,
+  paid whether or not anyone clicks.
+- It is a **credential-bearing URL**, and it should not sit in the page for two thousand
+  ads at once.
+
+Resolved previews are cached in process for 15 minutes and the cache is bounded.
+
+Two things the route holds:
+
+**A team link cannot read another brand's creatives.** The ad's account comes back from
+Meta on the same request — so the caller cannot spoof it — and an ad in no account the
+brand owns is refused with a 403, not previewed.
+
+**`Referrer-Policy: no-referrer` on the redirect.** Without it the browser hands
+business.facebook.com a `Referer` containing this request's URL, and that URL contains the
+team's link key. The point of a per-team secret link is that it does not travel to third
+parties.
+
+When Meta renders no preview — deleted creative, a placement this ad does not run in — the
+route serves a plain page saying so, with a link onward to Ads Manager. A blank tab would
+look like the dashboard was broken.

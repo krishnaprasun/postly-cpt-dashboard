@@ -250,6 +250,8 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
    noise, and the pointer is the affordance people actually use. */
 a.fbl{color:inherit;text-decoration:none}
 a.fbl:hover{color:var(--accent-dk);text-decoration:underline}
+a.mgr{color:var(--muted);text-decoration:none;font-size:11px;padding:0 2px}
+a.mgr:hover{color:var(--accent-dk)}
 
 /* ---- Trends + Matrix ---- */
 .panel{background:var(--white);border:1px solid var(--line);border-radius:12px;
@@ -1550,13 +1552,30 @@ function fbName(text, url){
 const fbLevel = tab => ({accounts:'account', campaigns:'campaign',
                          adsets:'adset', ads:'ad'})[tab] || null;
 
+/* An AD opens its creative -- the rendered ad as it runs -- because that is what somebody
+   scanning a list of ad names actually wants to see. Everything above it (ad set,
+   campaign, account) has no single piece of media, so those keep going to Ads Manager.
+   The server resolves the preview at click time: Meta's preview link is signed and
+   expires, so a URL baked into this page would be dead by the time anyone clicked it. */
+const adMedia = id => id
+  ? `/api/preview?ad=${encodeURIComponent(id)}&brand=${BRAND}${K}` : null;
+
 function cell(o, c){
   if(c.kind==='name'){
     const live = o.active || o.status==='ACTIVE';
     const lv = fbLevel(TAB);
-    const url = lv ? fbUrl(lv, o.id, o.account_id || o.id, DATA.since, DATA.until) : null;
+    const mgr = lv ? fbUrl(lv, o.id, o.account_id || o.id, DATA.since, DATA.until) : null;
+    const isAd = TAB === 'ads';
+    const url = isAd ? adMedia(o.id) : mgr;
     return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">` +
-      fbName(o.name, url) +
+      (url ? `<a class="fbl" href="${url}" target="_blank" rel="noopener noreferrer"
+         title="${isAd ? 'Open the creative' : 'Open in Meta Ads Manager'}">${
+         o.name||'—'}</a>` : (o.name||'—')) +
+      /* Ads Manager stays one click away on an ad row, as a small mark rather than a
+         second underlined name -- the creative is the common case, the manager is the
+         occasional one. */
+      (isAd && mgr ? ` <a class="mgr" href="${mgr}" target="_blank" rel="noopener noreferrer"
+         title="Open in Meta Ads Manager">&#8599;</a>` : '') +
       (TAB!=='accounts' && !live ? `<span class="pill">paused</span>`:'') +
       (o.shared_name ? `<span class="pill">shared name</span>`:'') + `</td>`;
   }
