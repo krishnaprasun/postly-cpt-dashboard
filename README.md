@@ -912,3 +912,35 @@ note. A tile is where somebody reads a number off at a glance; the arithmetic be
 belongs one paragraph down, where there is room to say what it means. The `Meta share ·
 modelled` and `Attribution` tiles were removed outright for the same reason: the full
 channel breakdown, with counts and percentages for every channel, is in the note.
+
+## Ads Manager links
+
+Every row that **is** a real Meta object links to it, opening in a new tab on the same
+window the page is showing (`&date=<since>_<until>`) — landing on a different window is
+how people end up believing the dashboard and Ads Manager disagree.
+
+| view | opens |
+|---|---|
+| Ads | `manage/ads?act=…&selected_ad_ids=…` |
+| Ad sets, Longevity, Matrix `dim=adset` | `manage/adsets?act=…&selected_adset_ids=…` |
+| Campaigns, Matrix `dim=campaign` | `manage/campaigns?act=…&selected_campaign_ids=…` |
+| Ad accounts, Matrix `dim=account` | `manage/campaigns?act=…` |
+
+Two rules the code holds:
+
+**No link is better than a dead one.** Ads Manager resolves an object id only inside an
+`act=`, so a row that does not know its account renders as plain text. `fbUrl` returns
+`null` rather than guessing, and `fbName` falls back to the bare name.
+
+**Name dimensions never link.** Matrix `dim=script` is an ad *name*, which maps to many
+ads by design — that is the entire reason the dimension exists — and `stage` / `platform`
+are buckets, not objects. In the Matrix a row carries the account that spent most on it
+(`acct`), because a script name can appear in both of a brand's accounts and a link into
+the wrong one is worse than none.
+
+Folded rows gained that field, so series artifacts carry a `shape` stamp checked
+alongside `dates` and `row_cap` — a fold from before the change would give the Matrix a
+linkless grid that looks exactly like a broken link.
+
+Links are underlined on hover only: a table where every name is permanently underlined
+reads as noise.

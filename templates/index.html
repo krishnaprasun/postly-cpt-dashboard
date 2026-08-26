@@ -246,6 +246,10 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
   color:#fff;font-size:12px;font-weight:700;padding:6px 11px;border-radius:8px;
   letter-spacing:.2px;cursor:help}
 .modelled{color:var(--gold-dk);font-weight:650}
+/* Underlined only on hover: a table where every name is permanently underlined reads as
+   noise, and the pointer is the affordance people actually use. */
+a.fbl{color:inherit;text-decoration:none}
+a.fbl:hover{color:var(--accent-dk);text-decoration:underline}
 
 /* ---- Trends + Matrix ---- */
 .panel{background:var(--white);border:1px solid var(--line);border-radius:12px;
@@ -1161,11 +1165,18 @@ function renderMatrix(){
     ${dates.map(d => th(d, `${d.slice(8)} ${
       new Date(d+'T00:00:00').toLocaleString('en-GB',{month:'short'})}`)).join('')}</tr>`;
 
+  /* Only the dimensions that ARE a Meta object link. Script is a name that maps to many
+     ads by design, and stage/platform are buckets, not things Ads Manager can open. */
+  const mxLevel = {adset:'adset', campaign:'campaign', account:'account'}[SERIES.dim];
   const body = rows.map((r, i) => {
     const tv = rowTotal(r);
+    const url = mxLevel
+      ? fbUrl(mxLevel, r.key, SERIES.dim === 'account' ? r.key : r.acct,
+              SERIES.since, SERIES.until)
+      : null;
     return `<tr>
       <td class="l pin nm" title="${(r.label||'').replace(/"/g,'&quot;')}"><span class="rk"
-        >${from + i + 1}</span>${r.label||'—'}</td>
+        >${from + i + 1}</span>${fbName(r.label, url)}</td>
       <td class="l">${r.platform}</td><td class="l">${r.stage||'—'}</td>
       <td><b>${tv===null?'—':m.fmt(tv)}</b></td>
       ${dates.map(d => { const v = m.of(r.days[d]);
@@ -1339,7 +1350,8 @@ const LONG_COLS = [
 
 function longCell(o, c){
   if(c.kind === 'name')
-    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">${o.name||'—'}${
+    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">${
+      fbName(o.name, fbUrl('adset', o.id, o.account_id, LONG && LONG.since, LONG && LONG.until))}${
       o.new_today ? `<span class="pill" title="First spent today, so it is in no folded window yet — it has no history to show and its Spend and CPT read zero until tonight's fold.">new today</span>` : ''}</td>`;
   if(c.kind === 'sub') return `<td class="sub" title="${o.campaign||''}">${o.campaign||'—'}</td>`;
   if(c.kind === 'live')
@@ -1508,10 +1520,43 @@ function rows(tab, filtered){
   return r;
 }
 
+/* ---------- Ads Manager links ---------- */
+/* Every row that IS a real Meta object links to it, opened on the same window the page is
+   showing. The account is required: Ads Manager resolves an object id only inside an
+   `act=`, so a row that does not know its account gets no link rather than a dead one.
+   Script rows in the Matrix never link -- a name maps to many ads by design, which is
+   the whole reason that dimension exists. */
+const FB_PATH = {account:'campaigns', campaign:'campaigns', adset:'adsets', ad:'ads'};
+const FB_SEL  = {campaign:'selected_campaign_ids', adset:'selected_adset_ids',
+                 ad:'selected_ad_ids'};
+function fbUrl(level, id, acct, since, until){
+  const n = String(acct || '').replace(/^act_/, '');
+  if(!n || !/^\d+$/.test(n)) return null;
+  if(level !== 'account' && !id) return null;
+  const q = ['act=' + n];
+  if(FB_SEL[level]) q.push(FB_SEL[level] + '=' + encodeURIComponent(id));
+  /* Landing on a different window than the one that produced the number is how people
+     end up believing the dashboard and Ads Manager disagree. */
+  if(since && until) q.push('date=' + since + '_' + until);
+  return `https://adsmanager.facebook.com/adsmanager/manage/${FB_PATH[level]}?` + q.join('&');
+}
+/* The name, linked if it can be, plain text if it cannot -- never a link that goes
+   nowhere. `title` stays on the cell so the full name is still hoverable. */
+function fbName(text, url){
+  const t = text || '—';
+  return url ? `<a class="fbl" href="${url}" target="_blank" rel="noopener noreferrer"
+    title="Open in Meta Ads Manager">${t}</a>` : t;
+}
+const fbLevel = tab => ({accounts:'account', campaigns:'campaign',
+                         adsets:'adset', ads:'ad'})[tab] || null;
+
 function cell(o, c){
   if(c.kind==='name'){
     const live = o.active || o.status==='ACTIVE';
-    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">${o.name||'—'}` +
+    const lv = fbLevel(TAB);
+    const url = lv ? fbUrl(lv, o.id, o.account_id || o.id, DATA.since, DATA.until) : null;
+    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">` +
+      fbName(o.name, url) +
       (TAB!=='accounts' && !live ? `<span class="pill">paused</span>`:'') +
       (o.shared_name ? `<span class="pill">shared name</span>`:'') + `</td>`;
   }
@@ -2000,8 +2045,9 @@ function toCsv(level, r){
   const p = proOn() && RAW.prorata[EV];
   if(p) body.push('', line([csvCell(
     `NOTE: trials and CPT here are MODELLED (pro rata, lift x${p.uplift.toFixed(3)}). ` +
-    `Trials with no Meta ad name were shared between Meta and Google per day by each ` +
-    `channel's measured trials. Measured trials for this window: ${Math.round(p.matched)}.`)]));
+    `Trials Branch could attribute to NO channel were shared between Meta and Google per ` +
+    `day, by each one's share of that day's attributed trials. Google's own trials were ` +
+    `not touched. Measured trials for this window: ${Math.round(p.matched)}.`)]));
   return body.join('\r\n') + '\r\n';
 }
 

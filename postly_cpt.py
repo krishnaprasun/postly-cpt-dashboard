@@ -1312,6 +1312,10 @@ SERIES_MAX_DAYS = int(os.environ.get("SERIES_MAX_DAYS", "62"))
 # The ceiling is a safety net against a dimension nobody has tried yet, not a view limit.
 SERIES_TOP = int(os.environ.get("SERIES_TOP", "0"))
 SERIES_MAX_ROWS = int(os.environ.get("SERIES_MAX_ROWS", "20000"))
+# Bumped when the SHAPE of a folded row changes. Checked alongside dates and row_cap
+# before a stored fold is reused, for the same reason: a fold from before rows carried
+# their account gives the Matrix a grid with no links and no way to tell why.
+SERIES_SHAPE = 2
 # Folds are now 1.5-2 MB each, so an unbounded dict of them is an OOM on a 512 MB
 # instance. Keep the few most recently used and let the store serve the rest.
 SERIES_CACHE_MAX = int(os.environ.get("SERIES_CACHE_MAX", "8"))
@@ -1389,8 +1393,15 @@ def _dim_day(meta_rows, branch_day, keys, dim, testing_re, acct_names):
                 continue
             e = rows.get(k)
             if e is None:
+                # `acct` rides along so the Matrix can link a row to Ads Manager, which
+                # resolves an object id only inside an act=. Kept as the account that
+                # spent MOST on the row, because a script name can appear in both
+                # accounts and a link into the wrong one is worse than none.
                 e = rows[k] = {"label": lbl, "stage": stage, "platform": "Meta",
-                               "spend": 0.0, **dict(blank)}
+                               "spend": 0.0, "acct": acct, "acct_spend": 0.0,
+                               **dict(blank)}
+            if sp > e["acct_spend"]:
+                e["acct"], e["acct_spend"] = acct, sp
             e["spend"] += sp
             e["label"] = e["label"] or lbl
             # An ad name that appears under both stages is reported under the stage that
@@ -1455,7 +1466,8 @@ def series(brand, since, until, dim="script", force=False):
         # the truncation back silently -- which is exactly what happened to SpeakEasy on
         # the first deploy of the uncapped fold.
         if art and art.get("dates") == want \
-                and art.get("row_cap") == (SERIES_TOP if SERIES_TOP > 0 else SERIES_MAX_ROWS):
+                and art.get("row_cap") == (SERIES_TOP if SERIES_TOP > 0 else SERIES_MAX_ROWS) \
+                and art.get("shape") == SERIES_SHAPE:
             _series_cache_put(key, art)
             return dict(art, cached=True, restored=True, age_min=0)
 
@@ -1508,10 +1520,11 @@ def series(brand, since, until, dim="script", force=False):
             row = rows.get(k)
             if row is None:
                 row = rows[k] = {"key": k, "label": e["label"], "stage": e["stage"],
-                                 "platform": e["platform"], "total_spend": 0.0,
-                                 "days": {},
+                                 "platform": e["platform"], "acct": e.get("acct"),
+                                 "total_spend": 0.0, "days": {},
                                  **{"total_" + x: 0.0 for x in keys}}
             row["label"] = row["label"] or e["label"]
+            row["acct"] = row["acct"] or e.get("acct")
             row["stage"] = row["stage"] or e["stage"]
             row["total_spend"] += e["spend"]
             for x in keys:
@@ -1531,6 +1544,7 @@ def series(brand, since, until, dim="script", force=False):
             "dates": dates, "keys": keys, "install_key": INSTALL_KEY,
             "event_labels": B["labels"], "cpt_target": B["cpt_target"],
             "rows": out_rows, "truncated": len(rows) > len(out_rows), "row_cap": cap,
+            "shape": SERIES_SHAPE,
             "partial_today": partial_today, "excluded_today": today,
             "total_rows": len(rows), "stored_days": len(stored),
             "generated_at": now_ist_str()}
