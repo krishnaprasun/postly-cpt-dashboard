@@ -212,7 +212,7 @@ BRANDS = {
         "event_note": {"t101": "speakeasy_trial_started",
                        "t10m": "SE_trial_nc_after_10mins"},
         # No agreed target yet, so CPT is shown uncoloured rather than judged.
-        "cpt_target": None,
+        "cpt_target": 275,
         "classplus": False,
         "logo": "brand/speakeasy.svg",
         # Their black-on-gold identity. `dark` is a deep bronze rather than the logo's
@@ -233,7 +233,7 @@ BRANDS = {
         "labels": {"t101": "Trials", "t10m": "NC 10m"},
         "event_note": {"t101": "trial_started_backend",
                        "t10m": "trial_nc_after10min_backend"},
-        "cpt_target": None,
+        "cpt_target": 180,
         "classplus": False,
         "logo": "brand/funda.png",
         # The violet end of their play-button gradient; the orange end is too close to

@@ -1264,6 +1264,78 @@ def google_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     return out
 
 
+def google_spend_only(brand, since, until):
+    """{spend, imp, clk, days} for a window -- Google Ads ONLY, no Branch call.
+
+    Exists so the Meta view can show what Google costs beside its own CPT without paying
+    for a Branch query it does not need: the Meta payload already carries the measured
+    Google trial count for this window in `channels`, so the only missing half is spend,
+    and Google Ads is not the rate-limited source here.
+    """
+    out = {"spend": 0.0, "imp": 0, "clk": 0, "days": 0, "ok": False, "error": None}
+    if not GA.available():
+        out["error"] = "no Google Ads credentials on this instance"
+        return out
+    cust, how = google_customers(brand)
+    if not cust:
+        out["error"] = "no Google Ads account is mapped to this brand"
+        return out
+    seen = set()
+    for cid in cust:
+        for r in GA.spend_daily(cid, since, until):
+            out["spend"] += r["spend"]; out["imp"] += r["imp"]; out["clk"] += r["clk"]
+            seen.add(r["date"])
+    out["spend"] = round(out["spend"], 2)
+    out["days"] = len(seen)
+    out["ok"] = bool(seen)
+    out["error"] = None if seen else (GA.last_error() or "Google returned no rows")
+    out["customers"] = cust
+    return out
+
+
+def prior_window(brand, since, until):
+    """{spend, trials, days, days_covered, complete} for the window before this one.
+
+    Read from the STORE only. A comparison is worth having and is not worth doubling the
+    Meta and Branch cost of every page load to get, and the days it needs are settled by
+    definition -- they are older than the ones on screen. Where the store is short, the
+    figure is marked incomplete rather than divided by the days that happened to be there.
+    """
+    B = C.brand(brand)
+    n = len(date_range(since, until))
+    end = datetime.strptime(since, "%Y-%m-%d").date() - timedelta(days=1)
+    start = end - timedelta(days=n - 1)
+    dates = date_range(start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d"))
+    out = {"since": dates[0], "until": dates[-1], "days": n,
+           "days_covered": 0, "complete": False, "spend": 0.0,
+           "trials": {k: 0.0 for k in B["events"]}}
+    if not H.available():
+        out["note"] = "no history store configured"
+        return out
+    meta, _branch, got, _missing = H.fetch(brand, dates)
+    out["days_covered"] = len(got)
+    out["complete"] = len(got) == n
+    out["spend"] = round(sum(float(r.get("spend") or 0)
+                             for rows in meta.values() for r in rows), 2)
+    # Trials come from the CHANNEL INDEX, not from summing every stored ad name. The
+    # stored names include Google's and organic's, so summing them compares this window's
+    # META trials against the prior window's ALL-CHANNEL trials -- which on Funda made the
+    # prior week look like 168,836 trials against 82,528, and a CPT half the real one.
+    idx, ok = chan_index_read(brand)
+    if ok:
+        for ev in B["events"]:
+            out["trials"][ev] = round(sum(
+                ((idx.get(d) or {}).get(ev) or {}).get("meta", 0) for d in dates), 1)
+            out["google_trials"] = round(sum(
+                ((idx.get(d) or {}).get(ev) or {}).get("google", 0) for d in dates), 1)
+        out["trials_from"] = "channel index"
+    else:
+        out["trials"] = None
+        out["note"] = "channel index unreadable — no prior trial count"
+    out["generated_at"] = now_ist_str()
+    return out
+
+
 def google_ns(brand):
     return f"{brand}gtri"
 

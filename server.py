@@ -403,6 +403,30 @@ def api_series():
         return jsonify({"error": str(e)[:500]}), 500
 
 
+@app.route("/api/prior")
+@protected
+def api_prior():
+    """Totals for the window immediately BEFORE the one on screen, from the store only.
+
+    Its own endpoint, and store-only on purpose. A trend needs a comparison, but the
+    comparison must not cost what the page costs -- pulling Meta and Branch again for a
+    second window would double the request budget on every load, for a subtitle. Settled
+    days are already sitting in the store, so this reads them and says how many it found.
+    Incomplete is reported, never quietly averaged over fewer days.
+    """
+    brand, err, _full = _gate(request.args.get("k", ""),
+                              request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    since, until = resolve_range(request.args.get("range", "7d"),
+                                 request.args.get("since"), request.args.get("until"))
+    try:
+        return jsonify(P.prior_window(brand, since, until))
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)[:300]}), 500
+
+
 @app.route("/api/google")
 @protected
 def api_google():
@@ -424,6 +448,25 @@ def api_google():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)[:500]}), 500
+
+
+@app.route("/api/google/spend")
+@protected
+def api_google_spend():
+    """Google spend for a window and nothing else — no Branch, so it is cheap enough for
+    the Meta view to ask for it just to print a comparison."""
+    brand, err, _full = _gate(request.args.get("k", ""),
+                              request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    since, until = resolve_range(request.args.get("range", "7d"),
+                                 request.args.get("since"), request.args.get("until"))
+    try:
+        return jsonify(dict(P.google_spend_only(brand, since, until),
+                            since=since, until=until))
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)[:300]}), 500
 
 
 @app.route("/api/google/status")

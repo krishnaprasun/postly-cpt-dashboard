@@ -145,10 +145,17 @@ label.chk{font-size:12.5px;color:var(--ink);display:flex;align-items:center;gap:
 input[type=checkbox]{accent-color:var(--accent)}
 
 .wrap{background:var(--white);border:1px solid var(--line);border-radius:14px;overflow:auto;
-  max-height:70vh;box-shadow:var(--shadow)}
+  max-height:76vh;box-shadow:var(--shadow)}
+/* The footer is the answer to "and in total", so it stays put the way the header does. */
+tfoot td{position:sticky;bottom:0;background:var(--panel2);border-top:1px solid var(--line);
+  border-bottom:0;font-weight:700;z-index:1}
+.scopebar{display:flex;align-items:baseline;gap:10px;margin:0 0 10px;flex-wrap:wrap}
+.scopebar .scope{font-size:11px}
+.scope[data-c="google"]{background:#E8F0FE;color:#1A57C4;border-color:#C6DAFC}
+.scope[data-c="blended"]{background:var(--ink);color:var(--white);border-color:var(--ink)}
 table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
 th{position:sticky;top:0;background:var(--panel2);text-align:right;font-size:10.5px;
-  text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:9px 13px;
+  text-transform:uppercase;letter-spacing:.7px;color:var(--muted);padding:7px 13px;
   border-bottom:1px solid var(--line);cursor:pointer;white-space:nowrap;z-index:2;font-weight:700}
 th:first-child,td:first-child{text-align:left}
 /* Parent-name columns — campaign under ad set, account under campaign, ad set under ad.
@@ -160,8 +167,15 @@ th.l{text-align:left}
 th.grow{width:100%}
 th:hover{color:var(--navy)}
 th.sorted{color:var(--accent-dk)}
-td{padding:8px 13px;border-bottom:1px solid var(--line2);text-align:right;white-space:nowrap;
+td{padding:6px 13px;border-bottom:1px solid var(--line2);text-align:right;white-space:nowrap;
   color:var(--ink)}
+/* Share of spend, drawn behind the name rather than as another column. Fifteen rows of
+   identical grey hide the shape of the spend: Funda's three accounts are 55/40/5 and read
+   the same. A bar costs no width and no reading. */
+td.name{position:relative}
+td.name .bar{position:absolute;left:0;top:0;bottom:0;background:var(--accent);
+  opacity:.09;pointer-events:none;border-radius:0 3px 3px 0}
+tbody tr:hover td.name .bar{opacity:.16}
 td:first-child{color:var(--navy);font-weight:500}
 tr:last-child td{border-bottom:0}
 tbody tr:hover{background:var(--accent-lt)}
@@ -451,7 +465,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
 </div></div>
 <header>
   <div class="hrow">
-    <div class="brand"><img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt=""><h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span> <em>Performance</em> <span class="scope" id="scopechip" title="Which channel's figures this page is showing">Meta ads only</span> <span id="win"></span></h1></div>
+    <div class="brand"><img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt=""><h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span> <em>Performance</em> <span id="win"></span></h1></div>
     {% if brands|length > 1 %}<div class="brandsw" id="brandsw">{% for b in brands %}<button data-b="{{ b.key }}"{% if b.key == default_brand %} class="on"{% endif %}>{{ b.label }}</button>{% endfor %}</div>{% else %}<div class="brandsw" id="brandsw" style="display:none"></div>{% endif %}
     <div class="segsw chansw" id="chansw"
          title="Which channel's money this page is about. Meta and Google are bought separately, reported separately, and only add up at the Blended level.">
@@ -510,6 +524,11 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
 <main>
   <div id="limit"></div>
   <div id="err"></div>
+  <div class="scopebar">
+    <span class="scope" id="scopechip"
+          title="Which channel's figures the numbers below are">Meta ads only</span>
+    <span class="dimtxt" id="scopesub"></span>
+  </div>
   <div class="kpis" id="kpis"></div>
 
   <div class="tabs" id="tabs">
@@ -748,11 +767,17 @@ function stampNow(){
   const bit = (lab, secs, warnAt) => secs === null ? ''
     : ` · <span class="${secs > warnAt ? 'warn' : ''}">${lab} ${ago(secs)
         .replace(' ago','').replace('just now','now')}</span>`;
+  /* One fact, not five. The age is what changes what you do; the exact pull times, the
+     trials and budget clocks and the refresh cadence were four more greys at 11px that
+     nobody read, and they are all in the tooltip that was already there. The others are
+     promoted back out only when one of them is OLD, which is when it matters. */
+  const stale = [t !== null && t > 2100 ? `trials ${ago(t).replace(' ago','')}` : '',
+                 b !== null && b > 2400 ? `budgets ${ago(b).replace(' ago','')}` : '']
+                .filter(Boolean);
   el.innerHTML = (m === null
       ? `Last refreshed <b>${DATA.generated_at.replace(' IST','')}</b> IST`
-      : `Spend from ${chanIsMeta() ? 'Meta' : 'Meta'} <b>${DATA.meta_as_of}</b> · ` +
-        `<span class="${m > 2100 ? 'warn' : ''}">${ago(m)}</span>`)
-    + bit('trials', t, 2100) + bit('budgets', b, 2400) + ' · auto 30m';
+      : `<b class="${m > 2100 ? 'warn' : ''}">${ago(m)}</b>`)
+    + (stale.length ? ` · <span class="warn">${stale.join(' · ')}</span>` : '');
   /* The assembly time is not useless -- it is what the server cache and the browser
      cache are keyed on -- it just is not the headline. */
   el.title = `Meta spend pulled ${DATA.meta_as_of || '—'} IST`
@@ -815,7 +840,7 @@ async function load(force, silent, hard, skipCache){
       /* Straight onto the screen: no veil, no skeleton, no round trip. The window you
          had open a minute ago comes back instantly instead of rebuilding. */
       RAW = cacheAge(hit.v, hit.held); DATA = applyAttr(RAW); lastFetchAt = Date.now();
-      render(); stampNow();
+      render(); stampNow(); loadPrior(); loadGSpend();
       document.getElementById('err').innerHTML = '';
       if(hit.held < CACHE_SOFT) return;
       return load(false, true, false, true);   // refresh behind the numbers on screen
@@ -839,6 +864,7 @@ async function load(force, silent, hard, skipCache){
        hard error skips the cache, and that returns above. */
     cachePut(ckey, j);
     RAW = j; DATA = applyAttr(RAW); render();
+    loadPrior(); loadGSpend();
     // Warnings still carry figures — render them, then explain what is off.
     const notes = [];
     if(j.warning && j.warning_kind !== 'rate_limit') notes.push(
@@ -958,6 +984,9 @@ function renderLimits(){
    Blended keeps the server's own rollups; a segment uses the per-segment ones. Every
    caller goes through these two, so a view can never mix one segment's spend with
    another's trials. */
+/* The visible rows' total spend, set by renderTable before any cell is built, so the
+   share bars and the footer are computed from the same set. */
+let ROWSPEND = 0;
 const totals = () => (SEG === 'blended' || !DATA.segments)
   ? DATA.combined : DATA.segments[SEG];
 const acctRows = () => (SEG === 'blended' || !DATA.accounts_by_seg)
@@ -1114,9 +1143,22 @@ function kpis(){
   const deg = !!(DATA.degraded && DATA.degraded.length);
   /* With a target, the hero says how far off it is. Without one it still leads with
      CPT — the number people came for — and simply does not judge it. */
-  const heroSub = T===null
-    ? (k===null ? 'no target set' : `no target set · ${num(tr)} trials`)
-    : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`;
+  /* Three things a bare CPT cannot tell you, all of which are already on hand: how it
+     compares with the target, which way it is moving, and what the OTHER channel costs.
+     The last one is the comparison people were making in their heads anyway. */
+  const d = priorDelta();
+  const gt2 = googTotals();
+  const gq = chanIsMeta() ? googCptQuick() : null;
+  const other = chanIsMeta()
+    ? (gq ? `Google ${rs(gq)}` : '')
+    : (gt2 && gt2.trials ? `Google ${rs(gt2.spend / gt2.trials)}` : '');
+  const heroSub = [
+    T===null ? (k===null ? 'no target set' : `no target set · ${num(tr)} trials`)
+             : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`,
+    d ? `<span class="${d.pct <= 0 ? 'good' : 'bad'}">${d.pct > 0 ? '+' : ''}${
+          d.pct.toFixed(0)}%</span> vs prior ${PRIOR.days}d (${rs(d.was)})` : '',
+    other,
+  ].filter(Boolean).join(' · ');
 
   /* Pro rata changes what CPT means, so it is named on the tile itself and not only in
      the header badge — a screenshot of this page has to carry its own caveat. The label
@@ -1337,6 +1379,69 @@ let GOOG = null, GOOGKEY = null, GOOGBUSY = false;
    Google is its own buying with its own campaigns; Blended is the only view where the
    two are added, and the only one that answers "what is a trial actually costing us". */
 let CHAN = 'meta';
+/* The window before this one, read from the store, so a number on screen has something
+   to be compared with. Fetched after the page has painted and never blocking it: a
+   comparison is worth having and is not worth a slower first paint. */
+let PRIOR = null, PRIORKEY = null;
+/* Google SPEND only, for the comparison on the Meta hero. The Meta payload already
+   carries this window's measured Google trial count in `channels`, so pairing it with
+   spend costs one Google Ads call and no Branch quota at all -- which matters, because
+   Branch is the source that throttles. */
+let GSPEND = null, GSPENDKEY = null;
+
+async function loadGSpend(){
+  const key = priorKey();
+  if(GSPENDKEY === key) return;
+  const hit = await cacheGet('gspend|' + key);
+  if(hit){ GSPEND = hit.v; GSPENDKEY = key; if(DATA) render(); return; }
+  try{
+    const r = await fetch(`/api/google/spend?${apiQuery()}${K}`);
+    const j = await r.json();
+    if(j.error && !j.spend) return;
+    cachePut('gspend|' + key, j);
+    if(priorKey() !== key) return;
+    GSPEND = j; GSPENDKEY = key;
+    if(DATA) render();
+  }catch(_){ /* a missing comparison is a missing subtitle, not an error */ }
+}
+
+/* What Google costs per trial in THIS window, measured: its spend over the Google trials
+   Branch already counted in the payload on screen. Null unless both halves are real. */
+function googCptQuick(){
+  const ch = (DATA && DATA.channels && DATA.channels[EV]) || null;
+  if(!ch || !GSPEND || !GSPEND.ok || !ch.google) return null;
+  return GSPEND.spend / ch.google;
+}
+const priorKey = () => `${BRAND}|${RANGE}|${CUSTOM ? CUSTOM.since+CUSTOM.until : ''}`;
+
+async function loadPrior(){
+  const key = priorKey();
+  if(PRIORKEY === key) return;
+  const hit = await cacheGet('prior|' + key);
+  if(hit){ PRIOR = hit.v; PRIORKEY = key; if(DATA) render(); return; }
+  try{
+    const r = await fetch(`/api/prior?${apiQuery()}${K}`);
+    const j = await r.json();
+    if(j.error) return;
+    cachePut('prior|' + key, j);
+    if(priorKey() !== key) return;
+    PRIOR = j; PRIORKEY = key;
+    if(DATA) render();
+  }catch(_){ /* a missing comparison is a missing subtitle, not an error */ }
+}
+
+/* The change against the same length of window immediately before. Null unless the store
+   covered ALL of it -- a "-40%" that is really four days against seven is worse than no
+   figure at all. */
+function priorDelta(){
+  if(!PRIOR || !PRIOR.complete || !chanIsMeta() || !PRIOR.trials) return null;
+  const pt = PRIOR.trials[EV];
+  if(!pt || !PRIOR.spend) return null;
+  const was = PRIOR.spend / pt;
+  const now = cpt(totals().spend, totals()[EV]);
+  if(now === null || !was) return null;
+  return {was, now, pct: 100 * (now - was) / was};
+}
 const chanIsMeta = () => CHAN === 'meta';
 /* Google totals for the CURRENT window, or null while they are still loading. Kept
    separate from GOOG so a half-loaded payload can never be silently read as zeros. */
@@ -1364,6 +1469,12 @@ function chanChip(){
   const [t, tip] = CHAN_CHIP[CHAN];
   el.textContent = t; el.title = tip;
   el.dataset.c = CHAN;
+  const sub = document.getElementById('scopesub');
+  if(sub) sub.textContent = CHAN === 'meta'
+      ? `${DATA ? DATA.accounts.length : ''} Meta ad account(s) · Google is on the Google channel`
+    : CHAN === 'google'
+      ? 'Google campaigns and ad groups · Meta is on the Meta channel'
+      : 'Both channels added — the only view where they are';
 }
 
 function chanTabsAvail(){
@@ -2310,11 +2421,17 @@ const adMedia = id => id
 function cell(o, c){
   if(c.kind==='name'){
     const live = o.active || o.status==='ACTIVE';
+    /* Share of the visible rows' spend, behind the name. Of the ROWS ON SCREEN, so it
+       agrees with the footer beside it rather than with some window total the reader
+       cannot see. */
+    const share = ROWSPEND > 0 ? Math.max(0, Math.min(1, (o.spend || 0) / ROWSPEND)) : 0;
+    const bar = share > 0.004
+      ? `<span class="bar" style="width:${(share*100).toFixed(2)}%"></span>` : '';
     const isAd = TAB === 'ads';
     const url = isAd ? adMedia(o.id) : null;
     const mgr = isAd
       ? adManagerUrl(o.id, o.account_id, DATA.since, DATA.until) : null;
-    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">` +
+    return `<td class="name" title="${(o.name||'').replace(/"/g,'&quot;')}">` + bar +
       (url ? `<a class="fbl" href="${url}" target="_blank" rel="noopener noreferrer"
          title="Open the creative">${o.name||'—'}</a>` : (o.name||'—')) +
       (mgr ? ` <a class="mgr" href="${mgr}" target="_blank" rel="noopener noreferrer"
@@ -2377,7 +2494,8 @@ function renderBlended(){
       <td>${tot.tr === null ? '—' : num(tot.tr)}</td>
       <td class="${tot.tr ? cls(cpt(tot.sp,tot.tr)) : ''}">${tot.tr ? rs(tot.sp/tot.tr) : '—'}</td>
       <td>${tot.ins === null ? '—' : num(tot.ins)}</td>
-      <td>${tot.ins ? rs(tot.sp/tot.ins) : '—'}</td><td></td><td></td></tr>`;
+      <td>${tot.ins ? rs(tot.sp/tot.ins) : '—'}</td>
+      <td>100%</td><td>${tot.tr === null ? '—' : '100%'}</td></tr>`;
   document.getElementById('rowcount').textContent = '';
 }
 
@@ -2448,8 +2566,13 @@ function renderTable(){
       (on ? `<th>Signups</th><th>Mandates</th><th>Cost/mandate</th>` : '') +
       `<th>Share of spend</th>` + (tr_ ? `<th>Share of trials</th>` : '') + `</tr>`;
     const c = totals();
+    const cTot = c.spend || 0;
     const mk = (label, o, indent) => { const sp = o.spend, tr = o[EV];
-      return `<tr><td class="name" style="padding-left:${12+indent*20}px">${label}</td>
+      /* Same share bar as the other tabs. Combined is the tab people land on, so leaving
+         it out would mean the one view everybody sees is the one without the shape. */
+      const sh = cTot > 0 ? Math.max(0, Math.min(1, sp / cTot)) : 0;
+      const bar = sh > 0.004 ? `<span class="bar" style="width:${(sh*100).toFixed(2)}%"></span>` : '';
+      return `<tr><td class="name" style="padding-left:${12+indent*20}px">${bar}${label}</td>
       <td>${rs(sp)}</td>` +
       (tr_ ? `<td>${num(tr)}</td><td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`
            : `<td>${rs(o.budget||0)}</td>`) +
@@ -2480,6 +2603,7 @@ function renderTable(){
   }
   document.getElementById('ctl').style.display='flex';
   const cols = colsFor(TAB), r = rows();
+  ROWSPEND = r.reduce((a, o) => a + (o.spend || 0), 0);
   tbl.querySelector('thead').innerHTML = '<tr>' + cols.map(c => {
     const cls = [c.kind==='name'||c.kind==='sub' ? 'l' : '',
                  c.kind==='sub' ? 'grow' : '',
@@ -2533,9 +2657,11 @@ function render(){
   document.getElementById('win').textContent =
     DATA.since===DATA.until ? DATA.since : `${DATA.since} → ${DATA.until}`;
   stampNow();
+  /* The count on a tab is a promise about the table you will get, so it counts what the
+     CURRENT filters leave -- not the unfiltered total. "Ads 400" over a table of 675 rows
+     filtered to 311 invites a double-take every time. */
   for(const t of ['accounts','campaigns','adsets','ads'])
-    document.getElementById('n-'+t).textContent =
-      (t === 'accounts' ? acctRows() : DATA[t].filter(inSeg)).length;
+    document.getElementById('n-'+t).textContent = rows(t).length;
   /* Only once the tab has been opened: a count is a promise that the number is real, and
      guessing one before the fetch would be a promise this cannot keep. */
   if(!chanIsMeta()){
