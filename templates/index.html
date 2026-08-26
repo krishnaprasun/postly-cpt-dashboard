@@ -314,6 +314,8 @@ a.mgr:hover{color:var(--accent-dk)}
   min-width:190px;max-width:340px;color:var(--ink)}
 .chartbox .ttip h4{margin:0 0 6px;font-size:11px;letter-spacing:.3px;
   text-transform:uppercase;color:var(--muted);font-weight:700}
+.chartbox .ttip h4 .of{text-transform:none;letter-spacing:0;color:var(--faint);
+  font-weight:500}
 .chartbox .ttip .tr{display:flex;align-items:center;gap:7px;padding:2px 0}
 .chartbox .ttip .tr i{width:9px;height:9px;border-radius:50%;flex:0 0 auto}
 .chartbox .ttip .tr span{flex:1 1 auto;overflow:hidden;text-overflow:ellipsis;
@@ -550,6 +552,14 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <input type="search" id="sq" placeholder="Filter by name…">
     <label class="chk"><input type="checkbox" id="sTesting"> include testing</label>
     <label class="chk" id="sActiveWrap"><input type="checkbox" id="sActive"> active only</label>
+    <label class="chk" id="sLinesWrap">Lines
+      <select class="sel" id="sLines" style="margin-left:6px">
+        <option value="6" selected>Top 6</option>
+        <option value="12">Top 12</option>
+        <option value="25">Top 25</option>
+        <option value="50">Top 50</option>
+        <option value="0">All</option>
+      </select></label>
     <label class="chk" id="sPerWrap">Rows
       <select class="sel" id="sPer" style="margin-left:6px">
         <option value="50">50</option>
@@ -1228,7 +1238,13 @@ function sparkline(daily){
    top twenty. They share a fetch because they share a fold, and that fold is the
    expensive part. */
 let SERIES = null, SERIESKEY = null, SERIESBUSY = false;
-const CHART_LINES = 6;
+/* How many series the chart draws. 0 means every row the filters leave. Six was a fixed
+   cap and it was hiding the question people actually had -- "how are my live ad sets
+   doing" is 110 lines on Postly, 284 on Funda, not six. Above THIN_AT the lines are drawn
+   thin and translucent so the shape of the whole set is readable instead of a solid
+   block of colour, and the hover read-out caps its list rather than printing 284 rows. */
+let MLINES = 6;
+const THIN_AT = 12, TIP_MAX = 12, LEGEND_MAX = 24;
 /* The Matrix pages through every row the fold returned rather than showing a top 20.
    The cut was hiding real money: on Postly's 30-day script fold the top 60 rows are 40%
    of the spend and rank 61 had still spent Rs24,000, so "top N" was not a summary of the
@@ -1420,16 +1436,19 @@ function renderTrends(){
   if(!SERIES){ box.innerHTML = `<div class="panel"><p class="sub">${
     SERIESBUSY ? 'Loading…' : 'No data for this window.'}</p></div>`; return; }
   const m = metricOf(), dates = SERIES.dates;
-  /* Top six by SPEND regardless of the metric on screen, so switching metric keeps the
-     same six lines and the comparison stays honest. Ranking by the metric itself would
-     swap the cast every time and make CPT look like it belonged to different creatives. */
-  const rows = seriesRows().slice(0, CHART_LINES);
-  document.getElementById('scount').textContent =
-    `${seriesRows().length} row(s) · top ${Math.min(CHART_LINES, rows.length)} charted`;
+  /* Ranked by SPEND regardless of the metric on screen, so switching metric keeps the
+     same cast and the comparison stays honest. Ranking by the metric itself would swap
+     the lines every time and make CPT look like it belonged to different creatives. */
+  const all = seriesRows();
+  const rows = MLINES ? all.slice(0, MLINES) : all;
+  document.getElementById('scount').textContent = MLINES && all.length > rows.length
+    ? `${all.length} row(s) · top ${rows.length} charted`
+    : `${all.length} row(s) · all charted`;
   if(!rows.length || !dates.length){
     box.innerHTML = `<div class="panel"><p class="sub">Nothing to chart.</p></div>`; return;
   }
   const vals = rows.map(r => dates.map(d => m.of(r.days[d])));
+  const thin = rows.length > THIN_AT;
   const flat = vals.flat().filter(v => v !== null && isFinite(v));
   /* Round the axis up to a readable ceiling. Dividing the raw maximum into quarters
      gives labels like Rs12,660 that nobody can compare at a glance. */
@@ -1459,16 +1478,23 @@ function renderTrends(){
       if(v === null || !isFinite(v)){ pen = false; return; }
       d += `${pen ? 'L' : 'M'}${px(i).toFixed(1)},${py(v).toFixed(1)} `; pen = true;
     });
-    lines += `<path class="ln" stroke="${col}" d="${d.trim()}"/>`;
+    lines += `<path class="ln" stroke="${col}" d="${d.trim()}"${
+      thin ? ` stroke-width="1.1" stroke-opacity="${vals.length > 60 ? .42 : .6}"` : ''}/>`;
     if(dates.length === 1 && vs[0] !== null)
       lines += `<circle class="pt" cx="${px(0)}" cy="${py(vs[0])}" r="4" fill="${col}"/>`;
   });
-  const legend = rows.map((r,i) => {
+  /* A legend of 284 names is not a legend. Past LEGEND_MAX it names the biggest and
+     says how many it did not -- the hover read-out is how you identify the rest. */
+  const shown = rows.slice(0, LEGEND_MAX);
+  const legend = shown.map((r,i) => {
     const col = LINE_COLOURS[i % LINE_COLOURS.length], tv = rowTotal(r);
     return `<span class="it"><i class="sw" style="border-color:${col}"></i>
       <b title="${(r.label||'').replace(/"/g,'&quot;')}">${r.label||'—'}</b>
       <em>· ${r.platform}${r.stage ? ' · '+r.stage : ''} · ${
-        tv===null ? '—' : m.fmt(tv)}</em></span>`; }).join('');
+        tv===null ? '—' : m.fmt(tv)}</em></span>`; }).join('')
+    + (rows.length > shown.length
+        ? `<span class="it"><em>+${num(rows.length - shown.length)} more — hover the
+             chart to read any of them</em></span>` : '');
   /* Everything the hover read-out needs, captured at draw time. Recomputing it from the
      DOM on every pointer move would re-read the metric and the filters mid-gesture and
      could disagree with the line actually on screen. */
@@ -1476,9 +1502,12 @@ function renderTrends(){
          px, py, cols: rows.map((_,i) => LINE_COLOURS[i % LINE_COLOURS.length])};
   box.innerHTML = `<div class="panel">
     <h3>${m.label} by ${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}</h3>
-    <p class="sub">Top ${rows.length} row${rows.length===1?'':'s'} by spend in the current
-      filters, ${SERIES.since} to ${SERIES.until}. Ranked by spend so the same rows stay
-      on screen when you change metric.</p>
+    <p class="sub">${MLINES && all.length > rows.length
+        ? `Top ${rows.length} of ${num(all.length)} rows by spend`
+        : `All ${num(rows.length)} row${rows.length===1?'':'s'}`} in the current filters,
+      ${SERIES.since} to ${SERIES.until}. Ranked by spend so the same lines stay on screen
+      when you change metric.${thin ? ` Drawn thin because there are ${rows.length} of
+      them — hover any day to read the biggest ${TIP_MAX} there by name.` : ''}</p>
     <div class="chartbox" id="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
       ${g}${lines}</svg><div class="xhair" id="xhair"></div>
       <div id="hdots"></div><div class="ttip" id="ttip"></div></div>
@@ -1512,13 +1541,24 @@ function trendReadout(C, i){
     const v = C.vals[ri][i], none = v === null || !isFinite(v);
     return {row, col: C.cols[ri], v, none};
   }).sort((a, b) => (a.none && b.none) ? 0 : a.none ? 1 : b.none ? -1 : b.v - a.v);
+  /* Capped. Charting every active ad set is the point, but a card listing 284 of them is
+     not a read-out, it is the table again. The biggest at that day are the ones the
+     question is about; the rest are counted, not hidden. */
+  const top = rows.slice(0, TIP_MAX);
+  const rest = rows.length - top.length;
+  const measured = rows.filter(o => !o.none).length;
   const d = C.dates[i];
   const html = `<h4>${new Date(d+'T00:00:00').toLocaleDateString('en-GB',
-      {weekday:'short', day:'numeric', month:'short'})}</h4>` +
-    rows.map(o => `<div class="tr${o.none ? ' none' : ''}"><i style="background:${o.col}"></i>
+      {weekday:'short', day:'numeric', month:'short'})}${rows.length > TIP_MAX
+      ? `<span class="of"> top ${TIP_MAX} of ${num(rows.length)}</span>` : ''}</h4>` +
+    top.map(o => `<div class="tr${o.none ? ' none' : ''}"><i style="background:${o.col}"></i>
         <span title="${(o.row.label||'').replace(/"/g,'&quot;')}">${o.row.label||'—'}</span>
-        <b>${o.none ? '—' : C.m.fmt(o.v)}</b></div>`).join('');
-  return {rows, html, date: d};
+        <b>${o.none ? '—' : C.m.fmt(o.v)}</b></div>`).join('') +
+    (rest > 0 ? `<div class="tr none"><i style="background:transparent"></i>
+        <span>+${num(rest)} more${measured < rows.length
+          ? `, ${num(rows.length - measured)} with nothing that day` : ''}</span><b></b></div>`
+      : '');
+  return {rows, top, html, date: d};
 }
 
 function bindTrendHover(){
@@ -1536,7 +1576,9 @@ function bindTrendHover(){
     xh.style.display = 'block'; xh.style.left = left.toFixed(1) + 'px';
 
     const out = trendReadout(C, i);
-    document.getElementById('hdots').innerHTML = out.rows.filter(o => !o.none).map(o =>
+    /* Dots for the lines the card names, so the two agree. A dot on every one of 284
+       series would be a band of colour, not a read-out. */
+    document.getElementById('hdots').innerHTML = out.top.filter(o => !o.none).map(o =>
       `<div class="hdot" style="left:${left.toFixed(1)}px;top:${
         (C.py(o.v) * sy).toFixed(1)}px;background:${o.col}"></div>`).join('');
     const tip = document.getElementById('ttip');
@@ -2065,6 +2107,8 @@ function renderTable(){
     if(!seriesFresh() && !SERIESBUSY){ loadSeries(false); }
     document.getElementById('sPerWrap').style.display =
       TAB === 'matrix' ? 'inline-flex' : 'none';
+    document.getElementById('sLinesWrap').style.display =
+      TAB === 'trends' ? 'inline-flex' : 'none';
     sActiveAvail(); sMetricAvail();
     if(TAB==='trends') renderTrends(); else renderMatrix();
     return;
@@ -2776,8 +2820,15 @@ document.getElementById('sMetric').onchange = () => { MPAGE = 0; renderTable(); 
 document.getElementById('sq').oninput = () => { MPAGE = 0; renderTable(); };
 document.getElementById('sTesting').onchange = () => { MPAGE = 0; renderTable(); };
 document.getElementById('sActive').onchange = () => { MPAGE = 0; renderTable(); };
-document.getElementById('sPer').onchange = e => {
-  MPER = parseInt(e.target.value, 10) || 0; MPAGE = 0; renderTable();
+/* Read off the element rather than the event, so these behave the same whether the
+   browser fires the change or something else calls the handler. */
+document.getElementById('sPer').onchange = () => {
+  MPER = parseInt(document.getElementById('sPer').value, 10) || 0;
+  MPAGE = 0; renderTable();
+};
+document.getElementById('sLines').onchange = () => {
+  MLINES = parseInt(document.getElementById('sLines').value, 10) || 0;
+  renderTable(); noteFor();
 };
 if(CAN_ACT) document.getElementById('sCsv').onclick = matrixCsv;
 if(CAN_ACT) document.getElementById('lGo').onclick = () => loadLongevity(true);
@@ -2901,11 +2952,12 @@ try{
 try{
   const q = new URLSearchParams(location.search);
   for(const [param, id] of [['dim','sDim'], ['metric','sMetric'], ['win','sWin'],
-                           ['per','sPer']]){
+                           ['per','sPer'], ['lines','sLines']]){
     const want = q.get(param), sel = document.getElementById(id);
     if(want && sel && [...sel.options].some(o => o.value === want)) sel.value = want;
   }
   MPER = parseInt(document.getElementById('sPer').value, 10) || 0;
+  MLINES = parseInt(document.getElementById('sLines').value, 10) || 0;
   /* `?sort=2026-08-21&dir=asc` opens the grid on one day's column, which is the whole
      reason to send someone a matrix link. Validated against the columns that exist, so a
      stale date in an old bookmark falls back to the period total rather than sorting by

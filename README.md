@@ -764,11 +764,29 @@ The footer carries two totals, because with paging one number cannot mean both t
 Export CSV writes every row matching the filter in the order on screen — not just the
 page, which would be a screenshot rather than an export.
 
+**Trends charts as many lines as you ask for.** A `Lines` selector — Top 6 / 12 / 25 / 50
+/ All — replaces what used to be a fixed cap of six. Six was hiding the question people
+actually had: *how are my live ad sets doing* is 110 lines on Postly and 284 on Funda,
+not six. Combined with `active only` and `dim=adset`, `Lines: All` is exactly "every
+running ad set".
+
+Past twelve lines the chart draws them **thin and translucent** (thinner again past 60),
+so the shape of the whole set reads instead of a solid block of colour. The legend names
+the biggest 24 and counts the rest — a legend of 284 names is not a legend — and the hover
+read-out is how you identify any of the others.
+
+Deep-linkable as `&lines=0` for all.
+
 **Trends reads back on hover.** Move over the chart and it snaps to the nearest **day** —
 not to the pointer, because the series is daily and a read-out floating between two days
 would imply a value that does not exist. You get a crosshair on that day, a dot on every
 line that has a value there, and a card listing all six with their values, **ordered
 biggest first**: the question a crowded chart raises is which one is on top here.
+
+The card is **capped at the biggest 12** at that day, with the header saying `top 12 of
+110` and a final row counting the remainder (and how many of those had nothing that day).
+Charting every ad set is the point; a card listing 284 of them is not a read-out, it is
+the table again. Dots are drawn only for the lines the card names, so the two agree.
 
 A blank stays a blank. On CPT/CPI a day with no trials shows `—` and gets **no dot**,
 the same rule the line itself follows — a day a row did not run is not a day it cost
