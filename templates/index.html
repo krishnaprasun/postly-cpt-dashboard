@@ -853,29 +853,16 @@ function attrAvail(){
 
 /* ---------- trials by channel ---------- */
 /* Branch fills in `~ad_name` for Meta ads and leaves it empty for Google, so a trial with
-   no ad name is a Google or an organic trial — and Branch names which one. That is why
-   this is a measured split and not a share-out: apportioning the nameless pool between
-   Meta and Google by their attributed trials would move tens of thousands of Google's
-   trials onto Meta's spend and halve a CPT the kill rules act on. */
+   no ad name is a Google or an organic trial — and Branch names which one. The channel
+   split is MEASURED from that partner field; only the trials Branch names no channel for
+   are ever shared out. Google's own trials are never apportioned onto Meta's spend. */
 function chanOf(){ return (DATA && DATA.channels && DATA.channels[EV]) || null; }
 
-function chanBits(){
-  const c = chanOf(); if(!c) return [];
-  const out = [];
-  if(c.google)      out.push(`${num(c.google)} Google Ads`);
-  if(c.organic)     out.push(`${num(c.organic)} organic`);
-  if(c.other)       out.push(`${num(c.other)} other partners`);
-  if(c.meta_orphan) out.push(`${num(c.meta_orphan)} Meta, ad removed`);
-  if(c.unknown)     out.push(`${num(c.unknown)} channel not recorded`);
-  return out;
-}
 
 /* ---------- KPIs ---------- */
 function kpis(){
   const c = totals(), tr = c[EV], sp = c.spend, k = cpt(sp,tr);
   const trials = hasTrials();
-  const cov = trials && DATA.branch_totals[EV]
-    ? 100*DATA.matched[EV]/DATA.branch_totals[EV] : 0;
   const pace = c.budget ? 100*sp/c.budget : 0;
   const days = Math.round((new Date(DATA.until) - new Date(DATA.since))/864e5) + 1;
   // budgets and statuses are only partly known when an account's roster failed
@@ -889,9 +876,10 @@ function kpis(){
      could only ever read "—" would make a missing Branch key look like zero trials. */
   const segLbl = SEG === 'blended' ? 'blended' : SEG;
   /* Pro rata changes what CPT means, so it is named on the tile itself and not only in
-     the switcher — a screenshot of this page has to carry its own caveat. */
+     the header badge — a screenshot of this page has to carry its own caveat. The label
+     is the whole caveat: the size of the lift and the measured figure under it belong in
+     the note, not in a tile somebody is trying to read a number off. */
   const modLbl = proOn() ? ' · <span class="modelled">pro rata</span>' : '';
-  const pr = proOn() ? RAW.prorata[EV] : null;
   document.getElementById('kpis').innerHTML =
    (trials ? `
    <div class="kpi hero"><div class="k">Current CPT · ${segLbl}${modLbl}</div>
@@ -903,22 +891,8 @@ function kpis(){
              : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
    (trials ? `
    <div class="kpi"><div class="k">Trials${modLbl}</div><div class="v">${num(tr)}</div>
-     <div class="s">${DATA.event_note[EV]||EV}${pr
-       ? ` · ${num(pr.matched)} measured, lifted ×${pr.uplift.toFixed(3)}`
-       : (SEG==='blended' ? ` · Branch ${num(DATA.branch_totals[EV])} total`
-                          : ` · ${segLbl} campaigns only`)}</div></div>
-   ${pr ? `
-   <div class="kpi"><div class="k">Meta share · modelled</div>
-     <div class="v">${DATA.branch_totals[EV] ? (100*pr.meta/DATA.branch_totals[EV]).toFixed(1) : '—'}%</div>
-     <div class="s">${num(pr.meta)} Meta · ${num(pr.google)} Google, of
-       ${num(DATA.branch_totals[EV])}${pr.unallocated > 0
-         ? ` · ${num(pr.unallocated)} unclaimed` : ''} ·
-       ${pr.days_covered}/${pr.days_total} days</div></div>`
-   : `
-   <div class="kpi"><div class="k">Attribution</div><div class="v">${cov.toFixed(1)}%</div>
-     <div class="s">${chanBits().length ? chanBits().join(' · ')
-       : `${num(DATA.unattributed[EV])} trials not matched to an ad`}${
-       SEG==='blended' ? '' : ' · brand-wide'}</div></div>`}`
+     <div class="s">${DATA.event_note[EV]||EV}${SEG==='blended' ? ''
+       : ` · ${segLbl} campaigns only`}</div></div>`
    : `
    <div class="kpi"><div class="k">Budget/day</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) + `
@@ -1813,9 +1787,13 @@ function chanNote(){
           shares. Google's own trials are untouched. Every trial count on the page is lifted
           <b>×${p.uplift.toFixed(3)}</b> and every CPT divided by it, so brand-wide CPT
           reads ${rs(sp/p.trials)} where the measured figure is ${rs(sp/p.matched)}.
-          The lift is worked out for each of the ${p.days_covered} day(s) in this window
-          on its own and then summed, so a window where Google's share moved is not
-          flattened to one ratio. It is applied to every row by the same factor, which
+          The lift is worked out for each of the ${p.days_covered} of
+          ${p.days_total} day(s) in this window on its own and then summed, so a window
+          where Google's share moved is not flattened to one ratio.${p.unallocated > 0
+            ? ` ${num(p.unallocated)} trial(s) stayed <b>unclaimed</b>: on a day with no
+                attributed volume at all there is no ratio to apply, and handing the pool
+                to either side would assert a channel earned trials it measurably did
+                not.` : ''} It is applied to every row by the same factor, which
           means it does not move trials BETWEEN ads — each ad keeps its measured share.
           Judge one creative against another on the <b>Longevity</b> tab, which stays
           measured.`

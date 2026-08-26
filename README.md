@@ -537,7 +537,7 @@ the Meta/Google mix moves. Over Funda's 27 Jul – 25 Aug window the two give �
 Both allocations are computed, not one taken as the remainder of the Branch total. They
 agree on every real day, but on a day with **no attributed volume at all** there is no
 ratio to apply: both allocations are zero and the pool stays unclaimed, reported as
-`unclaimed` on the Attribution tile. Handing it to whichever side the remainder favoured
+`unclaimed` in the channel note. Handing it to whichever side the remainder favoured
 would assert that a channel earned trials on a day it measurably earned none — the same
 mistake as the circular split, just quieter.
 
@@ -555,9 +555,8 @@ ads** — every row is lifted by the same factor, so the split across rows stays
 measured one. Compare creatives on the measured view.
 
 Where it shows: the gold `Pro rata` badge in the header, `pro rata` on the CPT and Trials
-tiles, `Meta share · modelled` on the Attribution tile, a note spelling out the size of
-the lift and the measured figure underneath it, `prorata` in the export filename, and a
-trailing NOTE row inside the CSV — a file gets forwarded without the page it came from.
+tiles, a note spelling out the size of the lift and the measured figure underneath it,
+`prorata` in the export filename, and a trailing NOTE row inside the CSV — a file gets forwarded without the page it came from.
 
 If the model cannot be applied to a window — no Branch app for the brand, a failed Branch
 pull, a payload from before this shipped — the badge is **hidden** rather than greyed and
@@ -599,8 +598,8 @@ and write **once**, check the result, and read it back to confirm no day went mi
 
 `--audit` exists because that failure is invisible from the outside: an index that has
 quietly lost days looks exactly like a correct one, and the only symptom is the pro-rata
-view covering fewer days and printing a smaller uplift. The **Meta share · modelled**
-tile shows `days_covered/days_total` for the same reason.
+view covering fewer days and printing a smaller uplift. The channel note says how many of the
+window's days the model actually covered, for the same reason.
 
 **This is a model, not a measurement.** Branch labels the pool organic or "other", not
 Meta's. Pro rata deliberately overrides that, on the argument that last-touch
@@ -904,3 +903,12 @@ It cannot rely on (3) alone: macOS protects `~/Desktop` and a process launched a
 server is not granted access to it, so that import fails at serve time even though it
 works from a shell. If a token is rotated, update `~/.anthropic/` **and** the Render
 env var.
+
+### What the tiles deliberately do not carry
+
+The KPI row states the number and labels it `pro rata`. It does **not** show the lift
+factor, the measured figure under it, or an attribution percentage — those moved to the
+note. A tile is where somebody reads a number off at a glance; the arithmetic behind it
+belongs one paragraph down, where there is room to say what it means. The `Meta share ·
+modelled` and `Attribution` tiles were removed outright for the same reason: the full
+channel breakdown, with counts and percentages for every channel, is in the note.
