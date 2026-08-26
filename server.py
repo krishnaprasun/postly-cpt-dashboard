@@ -38,7 +38,13 @@ app.jinja_env.auto_reload = True
 # (which lags a few minutes anyway), long enough that clicking between tabs and
 # ranges does not re-pull. Past this the cache is served stale and refreshed behind
 # the request rather than blocking it.
-CACHE_TTL = int(os.environ.get("CACHE_TTL", "90"))
+# Sized to sit just inside the page's 15-minute refresh, on purpose. At 90 seconds every
+# open tab that ticked triggered its own rebuild -- Meta insights plus a Branch pull, and
+# Branch is the source that throttles. At 13 minutes the first tick past it rebuilds once
+# and every other tab, and every other person, is served from that for free. The page is
+# no less current: a request past the TTL is answered from the stale copy AND kicks the
+# refresh, so the numbers land seconds later either way.
+CACHE_TTL = int(os.environ.get("CACHE_TTL", "780"))
 # Open by design — no login. Setting ADMIN_PASS turns on a browser password prompt;
 # leaving it unset (the default, and how this is deployed) serves the dashboard to
 # anyone with the URL. See README "Access" for what that exposes.

@@ -466,6 +466,24 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   background-size:200% 100%;animation:shim 1.4s linear infinite}
 @keyframes shim{from{background-position:200% 0}to{background-position:-200% 0}}
 
+/* One loading vocabulary. The word "loading…" in 11px grey in a corner is not a loading
+   state -- it is a footnote about one, easy to miss and impossible to judge progress by.
+   These say "this shape is filling in" at the size of the thing that is filling in. */
+.sklrow td{padding-top:9px;padding-bottom:9px}
+.sklchart{height:300px;border-radius:12px;position:relative;overflow:hidden;
+  background:var(--panel2)}
+.sklchart::after{content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent 25%,rgba(255,255,255,.55) 50%,transparent 75%);
+  background-size:200% 100%;animation:shim 1.4s linear infinite}
+.sklchart i{position:absolute;bottom:26px;left:56px;right:12px;height:1px;
+  background:var(--line)}
+/* A count that is still counting: a pill the width of a number, not the word for one. */
+.cnting{display:inline-block;width:66px;height:9px;border-radius:5px;vertical-align:0;
+  background:linear-gradient(90deg,var(--line2) 25%,var(--panel2) 50%,var(--line2) 75%);
+  background-size:200% 100%;animation:shim 1.4s linear infinite}
+@media(prefers-reduced-motion:reduce){
+  .skl,.sklchart::after,.cnting{animation:none}}
+
 .spin{display:inline-block;width:9px;height:9px;margin-right:5px;vertical-align:-1px;
   border:1.5px solid var(--accent);border-right-color:transparent;border-radius:50%;
   animation:spin .7s linear infinite}
@@ -1196,7 +1214,7 @@ function kpis(){
     document.getElementById('kpis').innerHTML = `
      <div class="kpi hero"><div class="k">Current CPT · ${segLbl}</div>
        <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
-       <div class="s">${waiting ? 'loading Google…'
+       <div class="s">${waiting ? '<span class="spin"></span>loading Google'
          : T===null ? `no target set · ${num(tr)} trials`
          : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`}</div></div>
      <div class="kpi"><div class="k">Spend</div>
@@ -1204,7 +1222,7 @@ function kpis(){
        <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
      <div class="kpi"><div class="k">Trials</div>
        <div class="v">${(waiting || tr === null) ? dash : num(tr)}</div>
-       <div class="s">${waiting ? 'loading…'
+       <div class="s">${waiting ? '<span class="spin"></span>loading Google'
          : tr === null ? `unavailable — ${(gt && gt.why) || 'Branch did not answer'}`
          : CHAN === 'blended'
            ? `Meta ${mTr === null ? '—' : num(mTr)} · Google ${num(gt.trials)}`
@@ -1252,7 +1270,7 @@ function kpis(){
    (trials ? `
    <div class="kpi hero"><div class="k">Current CPT · ${segLbl}${chanIsMeta()?modLbl:''}</div>
      <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
-     <div class="s">${waiting ? 'loading Google…' : heroSub}</div></div>` : '') + `
+     <div class="s">${waiting ? '<span class="spin"></span>loading Google' : heroSub}</div></div>` : '') + `
    <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend</div><div class="v">${rs(sp)}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
@@ -1605,7 +1623,7 @@ async function loadGoogle(force){
     return loadGoogle(true);
   }
   GOOG = null; GOOGKEY = null; GOOGBUSY = true;
-  document.getElementById('gcount').textContent = 'loading…';
+  document.getElementById('gcount').innerHTML = CNT;
   try{
     const r = await fetch(`/api/google?${apiQuery()}${force?'&force=1':''}${K}`);
     const j = await r.json();
@@ -1881,7 +1899,8 @@ async function loadSeries(force, quiet){
      replace real rows with "Loading…" -- that is the flicker this whole layer removes. */
   if(!quiet){ SERIES = null; SERIESKEY = null; }
   SERIESBUSY = !quiet;
-  document.getElementById('scount').textContent = quiet ? 'updating…' : 'loading…';
+  document.getElementById('scount').innerHTML = quiet
+    ? '<span class="spin"></span>updating' : CNT;
   try{
     /* Google's series is a different endpoint returning the SAME shape, so everything
        below this line -- the chart, the grid, paging, sorting, the hover read-out, the
@@ -1907,8 +1926,15 @@ async function loadSeries(force, quiet){
 
 function renderTrends(){
   const box = document.getElementById('trendsWrap');
-  if(!SERIES){ box.innerHTML = `<div class="panel"><p class="sub">${
-    SERIESBUSY ? 'Loading…' : 'No data for this window.'}</p></div>`; return; }
+  if(!SERIES){
+    box.innerHTML = SERIESBUSY
+      ? `<div class="panel"><h3><span class="skl" style="width:190px;display:inline-block"></span></h3>
+         <p class="sub"><span class="skl" style="width:60%;display:inline-block"></span></p>
+         <div class="sklchart"><i></i></div>
+         <div class="legend">${Array.from({length: 4}, () =>
+           `<span class="it"><span class="skl" style="width:120px"></span></span>`).join('')}</div></div>`
+      : `<div class="panel"><p class="sub">No data for this window.</p></div>`;
+    return; }
   const m = metricOf(), dates = SERIES.dates;
   /* Ranked by SPEND regardless of the metric on screen, so switching metric keeps the
      same cast and the comparison stays honest. Ranking by the metric itself would swap
@@ -2070,8 +2096,17 @@ function bindTrendHover(){
 
 function renderMatrix(){
   const box = document.getElementById('matrixWrap');
-  if(!SERIES){ box.innerHTML = `<div class="panel"><p class="sub">${
-    SERIESBUSY ? 'Loading…' : 'No data for this window.'}</p></div>`; return; }
+  if(!SERIES){
+    box.innerHTML = SERIESBUSY
+      ? `<div class="panel" style="padding-bottom:10px">
+           <h3><span class="skl" style="width:230px;display:inline-block"></span></h3>
+           <p class="sub"><span class="skl" style="width:55%;display:inline-block"></span></p>
+         </div>
+         <div class="mwrap"><table class="mx"><tbody>${
+           sklRows(['240px','58px','54px','76px','62px','62px','62px','62px','62px','62px'], 9)
+         }</tbody></table></div>`
+      : `<div class="panel"><p class="sub">No data for this window.</p></div>`;
+    return; }
   const m = metricOf(), dates = SERIES.dates;
   const all = matrixRows(), pages = mPages(all.length);
   if(MPAGE >= pages) MPAGE = pages - 1;
@@ -2228,7 +2263,8 @@ async function loadLongevity(force, quiet){
   // rows on screen while it runs. A quiet refresh keeps them: it is the same question.
   if(!quiet){ LONG = null; LONGKEY = null; }
   LONGBUSY = !quiet;
-  document.getElementById('lcount').textContent = quiet ? 'updating…' : 'loading…';
+  document.getElementById('lcount').innerHTML = quiet
+    ? '<span class="spin"></span>updating' : CNT;
   const lb = document.getElementById('lGo');
   if(lb && !quiet) lb.disabled = true;
   try{
@@ -2344,11 +2380,11 @@ function renderLongevity(){
                            : LONG_COLS.filter(c => c.k!=='trials' && c.k!=='cpt');
   if(!longFresh()){
     tbl.querySelector('thead').innerHTML = '';
-    tbl.querySelector('tbody').innerHTML =
-      `<tr><td class="name">${LONGBUSY ? 'Loading…'
-        : 'Choose a window and press Load.'}</td></tr>`;
+    tbl.querySelector('tbody').innerHTML = LONGBUSY
+      ? sklRows(['300px','76px','76px','44px','44px','120px','82px','66px','58px','58px','62px','170px'], 9)
+      : `<tr><td class="name">Choose a window and press Load.</td></tr>`;
     tbl.querySelector('tfoot').innerHTML = '';
-    document.getElementById('lcount').textContent = LONGBUSY ? 'loading…' : '';
+    document.getElementById('lcount').innerHTML = LONGBUSY ? CNT : '';
     return;
   }
   const r = longRows();
@@ -2587,7 +2623,7 @@ function renderBlended(){
      <th>Installs</th><th>CPI</th><th>Share of spend</th><th>Share of trials</th></tr>`;
   tbl.querySelector('tbody').innerHTML = rows.map(r => `<tr>
       <td class="name">${r.n}${r.note ? `<span class="pill">${r.note}</span>` : ''}${
-        r.sure ? '' : '<span class="pill">loading…</span>'}</td>
+        r.sure ? '' : '<span class="pill"><span class="spin"></span>loading</span>'}</td>
       <td>${r.sp ? rs(r.sp) : '<span class="dimtxt">—</span>'}</td>
       <td>${r.tr === null ? '<span class="dimtxt">—</span>' : num(r.tr)}</td>
       <td class="${r.tr ? cls(cpt(r.sp,r.tr)) : ''}">${r.sp && r.tr ? rs(r.sp/r.tr) : '<span class="dimtxt">—</span>'}</td>
@@ -2861,6 +2897,14 @@ function render(){
    becomes the heading — but the heading is the one passed in, never the one derived.
    Deriving it produced headings like "Ends 2026-08-25, not 2026-08-26" and "58 ad set(s)
    show ≤ a date": true sentences, useless as a section name. */
+/* Skeleton rows shaped like the table that is coming: same column count, widths that
+   vary the way real names and numbers do, so the page does not jump when they land. */
+function sklRows(widths, n){
+  return Array.from({length: n}, () => `<tr class="sklrow">${
+    widths.map(w => `<td><div class="skl" style="width:${w}"></div></td>`).join('')}</tr>`).join('');
+}
+const CNT = '<span class="cnting"></span>';
+
 function nsec(title, html, strip){
   if(!html || !String(html).trim()) return '';
   let t = title, body = String(html);
@@ -3740,16 +3784,29 @@ document.getElementById('cpCols').onchange = render;   // also swaps the KPI row
    30-minute refresh would always be paying a cold wake. While a tab is open we ping the
    cheap /healthz every 10 min to keep it warm — that costs nothing when nobody is
    looking, because the pings stop with the tab. */
-const REFRESH_MS = 30*60*1000, KEEPALIVE_MS = 10*60*1000;
+/* Everything refreshes on a 15-minute cycle. The instance is kept awake separately and
+   for free: /healthz touches no upstream API, so the ping can be frequent while the data
+   pull stays rare. */
+const REFRESH_MS = 15*60*1000, KEEPALIVE_MS = 10*60*1000;
 let keepalive = null;
 function setAuto(on){
   clearInterval(timer); clearInterval(keepalive); timer = keepalive = null;
   if(!on) return;
-  /* force, not hard: this tick bypasses the 90s payload cache and lets each roster
-     listing expire on its own TTL, which is set below this interval so it always has.
-     Forcing the roster here instead would multiply Meta listing calls by the number of
-     open tabs — the one cost the roster cache exists to prevent. */
-  timer = setInterval(()=>load(true, true), REFRESH_MS);
+  /* NOT forced, and only while someone is looking.
+     `force` bypassed the server's payload cache, so every open tab paid for its own
+     rebuild — Meta insights and a Branch pull each — and Branch is the source that
+     throttles. Unforced, the first tab past the server TTL triggers one rebuild and
+     every other tab in that window is served from it for nothing. The numbers are the
+     same; the difference is how many times they are fetched.
+     Hidden tabs skip the pull entirely. A page nobody is looking at should not spend
+     rate-limited quota to stay current, and the focus handler already re-pulls anything
+     older than two minutes the moment it is looked at again. */
+  timer = setInterval(() => {
+    if(document.visibilityState === 'hidden') return;
+    load(false, true, false, true);
+  }, REFRESH_MS);
+  /* The keepalive does NOT skip hidden tabs: keeping the instance out of a cold start is
+     the one thing worth doing while nobody is watching, and it costs no upstream call. */
   keepalive = setInterval(()=>fetch('/healthz').catch(()=>{}), KEEPALIVE_MS);
 }
 /* Always on, with no way to switch it off: the whole value of this page is that the CPT
