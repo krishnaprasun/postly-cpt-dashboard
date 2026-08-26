@@ -911,7 +911,9 @@ function kpis(){
    <div class="kpi"><div class="k">Meta share · modelled</div>
      <div class="v">${DATA.branch_totals[EV] ? (100*pr.meta/DATA.branch_totals[EV]).toFixed(1) : '—'}%</div>
      <div class="s">${num(pr.meta)} Meta · ${num(pr.google)} Google, of
-       ${num(DATA.branch_totals[EV])} · ${pr.days_covered}/${pr.days_total} days</div></div>`
+       ${num(DATA.branch_totals[EV])}${pr.unallocated > 0
+         ? ` · ${num(pr.unallocated)} unclaimed` : ''} ·
+       ${pr.days_covered}/${pr.days_total} days</div></div>`
    : `
    <div class="kpi"><div class="k">Attribution</div><div class="v">${cov.toFixed(1)}%</div>
      <div class="s">${chanBits().length ? chanBits().join(' · ')

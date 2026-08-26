@@ -996,11 +996,13 @@ def chan_of_day(by_name):
 
 
 def prorata_day(ch):
-    """(meta_allocation, pool) for one day under the pro-rata model.
+    """(meta_allocation, google_allocation, pool) for one day under the pro-rata model.
 
-    The pool is the trials Branch could attribute to NO channel: organic/direct, other
-    partners, and anything stored before partners were recorded. It is shared between
-    Meta and Google in proportion to each one's share of the ATTRIBUTED volume that day.
+        pool         = organic + other + unrecorded      (nobody claims these)
+        share_meta   = meta   / (meta + google)          (of the ATTRIBUTED volume)
+        share_google = google / (meta + google)
+        meta   += pool * share_meta
+        google += pool * share_google
 
     Google's own trials are NOT in the pool. Branch names Google as the partner on them,
     so they are attributed, not unattributed -- and putting them in the pool made the
@@ -1009,15 +1011,17 @@ def prorata_day(ch):
     said Google earned, on one day. The pool is what nobody can claim; the ratio is what
     the two claimants measurably earned.
 
-    Returns (0, 0) on a day with no measured paid trials at all, rather than inventing a
-    50/50 split out of nothing.
+    On a day with no attributed volume at all there is no ratio to apply, so BOTH
+    allocations are zero and the pool stays unclaimed. Returning it to either side would
+    be asserting that a channel earned trials on a day it measurably earned none, which
+    is the same mistake as the circular split, just quieter.
     """
     meta, google = ch.get("meta", 0), ch.get("google", 0)
     pool = ch.get("organic", 0) + ch.get("other", 0) + ch.get("unknown", 0)
     denom = meta + google
     if not pool or not denom:
-        return 0.0, pool
-    return pool * (meta / denom), pool
+        return 0.0, 0.0, pool
+    return pool * (meta / denom), pool * (google / denom), pool
 
 
 def chan_index_read(brand):
@@ -2338,13 +2342,15 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     ndays = len(date_range(since, until))
     prorata = {}
     for k in EVENTS:
-        alloc, covered = 0.0, 0
+        alloc, g_alloc, pool_tot, covered = 0.0, 0.0, 0.0, 0
         for d, per_ev in chan_days.items():
             ch = (per_ev or {}).get(k)
             if not ch:
                 continue
-            a, _pool = prorata_day(ch)
+            a, g, pl = prorata_day(ch)
             alloc += a
+            g_alloc += g
+            pool_tot += pl
             covered += 1
         # Meta's allocation is earned by Meta's WHOLE measured bucket, but only the
         # `matched` part of it has ad rows to carry it -- the orphans (named ads no
@@ -2364,9 +2370,13 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
             "matched": round(m, 1),
             "trials": round(m + row_alloc, 1),
             "meta": round(meta_pro, 1),
-            # branch_total - meta_pro == google + google's share of the pool, exactly,
-            # because the pool no longer contains google.
-            "google": round(branch_totals[k] - meta_pro, 1),
+            # Google's own count plus Google's SHARE of the pool -- computed, not taken as
+            # the remainder of branch_total. The two agree on every real day, but on a day
+            # with no attributed volume the remainder would silently hand Google the whole
+            # unclaimed pool, which is a claim the data does not support.
+            "google": round(chan[k]["google"] + g_alloc, 1),
+            "google_allocated": round(g_alloc, 1),
+            "unallocated": round(pool_tot - alloc - g_alloc, 1),
             "days_covered": covered,
             "days_total": ndays,
         }

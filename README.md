@@ -527,9 +527,19 @@ It is computed **per day and then summed**, not once over the window aggregate, 
 the Meta/Google mix moves. Over Funda's 27 Jul – 25 Aug window the two give ₹136.80 and
 ₹135.26 — 1.1% apart, which is small but is not nothing and is free to get right.
 
-    per day:  pool(D)  = organic(D) + other(D) + unrecorded(D)
-              alloc(D) = pool(D) x meta(D) / (meta(D) + google(D))
-    window:   uplift   = 1 + Σ alloc / Σ meta
+    per day:  pool(D)      = organic(D) + other(D) + unrecorded(D)
+              share_meta   = meta(D)   / (meta(D) + google(D))
+              share_google = google(D) / (meta(D) + google(D))
+              meta(D)     += pool(D) x share_meta
+              google(D)   += pool(D) x share_google
+    window:   uplift       = 1 + Σ alloc / Σ meta
+
+Both allocations are computed, not one taken as the remainder of the Branch total. They
+agree on every real day, but on a day with **no attributed volume at all** there is no
+ratio to apply: both allocations are zero and the pool stays unclaimed, reported as
+`unclaimed` on the Attribution tile. Handing it to whichever side the remainder favoured
+would assert that a channel earned trials on a day it measurably earned none — the same
+mistake as the circular split, just quieter.
 
 The uplift divides by Σ **meta**, not Σ **matched**. Meta's allocation is earned by
 Meta's whole measured bucket, but only the matched part of it has ad rows to carry it —
