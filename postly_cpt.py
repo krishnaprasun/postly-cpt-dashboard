@@ -1485,6 +1485,68 @@ def _dim_day(meta_rows, branch_day, keys, dim, testing_re, acct_names):
     return rows
 
 
+# Which dimensions are a thing that can BE paused. A stage or a platform is a bucket, and
+# an ad account does not get switched off the way an ad set does.
+ACTIVE_DIMS = ("adset", "campaign", "script")
+
+
+def _series_active(B, dim):
+    """(set of keys still running, ok) for one dimension.
+
+    `ok` False means the roster could not be read for at least one account. The caller
+    must then treat active as UNKNOWN and refuse to filter -- an empty set would read as
+    "nothing is running", which on a page listing what is running is the worst possible
+    way to be wrong.
+    """
+    if dim not in ACTIVE_DIMS:
+        return None, True
+    keys, ok_all = set(), True
+    for a in B["accounts"]:
+        camps, live_sets, live_ads, ok = meta_roster(a["id"], False)
+        if dim == "adset":
+            # The adsets listing is already filtered to ACTIVE by the request itself.
+            if not ok["adsets"]:
+                ok_all = False
+                continue
+            keys |= {x["id"] for x in live_sets}
+        elif dim == "campaign":
+            if not ok["campaigns"]:
+                ok_all = False
+                continue
+            keys |= {c["id"] for c in camps
+                     if (c.get("effective_status") or "") == "ACTIVE"}
+        else:
+            # A script is an ad NAME, so it is still running if any live ad carries it.
+            if not ok["ads"]:
+                ok_all = False
+                continue
+            keys |= {x.get("name") or "" for x in live_ads if x.get("name")}
+    return keys, ok_all
+
+
+def _with_active(data, brand):
+    """Stamp `active` on every row at SERVE time, never into the artifact.
+
+    Whether an ad set is running is a property of now; the fold is cached for fifteen
+    minutes and persisted to the store for far longer. Baking it in is the same mistake
+    the Longevity tab made with its last-spend date -- see _overlay_today.
+    """
+    dim = data.get("dim")
+    if dim not in ACTIVE_DIMS:
+        return dict(data, active_known=False, active_dim=False)
+    try:
+        keys, ok = _series_active(C.brand(brand), dim)
+    except Exception:
+        keys, ok = None, False
+    if not ok or keys is None:
+        return dict(data, active_known=False, active_dim=True)
+    return dict(data, active_known=True, active_dim=True,
+                active_rows=sum(1 for r in data.get("rows") or []
+                                if r.get("key") in keys),
+                rows=[dict(r, active=(r.get("key") in keys))
+                      for r in (data.get("rows") or [])])
+
+
 def series(brand, since, until, dim="script", force=False):
     """Per-day spend, trials and installs for every row of one dimension.
 
@@ -1497,8 +1559,8 @@ def series(brand, since, until, dim="script", force=False):
     with _series_lock:
         hit = _series_cache.get(key)
         if hit and not force and time.time() - hit["at"] < SERIES_TTL:
-            return dict(hit["data"], cached=True,
-                        age_min=int((time.time() - hit["at"]) // 60))
+            return _with_active(dict(hit["data"], cached=True,
+                                     age_min=int((time.time() - hit["at"]) // 60)), brand)
 
     want, _partial = _series_dates(since, until)
     if not force and want:
@@ -1514,7 +1576,7 @@ def series(brand, since, until, dim="script", force=False):
                 and art.get("row_cap") == (SERIES_TOP if SERIES_TOP > 0 else SERIES_MAX_ROWS) \
                 and art.get("shape") == SERIES_SHAPE:
             _series_cache_put(key, art)
-            return dict(art, cached=True, restored=True, age_min=0)
+            return _with_active(dict(art, cached=True, restored=True, age_min=0), brand)
 
     B = C.brand(brand)
     events = B["events"]
@@ -1598,7 +1660,7 @@ def series(brand, since, until, dim="script", force=False):
     # cache dies with the process, which on the free plan is every fifteen idle minutes --
     # exactly the gap the nightly warm was supposed to close.
     H.put_agg(_series_ns(brand, dim), today, data)
-    return dict(data, cached=False, age_min=0)
+    return _with_active(dict(data, cached=False, age_min=0), brand)
 
 
 def longevity(brand, since, until, force=False):

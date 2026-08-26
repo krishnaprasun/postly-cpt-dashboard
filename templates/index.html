@@ -487,6 +487,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       </select></label>
     <input type="search" id="sq" placeholder="Filter by name…">
     <label class="chk"><input type="checkbox" id="sTesting"> include testing</label>
+    <label class="chk" id="sActiveWrap"><input type="checkbox" id="sActive"> active only</label>
     <label class="chk" id="sPerWrap">Rows
       <select class="sel" id="sPer" style="margin-left:6px">
         <option value="50">50</option>
@@ -1018,9 +1019,33 @@ function seriesRows(){
   if(!SERIES) return [];
   const q = (document.getElementById('sq').value || '').trim().toLowerCase();
   const testing = document.getElementById('sTesting').checked;
+  /* Only when the server could actually read the roster. `active` missing means UNKNOWN,
+     and filtering an unknown out would empty the grid and call it "nothing is running" —
+     which is the one answer this filter must never invent. */
+  const act = document.getElementById('sActive').checked
+              && SERIES.active_dim && SERIES.active_known;
   return SERIES.rows.filter(r =>
     (testing || r.stage !== 'testing') &&
+    (!act || r.active) &&
     (!q || (r.label || '').toLowerCase().includes(q)));
+}
+
+/* Off and disabled where there is nothing to filter: stage and platform are buckets, an
+   ad account is not switched off the way an ad set is, and a roster Meta would not hand
+   over leaves every row's status unknown. Disabled with the reason on it, never silently
+   inert. */
+function sActiveAvail(){
+  const b = document.getElementById('sActive');
+  const ok = !!(SERIES && SERIES.active_dim && SERIES.active_known);
+  b.disabled = !ok;
+  b.parentElement.title = ok ? ''
+    : !SERIES ? 'Load a window first'
+    : !SERIES.active_dim
+      ? `"${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}" rows are not something that
+         can be paused — this filter applies to ad sets, campaigns and scripts.`
+      : 'Meta would not return the roster for at least one account, so no row\'s '
+        + 'live/paused state is known right now.';
+  b.parentElement.style.opacity = ok ? '' : '.45';
 }
 
 /* Filtered, then sorted by whichever column the header click chose. Sorts a COPY:
@@ -1604,6 +1629,7 @@ function renderTable(){
     if(!seriesFresh() && !SERIESBUSY){ loadSeries(false); }
     document.getElementById('sPerWrap').style.display =
       TAB === 'matrix' ? 'inline-flex' : 'none';
+    sActiveAvail();
     if(TAB==='trends') renderTrends(); else renderMatrix();
     return;
   }
@@ -1755,6 +1781,18 @@ function seriesNote(){
        lifted by the same factor as the rest of the page. Installs are <i>not</i> modelled
        — the pro-rata split is about trial attribution.<br><br>`
     : '';
+  const act = SERIES.active_dim
+    ? (SERIES.active_known
+        ? `<b>${num(SERIES.active_rows)}</b> of ${num(SERIES.rows.length)} row(s) are
+           still running; <i>active only</i> in the control bar hides the rest. Live/paused
+           is read fresh on every load, never taken from the fold — a fold is up to
+           fifteen minutes old and an ad set can be paused in between.${
+           SERIES.dim === 'script' ? ` A script counts as running while <i>any</i> live ad
+           still carries that name.` : ''} `
+        : `<b>Live/paused is unknown right now</b> — Meta would not return the roster for
+           at least one account — so the <i>active only</i> filter is switched off rather
+           than shown emptying the grid. `)
+    : '';
   const trunc = SERIES.truncated
     ? `<b>Folded ${num(SERIES.total_rows)} rows and kept the ${num(SERIES.rows.length)}
        biggest by spend</b> — the fold's safety ceiling, not a view limit; the rest are
@@ -1774,7 +1812,7 @@ function seriesNote(){
   return scope + ends + derived + pro + `${dimNote}<br><br>${trunc}${src}
     Trials and installs are split across rows that share an ad name by that
     <i>day's</i> spend share, so nothing lands on a day a row did not spend.
-    ${SERIES.cached ? `Folded ${SERIES.age_min || 0} min ago.` : ''}`;
+    ${act}${SERIES.cached ? `Folded ${SERIES.age_min || 0} min ago.` : ''}`;
 }
 
 function longNote(){
@@ -2189,6 +2227,7 @@ document.getElementById('sDim').onchange = () => {
 document.getElementById('sMetric').onchange = () => { MPAGE = 0; renderTable(); noteFor(); };
 document.getElementById('sq').oninput = () => { MPAGE = 0; renderTable(); };
 document.getElementById('sTesting').onchange = () => { MPAGE = 0; renderTable(); };
+document.getElementById('sActive').onchange = () => { MPAGE = 0; renderTable(); };
 document.getElementById('sPer').onchange = e => {
   MPER = parseInt(e.target.value, 10) || 0; MPAGE = 0; renderTable();
 };
@@ -2323,6 +2362,8 @@ try{
      reason to send someone a matrix link. Validated against the columns that exist, so a
      stale date in an old bookmark falls back to the period total rather than sorting by
      nothing. */
+  if(q.get('active') === '1') document.getElementById('sActive').checked = true;
+  if(q.get('testing') === '1') document.getElementById('sTesting').checked = true;
   const sk = q.get('sort');
   if(sk && (['name','platform','stage','total'].includes(sk) || /^\d{4}-\d\d-\d\d$/.test(sk)))
     MSORT = {key: sk, dir: q.get('dir') === 'asc' ? 1 : -1};

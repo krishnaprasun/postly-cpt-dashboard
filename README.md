@@ -764,6 +764,23 @@ The footer carries two totals, because with paging one number cannot mean both t
 Export CSV writes every row matching the filter in the order on screen — not just the
 page, which would be a screenshot rather than an export.
 
+**Active only.** A checkbox in the control bar keeps just the rows still running. It
+applies to the dimensions that are a thing which can be paused — **Ad set**, **Campaign**
+and **Script** — and is disabled, with the reason on it, for Stage, Platform and Ad
+account, which are buckets rather than objects. A *script* counts as running while **any**
+live ad still carries that name.
+
+Live/paused is stamped on the rows at **serve** time, never folded into the artifact. A
+fold is cached fifteen minutes and persisted to the store for far longer; an ad set paused
+in between would keep reading active — the identical mistake the Longevity tab made with
+its last-spend date. And a roster Meta will not return leaves status **unknown**, which
+disables the filter rather than emptying the grid: an empty set rendered as "nothing is
+running" is the worst possible way for this particular control to be wrong.
+
+Verified against `/api/data` in both directions: of 1,437 Postly ad-set rows in a 14-day
+window, 110 are running, with zero rows flagged active that the payload calls paused and
+zero the other way. The stored artifact carries no `active` field at all.
+
 **Derived metrics come from the sums.** CPT for a period is total spend over total
 trials, never the mean of the daily CPTs — on a row that ran on three days out of
 fourteen those are far apart and only the first is the real cost. A day with no trials
@@ -794,7 +811,7 @@ SpeakEasy restored a 60-row artifact the previous code had written (right dates,
 rows) and silently put the truncation back.
 
 Both tabs are deep-linkable, sort and page size included:
-`?tab=matrix&win=30&dim=adset&metric=cpi&per=250&sort=2026-08-21&dir=asc`. A `sort` that
+`?tab=matrix&win=30&dim=adset&metric=cpi&per=250&sort=2026-08-21&dir=asc&active=1&testing=1`. A `sort` that
 names no column the current grid has falls back to the period total rather than sorting
 by nothing, so a stale bookmark degrades instead of breaking.
 
