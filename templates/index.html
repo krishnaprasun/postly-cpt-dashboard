@@ -236,10 +236,15 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
 .segsw button:hover:not(.on){color:var(--ink)}
 .segsw button.on{background:var(--accent);color:#fff}
 .segsw button[disabled]{opacity:.4;cursor:default}
-/* Gold ONLY on the modelled side. Measured is the ordinary state and keeps the ordinary
-   accent; pro rata changes what every number on the page means, so the control that turns
-   it on should not look like just another view filter. */
-.attrsw button[data-a="prorata"].on{background:var(--gold-dk);color:#fff}
+/* There is no measured/modelled switch any more -- pro rata is the only reading. What
+   survives is the gold, which has one job: nothing on this page is a raw measurement, and
+   a screenshot of it has to carry that on its face. The badge is deliberately not a
+   button; there is nothing to click. */
+.probadge.off{background:transparent;color:var(--muted);
+  border:1px solid var(--line);font-weight:600}
+.probadge{display:inline-flex;align-items:center;gap:6px;background:var(--gold-dk);
+  color:#fff;font-size:12px;font-weight:700;padding:6px 11px;border-radius:8px;
+  letter-spacing:.2px;cursor:help}
 .modelled{color:var(--gold-dk);font-weight:650}
 
 /* ---- Trends + Matrix ---- */
@@ -376,11 +381,8 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <button data-s="testing">Testing</button>
       <button data-s="blended">Blended</button>
     </div>
-    <div class="segsw attrsw" id="attrsw"
-         title="How Branch trials that no channel claims are counted. Measured: they stay in organic/other. Pro rata: they are shared between Meta and Google by each one's share of that day's attributed trials. Google's own trials stay Google's either way.">
-      <button data-a="measured" class="on">Measured</button>
-      <button data-a="prorata">Pro rata</button>
-    </div>
+    <span class="probadge" id="probadge"
+          title="Every trial and cost-per figure on this page is MODELLED. The trials Branch attributes to no channel are shared between Meta and Google by each one's share of that day's attributed trials, day by day. Google's own trials are not touched.">Pro rata</span>
     <select class="sel" id="range">
       <option value="today" selected>Today</option>
       <option value="yesterday">Yesterday</option>
@@ -510,13 +512,14 @@ const BRANDS = {{ brand_meta | tojson }};
    CPT target is set against — a testing ad set judged against Rs150 would be killed for
    doing its job. */
 let SEG = 'trial';
-/* 'measured' = trials as Branch attributes them. 'prorata' = the modelled view: the
-   trials Branch could attribute to NO channel shared between Meta and Google in
-   proportion to each one's share of that day's attributed volume, day by day and then
-   summed. Google's measured trials are not in that pool -- they are attributed.
-   The server does the per-day arithmetic and hands back one multiplier per event, so
-   turning this on is a re-render and never a fetch. */
-let ATTR = 'measured';
+/* Pro rata is the only reading this page shows. The trials Branch could attribute to NO
+   channel are shared between Meta and Google in proportion to each one's share of that
+   day's attributed volume, day by day and then summed; Google's own trials are not in
+   that pool, because they are attributed. The server does the per-day arithmetic and
+   hands back one multiplier per event.
+
+   RAW keeps the payload exactly as served -- the measured numbers are still needed, to
+   state what the model moved and to leave the Longevity tab measured. */
 let RAW = null;                      // the payload as served, never scaled
 let DATA=null, RANGE='today', TAB='combined',
     /* The headline slot. Each brand maps it to its own Branch event in config.py —
@@ -788,12 +791,16 @@ const segHas = sg => !!(DATA && DATA.segments && DATA.segments[sg]
    lifts by the window's factor. That limitation is stated in the note, not hidden. */
 function upliftOf(ev){
   const p = RAW && RAW.prorata && RAW.prorata[ev];
-  return (ATTR === 'prorata' && p && p.uplift) ? p.uplift : 1;
+  return (p && p.uplift) ? p.uplift : 1;
 }
-function proOn(){ return ATTR === 'prorata' && !!(RAW && RAW.prorata); }
+/* False only when the payload cannot carry the model -- a brand with no Branch app, a
+   window whose Branch pull failed, or a payload restored from before this shipped. The
+   page then shows measured numbers and says so, rather than silently passing them off
+   as modelled. */
+function proOn(){ return !!(RAW && RAW.prorata && hasTrials()); }
 
 function applyAttr(src){
-  if(!src || !src.prorata || ATTR !== 'prorata') return src;
+  if(!src || !src.prorata) return src;
   const evs = src.events || [], U = {};
   let any = false;
   evs.forEach(ev => { const u = upliftOf(ev); U[ev] = u; if(u !== 1) any = true; });
@@ -810,19 +817,23 @@ function applyAttr(src){
   return d;
 }
 
-/* Disabled rather than hidden when the payload cannot support it — a brand with no
-   Branch app, or a payload restored from before this shipped. */
+/* The badge is hidden, not greyed, when the model could not be applied: a gold "Pro rata"
+   chip over measured numbers would be a straight lie about what is on screen. It is also
+   dimmed on Longevity, which is deliberately measured -- a gold chip above a measured
+   table is the same lie in a smaller font. */
 function attrAvail(){
-  const sw = document.getElementById('attrsw');
-  if(!sw) return;
-  const ok = !!(RAW && RAW.prorata && hasTrials());
-  sw.children[1].disabled = !ok;
-  sw.children[1].title = ok ? '' : 'No trial attribution data in this window';
-  if(!ok && ATTR === 'prorata'){
-    ATTR = 'measured';
-    [...sw.children].forEach(x => x.classList.toggle('on', x.dataset.a === ATTR));
-    DATA = RAW;
-  }
+  const b = document.getElementById('probadge');
+  if(!b) return;
+  b.style.display = proOn() ? 'inline-flex' : 'none';
+  const off = TAB === 'longevity';
+  b.classList.toggle('off', off);
+  b.textContent = off ? 'Measured' : 'Pro rata';
+  b.title = off
+    ? 'The Longevity tab is measured: spend divided by the trials Branch actually '
+      + 'matched. Every other tab on this page is modelled (pro rata).'
+    : "Every trial and cost-per figure on this page is MODELLED. The trials Branch "
+      + "attributes to no channel are shared between Meta and Google by each one's share "
+      + "of that day's attributed trials, day by day. Google's own trials are not touched.";
 }
 
 /* ---------- trials by channel ---------- */
@@ -1599,9 +1610,9 @@ function seriesNote(){
        than being drawn as zero.<br><br>`
     : '';
   const pro = proOn()
-    ? `<b class="modelled">Pro rata is on</b>, so trials and any cost-per figure here are
-       modelled, lifted by the same factor as the rest of the page. Installs are
-       <i>not</i> modelled — the pro-rata split is about trial attribution.<br><br>`
+    ? `<b class="modelled">Trials and any cost-per figure here are modelled</b> (pro rata),
+       lifted by the same factor as the rest of the page. Installs are <i>not</i> modelled
+       — the pro-rata split is about trial attribution.<br><br>`
     : '';
   const trunc = SERIES.truncated
     ? `Folded ${num(SERIES.total_rows)} rows and kept the ${SERIES.rows.length} biggest by
@@ -1626,11 +1637,12 @@ function longNote(){
   if(!longFresh()) return '';
   const scope = `<b>Meta ads only</b> — ad sets in ${DATA ? DATA.brand_label : 'this brand'}'s
      Meta ad accounts. Creatives run on other channels do not appear here at all.<br>
-     ${proOn() ? `<b class="modelled">Pro rata does not apply on this tab</b> — every CPT
-       below is measured, over windows this tab defines for itself rather than the one in
-       the header. It costs nothing here: the model lifts every row by the same factor, so
-       it never changes which creative beats which, and comparing creatives is what this
-       tab is for.<br>` : ''}<br>`;
+     <b class="modelled">This is the one measured tab</b> — every CPT below is
+       spend ÷ the trials Branch actually matched, over windows this tab defines for
+       itself rather than the one in the header. The pro-rata model that lifts the rest of
+       the page is left off here on purpose: it lifts every row by the same factor, so it
+       never changes which creative beats which, and comparing creatives is what this tab
+       is for. Expect these CPTs to read higher than the ones elsewhere.<br><br>`;
   const cens = LONG.adsets.filter(a => a.censored).length;
   const unk = (LONG.status_unknown || []);
   const t = LONG.today_known === false
@@ -1687,10 +1699,10 @@ function chanNote(){
   let counter = '';
   if(p && p.matched && sp && p.uplift !== 1){
     counter = proOn()
-      /* On: the reader is looking at modelled numbers and is owed the size of the model
-         and the measured figure it replaced, in the same breath. */
-      ? `<br><b class="modelled">Pro rata is on, so the figures above this paragraph are
-          modelled, not measured.</b> Of the ${num(p.pool)} trials no channel claims,
+      /* The reader is looking at modelled numbers and is owed the size of the model and
+         the measured figure it replaced, in the same breath. */
+      ? `<br><b class="modelled">The figures above this paragraph are modelled, not
+          measured.</b> Of the ${num(p.pool)} trials no channel claims,
           this model hands Meta ${num(p.allocated)} and Google the rest, by their measured
           shares. Google's own trials are untouched. Every trial count on the page is lifted
           <b>×${p.uplift.toFixed(3)}</b> and every CPT divided by it, so brand-wide CPT
@@ -1699,15 +1711,15 @@ function chanNote(){
           on its own and then summed, so a window where Google's share moved is not
           flattened to one ratio. It is applied to every row by the same factor, which
           means it does not move trials BETWEEN ads — each ad keeps its measured share.
-          Judge one creative against another on the measured view.`
-      /* Off: the same arithmetic, as the thing that would happen — the argument for
-         leaving it off, checkable on whatever window is on screen. */
-      : `Sharing the ${num(p.pool)} unclaimed trials between Meta and Google by their
-          measured shares — the <b>Pro rata</b> switch in the header — would credit Meta
-          with ${num(p.allocated)} of them, and print a
-          brand-wide CPT of ${rs(sp/p.trials)} where the measured figure is
-          ${rs(sp/p.matched)}. (Brand-wide: this breakdown covers every campaign, so it
-          does not split by testing and trial the way the tiles above do.)`;
+          Judge one creative against another on the <b>Longevity</b> tab, which stays
+          measured.`
+      /* Not a choice any more: the only way here is a window the model could not be
+         applied to, and saying so beats letting measured numbers pass as modelled. */
+      : `<br><b>The pro-rata model could not be applied to this window</b>, so the figures
+          above are measured. Applied, it would share the ${num(p.pool)} unclaimed trials
+          between Meta and Google by their measured shares, credit Meta with
+          ${num(p.allocated)} of them, and print a brand-wide CPT of ${rs(sp/p.trials)}
+          against the measured ${rs(sp/p.matched)}.`;
   }
   return `<b>Which channel earned these trials.</b> Branch fills in an ad name for Meta ads
      and leaves it empty for Google — so a trial with no ad name is not an untraceable one,
@@ -1737,7 +1749,9 @@ function mainNote(){
      performance of Meta buying, not of the brand.
      ${hasTrials() ? `Branch attributes trials across every channel, which is why
        ${num(DATA.unattributed[EV])} trial(s) here match no Meta ad${chanOf()
-         ? ` — most of them were bought on Google. They are broken out by channel below.`
+         ? ` — ${chanOf().google > DATA.unattributed[EV] / 2 ? 'most of them were bought on Google'
+                 : 'they were bought on Google, arrived organically, or name an ad no longer in the account'}.
+             They are broken out by channel below.`
          : `: some of them were bought somewhere else.`}` : ''}<br><br>`;
   const lag = `Today's numbers are still landing — Meta spend lags a few minutes${
      hasTrials() ? ' and Branch trials keep arriving through the day, so intraday CPT reads high early and settles down' : ''}.`;
@@ -2009,7 +2023,7 @@ document.getElementById('tabs').onclick = e => {
   [...e.currentTarget.children].forEach(b=>b.classList.remove('on'));
   e.target.classList.add('on'); TAB = e.target.dataset.t;
   SORT = {key:'spend', dir:-1};
-  renderTable(); noteFor();
+  renderTable(); noteFor(); attrAvail();
   // Opening the tab is the request. Anything else means looking at an empty table and
   // wondering what to press.
   if(TAB==='longevity' && !longFresh() && !LONGBUSY) loadLongevity(false);
@@ -2128,19 +2142,6 @@ document.getElementById('segsw').onclick = e => {
   [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.s === sg));
   render();
 };
-/* Same idea for attribution: the payload carries the multiplier, so switching between
-   the measured and the modelled reading is a re-render, not a fetch. Remembered per
-   browser, because whoever wants the modelled view wants it every time they open the
-   page — and whoever does not must never be handed it by surprise. */
-document.getElementById('attrsw').onclick = e => {
-  const a = e.target.dataset && e.target.dataset.a;
-  if(!a || a === ATTR || e.target.disabled) return;
-  ATTR = a;
-  try{ localStorage.setItem('cpt_attr', a); }catch(_){}
-  [...e.currentTarget.children].forEach(x => x.classList.toggle('on', x.dataset.a === a));
-  DATA = applyAttr(RAW);
-  render();
-};
 /* `?range=14d` picks the window from the URL, so a link can carry the whole view: which
    brand, which window, which tab, measured or modelled. Ignored unless it names one of
    the options actually in the picker. */
@@ -2175,18 +2176,9 @@ try{
   }
 }catch(_){}
 
-/* `?attr=prorata` wins over the remembered choice, so a link can carry the mode with it.
-   Safe to share: the tiles, the note, the export filename and the CSV itself all say
-   when a figure is modelled, so a link cannot hand someone modelled numbers quietly. */
-try{
-  const want = new URLSearchParams(location.search).get('attr')
-            || localStorage.getItem('cpt_attr');
-  if(want === 'prorata'){
-    ATTR = 'prorata';
-    [...document.getElementById('attrsw').children].forEach(
-      x => x.classList.toggle('on', x.dataset.a === 'prorata'));
-  }
-}catch(_){}
+/* `?attr=` used to carry the mode. There is only one mode now, so it is accepted and
+   ignored rather than 404-ing an old bookmark; localStorage('cpt_attr') is left to rot
+   harmlessly in whichever browsers still hold it. */
 
 /* A segment with no spend and no budget is disabled rather than shown empty: an empty
    table reads as "nothing performed", which is a different claim from "this brand ran

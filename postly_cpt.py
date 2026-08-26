@@ -392,6 +392,13 @@ def _branch_pages(body, cap=40, tries=5):
 # "channel not recorded" rather than guessed at; tools/backfill_channels.py fills them in.
 NONE_PREFIX = "~none~"
 
+# Bumped whenever the pro-rata arithmetic changes. Stamped into every payload, and
+# checked before a saved one is restored: a woken instance must not serve a payload
+# built by the previous model under this model's badge. Model 1 put Google's own trials
+# in the shared pool and printed a Funda uplift of 1.57 where model 2 prints 1.03 --
+# restoring one of those silently would be a 57% error wearing a "Pro rata" chip.
+PRORATA_MODEL = 2
+
 # Installs ride alongside the two trial events as a third pseudo-event so that the store,
 # its aggregator, the channel index and the ad-name join all take them with no format
 # change. It is not a custom event -- Branch keeps installs in their own data source and
@@ -2385,6 +2392,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         # The modelled view. `uplift` is the multiplier the page applies to every trial
         # count when pro-rata mode is on; 1.0 means the model changes nothing.
         "prorata": prorata,
+        "prorata_model": PRORATA_MODEL,
         "duplicate_ad_names": dup_names,
         # per-account list of which roster listings Meta would not return. Spend,
         # trials and CPT stay correct regardless; only statuses and budgets are affected.

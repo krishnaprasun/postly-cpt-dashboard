@@ -506,12 +506,18 @@ spend is shown on its own beside the date instead.
 moves and the artifact's span does not, and `gaps` (span minus days) would go negative and
 render as a stop-and-restart that never happened.
 
-### Pro rata — the modelled second reading
+### Pro rata — the only reading
 
-`Measured | Pro rata` in the header. **Measured** is the default and is what Branch
-says. **Pro rata** shares the trials Branch could attribute to **no** channel — organic
-/ direct, other partners, and any day stored before partners were recorded — between
-Meta and Google in proportion to each one's share of that day's *attributed* volume.
+There is no measured/modelled switch. **Every trial and cost-per figure on this page is
+modelled**, and a gold `Pro rata` badge sits in the header saying so. **Pro rata** shares
+the trials Branch could attribute to **no** channel — organic / direct, other partners,
+and any day stored before partners were recorded — between Meta and Google in proportion
+to each one's share of that day's *attributed* volume.
+
+The one exception is the **Longevity** tab, which stays measured, and says so at the top:
+the model lifts every row by the same factor, so it cannot change which creative beats
+which, and comparing creatives is the whole point of that tab. Expect its CPTs to read
+higher than the ones everywhere else.
 
 Google's own trials are **not** in the pool: Branch names Google as the partner on them,
 so they are attributed, and the ratio is what the two claimants measurably earned. The
@@ -538,13 +544,22 @@ keeps ad → ad set → campaign rollups exact. **What it cannot do is move tria
 ads** — every row is lifted by the same factor, so the split across rows stays the
 measured one. Compare creatives on the measured view.
 
-Where it shows: the CPT and Trials tiles are labelled `pro rata`, the Attribution tile
-becomes `Meta share · modelled`, the note spells out the size of the lift and the
-measured figure it replaced, the export filename gains `prorata`, and the CSV carries a
-trailing NOTE row saying so — a file gets forwarded without the page it came from.
+Where it shows: the gold `Pro rata` badge in the header, `pro rata` on the CPT and Trials
+tiles, `Meta share · modelled` on the Attribution tile, a note spelling out the size of
+the lift and the measured figure underneath it, `prorata` in the export filename, and a
+trailing NOTE row inside the CSV — a file gets forwarded without the page it came from.
 
-Remembered per browser (`localStorage`), and `?attr=prorata` on any URL, including a
-read-only team link, opens straight into it.
+If the model cannot be applied to a window — no Branch app for the brand, a failed Branch
+pull, a payload from before this shipped — the badge is **hidden** rather than greyed and
+the note says the figures are measured. A gold badge over measured numbers would be a
+straight lie about what is on screen.
+
+`?attr=` is accepted and ignored, so old bookmarks still open.
+
+**Payloads are stamped `prorata_model`** and a saved payload whose stamp does not match
+the running code is discarded rather than restored. Model 1 put Google's own trials in
+the pool and printed a Funda uplift of 1.57 where model 2 prints 1.03; restoring one of
+those on a woken instance would have served a 57% error wearing the badge.
 
 Per-day channel totals for stored days live in the `{brand}chan0` store namespace —
 four integers per event per day, none of which depend on the current ad roster, so they

@@ -208,6 +208,12 @@ def get_data(since, until, brand, force=False, hard=False):
     # instance should show real numbers at once, not spend half a minute proving it can.
     if not (force or hard):
         saved = H.get_payload(brand, since, until)
+        # A payload built by an older pro-rata model is not a stale number, it is a
+        # wrong one: the page scales every trial by the multiplier the payload carries.
+        # Drop it and pay for the rebuild rather than restore it.
+        if saved and saved.get("prorata") \
+                and saved.get("prorata_model") != P.PRORATA_MODEL:
+            saved = None
         if saved and saved.get("combined"):
             age = int(max(0, time.time() - (saved.get("_saved_at") or 0)))
             with _lock:
