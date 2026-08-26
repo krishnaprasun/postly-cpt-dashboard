@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Postly Performance</title>
+<title>Postly Ads Performance</title>
 <style>
 /* Postly brand palette — values taken from postly-insta-daily/brandkit.py so the
    dashboard matches the creatives: cream ground, navy ink, green primary, gold
@@ -314,7 +314,11 @@ header{padding-bottom:0}
   color:var(--faint);font-weight:800;padding-left:2px}
 .fgrp .sel{margin:0}
 .hsep{width:1px;height:15px;background:var(--line);display:inline-block;margin:0 2px}
-h1 em{color:var(--accent-dk);font-style:normal}
+/* The brand leads and the tool's name follows it, quieter — you are looking at
+   SpeakEasy, in the Postly Ads Performance dashboard, in that order of importance. */
+h1 em{color:var(--faint);font-style:normal;font-weight:600;font-size:.82em;
+  letter-spacing:.01em}
+h1 em::before{content:"·";margin:0 7px 0 5px;color:var(--line)}
 
 /* The moving pill: the selected state slides rather than blinking between buttons, which
    is what makes a segmented control feel like one control instead of three. */
@@ -498,7 +502,12 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   <div class="hrow">
     <div class="brand">
       <img class="blogo" id="blogo" src="/static/{{ brand_logo }}" alt="">
-      <h1>Postly <em>Ads Performance</em></h1>
+      <!-- Both facts, in the order you need them: WHICH BRAND you are looking at, then
+           what this tool is. The brand was the whole title before and the tool had no
+           name; naming the tool should not have cost the brand its place, because the
+           brand is the one that changes under you. -->
+      <h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span>
+        <em>Postly Ads Performance</em></h1>
       <span class="hsep"></span>
       <span id="win"></span>
     </div>
@@ -3492,15 +3501,18 @@ function applyBrand(b){
   document.body.dataset.brand = b;
   /* The brand lives in the control row now, not in the title. The title says what the
      dashboard IS; the controls say what question you are asking of it. */
+  const bn = document.getElementById('bname');
+  if(bn) bn.textContent = m.label || b;
   const bb = document.getElementById('brandsw');
-  if(bb) [...bb.children].forEach(x => x.classList.toggle('on', x.dataset.b === b));
+  if(bb) [...bb.children].forEach(x =>
+    x.classList && x.classList.toggle('on', x.dataset.b === b));
   if(m.logo){
     const src = '/static/' + m.logo;
     document.getElementById('blogo').src = src;
     document.getElementById('veilLogo').src = src;      // the loading card, too
     document.getElementById('favicon').href = src;
   }
-  document.title = `${m.label || b} Performance`;
+  document.title = `${m.label || b} · Postly Ads Performance`;
 }
 
 /* Switching brand replaces every figure on the page, so it is a foreground load with
