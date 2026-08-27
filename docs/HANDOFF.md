@@ -87,8 +87,19 @@ the trial and CPT columns are simply hidden.
 | Render service | `srv-da3cttibkg8c738a4nvg`, workspace `tea-d9tnoaqjobas73df4bpg` |
 | Region / plan | Singapore, **free** |
 | Runtime | Docker, gunicorn, **1 worker / 8 threads / 180s timeout** |
-| Deploy | `git push origin main` — autoDeploy is on |
+| Deploy | `git push origin main` — **but see the autoDeploy note below** |
 | Health check | `/healthz` (public, cheap, never triggers an upstream pull) |
+
+**AutoDeploy is not currently firing.** Render reports `autoDeploy: yes` and the service
+is not suspended, but three pushes on 2026-08-27 produced no deploy, and the GitHub repo
+carries no webhooks at all. Until the repo is reconnected in Render's dashboard, a push
+must be followed by a manual trigger:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $(cat ~/.anthropic/render_key)" \
+  -H "Content-Type: application/json" -d '{"clearCache":"do_not_clear"}' \
+  https://api.render.com/v1/services/srv-da3cttibkg8c738a4nvg/deploys
+```
 
 `render.yaml` is **documentation only** for this service. It was created through the REST
 API, not the Blueprint flow, so plan, region, health check and env vars live in Render's
@@ -236,6 +247,9 @@ live and is the *slowest* view. 30- and 90-day windows are mostly stored and are
 
 - Google Ads is **fully live** — spend, impressions and clicks per campaign per ad group.
   Last 7 days: Postly ₹1.59 L, SpeakEasy ₹14.2 L, Funda ₹1.99 Cr.
+- The Google channel shows **two CPTs**: Branch's count and Google Ads' own, side by side,
+  never averaged. 7-day gap: Speakeasy +2%, Funda −15%, **Postly −72%** — Branch attributes
+  only 129 of the 464 trials Google claims. See `DECISIONS.md`.
 - Reach backfill (impressions/clicks into stored days): **complete, all three brands.**
 - Google trials backfill: Speakeasy and Funda complete (97 days each); **Postly has 14
   days left**, which its 01–04 IST schedule will finish on its own.
@@ -252,4 +266,5 @@ live and is the *slowest* view. 30- and 90-day windows are mostly stored and are
 | Delete `ads-google-backfill-*` (3 jobs) | after Postly's last 14 days land tonight | tomorrow |
 | Rotate `HISTORY_TOKEN` | it was echoed into a transcript by a gcloud error message; carried by 9+ scheduler jobs, so rotation means updating each | optional |
 | Request Meta Standard Access | raises the rate limits that currently force degraded budget/status reads | optional |
+| **Reconnect the repo in Render** | autoDeploy silently stopped firing; every push now needs a manual API trigger | soon |
 | Set `ROOT_OPEN=0` | closes the bare URL once every team holds its own link | when handover is done |

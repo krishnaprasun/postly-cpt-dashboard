@@ -93,6 +93,26 @@ Same slot, one rung below campaign. Two buttons meaning the same thing on differ
 channels is worse than one that renames itself. Tabs that mean nothing on a channel are
 **hidden**, not greyed — Google buying has campaigns and ad groups and nothing below them.
 
+### Two CPTs on Google, never averaged, never blended
+
+The Google channel divides one spend by two counts of the same event: Branch's, and
+Google Ads' own. They disagree — by 2% on Speakeasy, 15% on Funda, 72% on Postly — because
+each attributes from what it saw, over its own lookback. Averaging them would invent a
+third number that is nobody's measurement.
+
+Only the **Branch** CPT is judged against the target: the target was agreed against
+Branch's definition, and it is what every Meta tab and the Blended view already count.
+Google's number sits beside it to be compared, not mixed in. **Blended deliberately keeps
+Branch on both sides** rather than taking Google's own count for the Google half.
+
+Counted from Google's **Conversions** column, never **All conversions**. The same event
+usually arrives twice — once from Branch, once from Firebase — and only one feed is marked
+primary. `all_conversions` counts both and reports a CPT well below the truth. The match
+from Branch event to Google conversion action is on the name, after stripping the
+timestamp Google appends when an event is imported twice; two of the three brands are
+named that way, so an exact-suffix test finds nothing at all and reads on the page as
+"Google reported no conversions".
+
 ### Blended stops at the level where the two are comparable
 
 A Meta ad set and a Google ad group are not rows of the same table. Blended is the only

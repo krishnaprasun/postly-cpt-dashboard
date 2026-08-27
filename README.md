@@ -1410,6 +1410,48 @@ the credential's real state, and the tab says so in place of the missing figures
 When spend is unknown, Spend, CPT and CPI render as a **dash, never a zero**. "We do not
 know what this cost" and "this cost nothing" are opposite claims.
 
+### Two CPTs on Google
+
+The Google channel divides one spend by two counts of the same event. **Branch** counts a
+trial when it sees the install and the event, and credits the ad group its own model
+picks. **Google Ads** counts the same event when *its* model credits a click or view it
+served, over its own lookback windows.
+
+They disagree, and by wildly different amounts per brand — 7 days to 2026-08-26:
+
+| brand | spend | Branch trials | Branch CPT | Google conv. | Google CPT | gap |
+|---|---:|---:|---:|---:|---:|---:|
+| Funda | ₹1.99 Cr | 105,185 | ₹190 | 124,309 | ₹161 | −15% |
+| SpeakEasy | ₹14.3 L | 4,368 | ₹327 | 4,286 | ₹333 | +2% |
+| Postly | ₹1.59 L | 129 | ₹1,236 | 464 | ₹344 | **−72%** |
+
+Speakeasy's two models agree to within 2%, which is a useful check on both. Postly's do
+not agree at all: Branch attributes 129 of the 464 trials Google claims, so the CPT you
+act on depends entirely on which count you trust — and that is exactly the question the
+page now puts in front of you instead of answering silently.
+
+Neither is averaged into the other. **Only the Branch CPT is judged against the target**,
+because the target was agreed against Branch's definition and it is what every Meta tab
+and the Blended view already count. Blended keeps Branch on both sides for the same
+reason: a blend of two attribution models measures nothing.
+
+Counted from Google's **Conversions** column, never **All conversions** — the same event
+usually arrives twice, from Branch and from Firebase, and only one feed is marked primary.
+Postly has both, both ending `postly_trial_started_backend`; `conversions` counts it once
+(508 and 0) while `all_conversions` would count it twice (694 and 403).
+
+The match is on the conversion action **name**, after stripping the timestamp Google
+appends when an event is imported twice ("… postly_trial_started_backend
+2026-07-10T09:56:11.245"). Two of the three brands are named that way, so an exact-suffix
+test finds nothing at all — which on the page reads as "Google reported no conversions",
+not as a bug. The GAQL filter is a `contains` and the strict endswith test runs after the
+timestamp is stripped, so an event that is a prefix of a longer one cannot swallow it.
+
+`gconv` rides in the same payloads as everything else, so **Daily trend** and **Day grid**
+carry *Conversions (Google)* and *CPT (Google)* as metrics on the Google channel. Both
+leave the picker entirely on Meta — there is no Meta equivalent, because there the count
+and the cost already come from the same place.
+
 ## The channel switch
 
 `Meta | Google | Blended`, beside the segment switch. It decides **whose money the page is

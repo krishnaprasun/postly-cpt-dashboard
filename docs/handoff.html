@@ -324,6 +324,16 @@ its own copy.</p>
     exactly. There is no switch; the numbers are always pro rata.</p>
   </div>
   <div class="truth">
+    <h4>Two CPTs on Google, never averaged</h4>
+    <p>One spend, two counts of the same event. Branch attributes a trial from the install
+    it saw; Google Ads attributes it from the click <em>it</em> served, over its own
+    lookback. They disagree by 2% on Speakeasy, 15% on Funda and <strong>72% on
+    Postly</strong>. Averaging them would invent a third number that is nobody's
+    measurement, so both are shown and only the Branch one is judged against the target —
+    that is the definition the target was agreed against, and the one every Meta tab and
+    the Blended view already count.</p>
+  </div>
+  <div class="truth">
     <h4>A missing value is not a zero</h4>
     <p>"We do not know what this cost" and "this cost nothing" are opposite claims. A
     stored day lacking an impressions key means <em>not recorded</em>; trials Branch
@@ -515,6 +525,9 @@ mostly stored, and faster.</p>
 <ul>
   <li>Google Ads is <strong>fully live</strong> — spend, impressions and clicks per
   campaign per ad group. Last 7 days: Postly ₹1.59 L, SpeakEasy ₹14.2 L, Funda ₹1.99 Cr.</li>
+  <li>The Google channel shows <strong>two CPTs</strong> — Branch's count and Google Ads'
+  own, side by side, never averaged. 7-day gap: Speakeasy +2%, Funda −15%,
+  <strong>Postly −72%</strong>.</li>
   <li>Reach backfill (impressions/clicks into stored days): <strong>complete, all three
   brands</strong>.</li>
   <li>Google trials backfill: Speakeasy and Funda complete at 97 days each;
@@ -529,6 +542,9 @@ mostly stored, and faster.</p>
 <tr><td>Publish the Google OAuth consent screen<br><span class="mono" style="font-weight:400;color:var(--muted)">project 734843757980</span></td>
     <td>a refresh token minted while the screen is in <em>Testing</em> dies after 7 days — this already happened once and took Google spend off the page</td>
     <td><span class="pill now">by 2 Sep</span></td></tr>
+<tr><td>Reconnect the repo in Render</td>
+    <td>autoDeploy silently stopped firing; every push now needs a manual API trigger</td>
+    <td><span class="pill soon">soon</span></td></tr>
 <tr><td>Rotate the Render API key</td>
     <td>it was pasted into a chat transcript against advice; a Render key reaches every workspace the account belongs to and cannot be scoped down</td>
     <td><span class="pill soon">soon</span></td></tr>
@@ -557,6 +573,14 @@ mostly stored, and faster.</p>
 </div>
 
 <h3 id="deploy">Deploy</h3>
+<div class="note crit">
+  <span class="lbl">AutoDeploy is not currently firing</span>
+  <p>Render reports <code>autoDeploy: yes</code> and the service is not suspended, but
+  three pushes on 27 Aug 2026 produced no deploy, and the GitHub repo carries no webhooks
+  at all. Until the repo is reconnected in Render's dashboard, follow every push with a
+  manual trigger — <code>POST /v1/services/srv-da3cttibkg8c738a4nvg/deploys</code> with the
+  Render API key.</p>
+</div>
 <pre><span class="c"># the repo is public — scan before every push</span>
 git diff --cached | grep -inE 'EAA[A-Za-z0-9]{40}|1//[A-Za-z0-9_-]{40}|rnd_[A-Za-z0-9]{20}' \
   &amp;&amp; echo "STOP" || echo "clean"
@@ -733,6 +757,15 @@ Reverse any of them if there is a reason — but know what you are reversing.</p
   <p>Same slot, one rung below campaign. Two buttons meaning the same thing on different
   channels is worse than one that renames itself. Tabs that mean nothing on a channel are
   <strong>hidden</strong>, not greyed.</p>
+</div>
+<div class="dec">
+  <h4>Google's Conversions column, never All conversions</h4>
+  <p>The same event usually arrives in Google twice — once from Branch, once from Firebase
+  — and only one feed is marked primary. <code>all_conversions</code> counts both and
+  reports a CPT well below the truth. The match from Branch event to Google conversion
+  action is on the name, after stripping the timestamp Google appends to a re-imported
+  event; two of the three brands are named that way, so an exact-suffix test finds nothing
+  and reads on the page as "Google reported no conversions".</p>
 </div>
 <div class="dec">
   <h4>Blended stops where the two are comparable</h4>
