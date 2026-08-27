@@ -1,5 +1,9 @@
 # Postly Performance
 
+> Taking this over? Read [`docs/HANDOFF.md`](docs/HANDOFF.md) first — it maps this
+> manual, names every credential and lists what is still open. Then
+> [`docs/RUNBOOK.md`](docs/RUNBOOK.md) and [`docs/DECISIONS.md`](docs/DECISIONS.md).
+
 Live Meta spend × Branch trials, with CPT at every level: combined, ad account,
 campaign, active ad set, and ad. Signups and trial mandates come from the Classplus DB
 alongside, at the same levels. Read-only — nothing here writes to Meta.
@@ -1392,17 +1396,18 @@ The last check is the one worth having. A test-level developer token authenticat
 and returns empty, which is indistinguishable from a quiet week unless something asks the
 question directly.
 
-### Current state: trials yes, spend no
+### Current state: live
 
-The stored refresh token is dead — `invalid_grant`. A refresh token minted while the OAuth
-consent screen is in **Testing** expires after 7 days regardless of how it is stored. The
-fix is to publish the consent screen in the project owning the OAuth client, then re-run
-`tools/google_ads_token.py`. `/api/google/status` reports exactly this, and the tab says it
-in place of the missing figures.
+Spend, impressions and clicks read back for every brand. Last 7 days, verified
+2026-08-27: Postly ₹1.59 L, SpeakEasy ₹14.2 L, Funda ₹1.99 Cr.
 
-Until then the tab shows every Google campaign and ad group with its **trials and
-installs** — 46,090 trials and 258,180 installs over three Funda days, all of it
-previously invisible — with Spend, CPT and CPI as a **dash, never a zero**. "We do not
+The refresh token is the fragile part. One minted while the OAuth consent screen is in
+**Testing** expires after 7 days regardless of how it is stored — which is exactly what
+happened once, taking Google spend off the page until the screen was published in project
+`734843757980` and `tools/google_ads_token.py` was re-run. `/api/google/status` reports
+the credential's real state, and the tab says so in place of the missing figures.
+
+When spend is unknown, Spend, CPT and CPI render as a **dash, never a zero**. "We do not
 know what this cost" and "this cost nothing" are opposite claims.
 
 ## The channel switch
@@ -1423,9 +1428,9 @@ larger half of that buying and had never appeared on this page.
 
 Three rules the switch holds:
 
-- **Tabs that mean nothing are disabled with the reason on them**, not hidden and not
-  silently inert. Google buying has campaigns and ad groups and nothing below them — no ad
-  sets, no ads, no creative to track. Blended has no per-row view at all: a Meta ad set and
+- **Tabs that mean nothing on a channel are hidden**, not greyed and not silently inert.
+  Google buying has campaigns and ad groups and nothing below them — no ad sets, no ads,
+  no creative to track — so those tabs leave the row rather than sitting there dead. Blended has no per-row view at all: a Meta ad set and
   a Google ad group are not rows of the same table, so it stops at the level where the two
   genuinely are comparable.
 - **"Not loaded yet" is never read as zero.** Google figures are fetched on demand, so
