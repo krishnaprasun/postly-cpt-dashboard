@@ -1,0 +1,85 @@
+# Push-to-deploy, because Render's own GitHub connection is not wired for this account.
+#
+# Render reports autoDeploy=yes and autoDeployTrigger=commit, and both are correct -- but
+# the repo has no webhook and no Render GitHub App installation, so GitHub never tells
+# Render a push happened. Every one of the first 40 deploys was `trigger: api`. Rather
+# than re-authorizing in Render's dashboard, this workflow does what that webhook would:
+# calls the deploy API itself, then waits and fails loudly if the deploy does not go live.
+#
+# SECRET: RENDER_API_KEY. A Render API key reaches EVERY workspace the account belongs to
+# and cannot be scoped down, so when it is rotated -- and it is overdue -- this secret has
+# to be updated in the same breath, or deploys start 401ing:
+#     gh secret set RENDER_API_KEY --repo krishnaprasun/postly-cpt-dashboard
+# The repo is public; GitHub does not expose secrets to forks or to pull_request runs from
+# them, and this workflow only ever runs on a push to main of this repository.
+
+name: Deploy to Render
+
+on:
+  push:
+    branches: [main]
+    # Documentation does not ship to the running service, and a needless deploy costs a
+    # cold restart on a free instance. Code changes still deploy on every push.
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
+  workflow_dispatch:        # and a manual button, for a docs-only push you DO want live
+
+concurrency:
+  group: render-deploy
+  cancel-in-progress: false   # never cancel a deploy mid-flight; queue behind it
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    if: github.repository == 'krishnaprasun/postly-cpt-dashboard'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SERVICE: srv-da3cttibkg8c738a4nvg
+    steps:
+      - name: Trigger the deploy
+        id: go
+        run: |
+          set -euo pipefail
+          resp=$(curl -sS -X POST \
+            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache":"do_not_clear"}' \
+            "https://api.render.com/v1/services/$SERVICE/deploys")
+          id=$(printf '%s' "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("id",""))')
+          if [ -z "$id" ]; then
+            echo "::error::Render refused the deploy: $resp"; exit 1
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "Triggered $id for ${GITHUB_SHA:0:7}"
+
+      - name: Wait for it to go live
+        run: |
+          set -euo pipefail
+          id="${{ steps.go.outputs.id }}"
+          for _ in $(seq 1 80); do
+            st=$(curl -sS -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
+                 "https://api.render.com/v1/services/$SERVICE/deploys/$id" |
+                 python3 -c 'import json,sys;print(json.load(sys.stdin).get("status",""))')
+            echo "$(date -u +%H:%M:%S) $st"
+            case "$st" in
+              live)
+                # Render reports `live` BEFORE it has detected the open port, and until it
+                # does every request 404s at the edge. So the deploy is not done until the
+                # app itself answers.
+                for _ in $(seq 1 20); do
+                  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+                         https://postly-cpt-dashboard.onrender.com/healthz || true)
+                  [ "$code" = "200" ] && { echo "healthz 200 — deploy is serving"; exit 0; }
+                  sleep 15
+                done
+                echo "::error::$id went live but /healthz never answered 200"; exit 1 ;;
+              build_failed|update_failed|canceled|pre_deploy_failed)
+                echo "::error::deploy $id ended $st"; exit 1 ;;
+            esac
+            sleep 15
+          done
+          echo "::error::deploy $id did not finish in time"; exit 1
