@@ -1680,6 +1680,9 @@ def _google_window_build(brand, since, until, force=False):
         return rows.setdefault((camp, group), {
             "campaign": camp or "(no campaign)", "ad_group": group or "(no ad group)",
             "spend": 0.0, "imp": 0.0, "clk": 0.0, "gconv": 0.0,
+            # None, not 0: an ad group the asset pull never answered for has an UNKNOWN
+            # creative count, and unknown must never render as a confident zero.
+            "cre": None, "cre_off": 0, "best": 0, "good": 0, "low": 0,
             **{k: 0.0 for k in ev_keys}})
 
     trial_days = 0
@@ -1697,6 +1700,7 @@ def _google_window_build(brand, since, until, force=False):
     # ---- spend ---------------------------------------------------------------
     spend_days, spend_err = 0, None
     conv_days, conv_err = set(), None
+    asset_groups, asset_err = set(), None
     cust, how = ([], "no credentials")
     if GA.available():
         cust, how = google_customers(brand)
@@ -1726,9 +1730,26 @@ def _google_window_build(brand, since, until, force=False):
             conv_err = GA.last_error()
         else:
             conv_err = "this brand has no trial event configured"
+        # ---- how many creatives each ad group is actually running -------------
+        # Current state, not windowed: assets carry no date here. Cheap (1-4s), one call
+        # per customer, so it rides along rather than becoming a tab of its own.
+        for cid in cust:
+            for (camp, group), a in GA.assets_by_group(cid).items():
+                c = rows.get((camp, group))
+                if c is None:
+                    # An ad group holding creatives but with no spend and no trials in
+                    # this window is not a row on this page; adding one would put a line
+                    # with no cost and no result into a cost-per-trial table.
+                    continue
+                c["cre"] = (c["cre"] or 0) + a["cre"]
+                for k in ("cre_off", "best", "good", "low"):
+                    c[k] += a[k]
+                asset_groups.add((camp, group))
+        asset_err = GA.last_error()
     else:
         spend_err = GA.last_error() or "no Google Ads credentials on this instance"
         conv_err = spend_err
+        asset_err = spend_err
 
     out_rows = sorted(rows.values(),
                       key=lambda r: (-r["spend"], -r.get(ev_keys[0], 0)))
@@ -1736,12 +1757,24 @@ def _google_window_build(brand, since, until, force=False):
     for r in out_rows:
         c = camps.setdefault(r["campaign"], {
             "campaign": r["campaign"], "ad_groups": 0, "spend": 0.0,
-            "imp": 0.0, "clk": 0.0, "gconv": 0.0, **{k: 0.0 for k in ev_keys}})
+            "imp": 0.0, "clk": 0.0, "gconv": 0.0, "cre": None, "cre_off": 0,
+            "best": 0, "good": 0, "low": 0, **{k: 0.0 for k in ev_keys}})
         c["ad_groups"] += 1
         for k in ("spend", "imp", "clk", "gconv", *ev_keys):
             c[k] += r[k]
+        for k in ("cre_off", "best", "good", "low"):
+            c[k] += r[k]
+        # A campaign's creative count is the sum of the ad groups that ANSWERED. If none
+        # did it stays None: summing unknowns into 0 would claim a campaign runs no
+        # creatives, which is the one thing it certainly does.
+        if r["cre"] is not None:
+            c["cre"] = (c["cre"] or 0) + r["cre"]
     tot = {k: round(sum(r[k] for r in out_rows), 2)
            for k in ("spend", "imp", "clk", "gconv", *ev_keys)}
+    _cre = [r["cre"] for r in out_rows if r["cre"] is not None]
+    tot["cre"] = sum(_cre) if _cre else None
+    for k in ("cre_off", "best", "good", "low"):
+        tot[k] = sum(r[k] for r in out_rows)
     return {
         "brand": brand, "since": since, "until": until,
         "events": list(B["events"]), "event_labels": B["labels"],
@@ -1761,6 +1794,9 @@ def _google_window_build(brand, since, until, force=False):
         "conv_event": (B["events"].get(ev_keys[0]) if ev_keys else None),
         "conv_ok": bool(conv_days),
         "conv_error": None if conv_days else conv_err,
+        "asset_groups": len(asset_groups),
+        "assets_ok": bool(asset_groups),
+        "asset_error": None if asset_groups else asset_err,
         "trials_error": err,
         "stored_days": len(stored),
         "generated_at": now_ist_str(),

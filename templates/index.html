@@ -1745,8 +1745,24 @@ function googRows(){
       /* The same spend over Google's own count of the same event. `conv_ok` is the
          window-level guard: with no conversion day answered the column is unknown for
          every row, and an unknown must not render as a confident zero. */
+      cre: (r.cre === null || r.cre === undefined) ? null : r.cre,
       conv: GOOG.conv_ok ? (r.gconv || 0) : null,
       acpt: (GOOG.conv_ok && r.spend && r.gconv) ? r.spend / r.gconv : null}));
+}
+
+/* Google's own verdict on each creative, on the count itself. A group running 20 of which
+   11 are LOW is a different situation from one running 20 that are mostly GOOD, and that
+   is exactly the difference a bare number hides. */
+function creTitle(o){
+  if(o.cre === null) return '';
+  const bits = [];
+  if(o.best) bits.push(`${o.best} best`);
+  if(o.good) bits.push(`${o.good} good`);
+  if(o.low) bits.push(`${o.low} low`);
+  const rest = o.cre - (o.best||0) - (o.good||0) - (o.low||0);
+  if(rest > 0) bits.push(`${rest} learning or pending`);
+  const off = o.cre_off ? ` · ${o.cre_off} retired and no longer serving` : '';
+  return ` title="${o.cre} creative(s) serving now${bits.length ? ' — ' + bits.join(', ') : ''}${off}. Google rates each one; this is current state, not the selected window."`;
 }
 
 function renderGoogle(){
@@ -1759,15 +1775,16 @@ function renderGoogle(){
     tbl.querySelector('thead').innerHTML =
       `<tr class="grp"><th colspan="2"></th><th>Cost</th>
         <th class="gA gsep" colspan="4">Branch attribution</th>
-        <th class="gsep" colspan="2">Google attribution</th></tr>
+        <th class="gsep" colspan="2">Google attribution</th>
+        <th class="gsep">Running now</th></tr>
        <tr><th class="l">Campaign</th><th class="l">Ad group</th><th>Spend</th>
        <th class="gsep">Trials</th><th>CPT</th><th>Installs</th><th>CPI</th>
-       <th class="gsep">Conv.</th><th>CPT</th></tr>`;
+       <th class="gsep">Conv.</th><th>CPT</th><th class="gsep">Creatives</th></tr>`;
     tbl.querySelector('tbody').innerHTML = GOOGBUSY
       ? Array.from({length: 8}, () => `<tr>${
-          ['70%','52%','60%','48%','44%','52%','44%','48%','44%'].map(w => `<td>${bar(w)}</td>`).join('')
+          ['70%','52%','60%','48%','44%','52%','44%','48%','44%','40%'].map(w => `<td>${bar(w)}</td>`).join('')
         }</tr>`).join('')
-      : `<tr><td class="l" colspan="9">No Google data for this window.</td></tr>`;
+      : `<tr><td class="l" colspan="10">No Google data for this window.</td></tr>`;
     tbl.querySelector('tfoot').innerHTML = '';
     document.getElementById('rowcount').textContent = '';
     return;
@@ -1780,10 +1797,12 @@ function renderGoogle(){
   tbl.querySelector('thead').innerHTML =
     `<tr class="grp"><th colspan="${nameCols}"></th><th>Cost</th>
       <th class="gA gsep" colspan="4">Branch attribution</th>
-      <th class="gsep" colspan="2">Google attribution</th></tr>` +
+      <th class="gsep" colspan="2">Google attribution</th>
+      <th class="gsep">Running now</th></tr>` +
     '<tr>' + `<th class="l">Campaign</th>` + (byCamp ? '' : `<th class="l">Ad group</th>`) +
     `<th>Spend</th><th class="gsep">Trials</th><th>CPT</th><th>Installs</th><th>CPI</th>
-     <th class="gsep">Conv.</th><th>CPT</th></tr>`;
+     <th class="gsep">Conv.</th><th>CPT</th>
+     <th class="gsep" title="Video and image assets serving right now — NOT a figure for the selected window">Creatives</th></tr>`;
   const money = v => v ? rs(v) : '<span class="dimtxt">—</span>';
   tbl.querySelector('tbody').innerHTML = r.map(o => `<tr>
       <td class="name" title="${(o.campaign||'').replace(/"/g,'&quot;')}">${o.campaign}</td>
@@ -1794,11 +1813,16 @@ function renderGoogle(){
       <td>${num(o.inst||0)}</td>
       <td>${o.gcpi===null?'<span class="dimtxt">—</span>':rs(o.gcpi)}</td>
       <td class="gsep">${o.conv===null?'<span class="dimtxt">—</span>':num(Math.round(o.conv))}</td>
-      <td>${o.acpt===null?'<span class="dimtxt">—</span>':rs(o.acpt)}</td></tr>`).join('')
-    || `<tr><td class="l" colspan="9">No rows match.</td></tr>`;
+      <td>${o.acpt===null?'<span class="dimtxt">—</span>':rs(o.acpt)}</td>
+      <td class="gsep"${creTitle(o)}>${o.cre===null?'<span class="dimtxt">—</span>':num(o.cre)}</td></tr>`).join('')
+    || `<tr><td class="l" colspan="10">No rows match.</td></tr>`;
   const sum = k => r.reduce((a,o)=>a+(o[k]||0),0);
   const sp = sum('spend'), tr = sum('trials'), ins = sum('inst');
   const gc = GOOG.conv_ok ? sum('gconv') : null;
+  /* Only the rows that answered. A group whose assets could not be read is unknown, and
+     summing unknowns as zero would under-report the total creative count. */
+  const creKnown = r.filter(o => o.cre !== null);
+  const cre = creKnown.length ? creKnown.reduce((a,o)=>a+o.cre,0) : null;
   tbl.querySelector('tfoot').innerHTML = `<tr>
       <td class="l">${r.length} row(s)</td>${byCamp ? '' : '<td></td>'}
       <td>${money(sp)}</td><td class="gsep">${num(tr)}</td>
@@ -1806,7 +1830,8 @@ function renderGoogle(){
       <td>${num(ins)}</td>
       <td>${sp && ins ? rs(sp/ins) : '<span class="dimtxt">—</span>'}</td>
       <td class="gsep">${gc===null ? '<span class="dimtxt">—</span>' : num(Math.round(gc))}</td>
-      <td>${(gc && sp) ? rs(sp/gc) : '<span class="dimtxt">—</span>'}</td></tr>`;
+      <td>${(gc && sp) ? rs(sp/gc) : '<span class="dimtxt">—</span>'}</td>
+      <td class="gsep">${cre===null ? '<span class="dimtxt">—</span>' : num(cre)}</td></tr>`;
   document.getElementById('rowcount').textContent = `${r.length} rows`;
 }
 /* How many series the chart draws. 0 means every row the filters leave. Six was a fixed
@@ -3244,8 +3269,32 @@ function googNote(){
        unaffected.
        <span class="dimtxt">${(GOOG.conv_error||'').replace(/</g,'&lt;')}</span>`;
 
+  /* The question this column exists to answer, and why it is not called "Ads". */
+  const cre = GOOG.assets_ok
+    ? `<b>A Google ad group has exactly one ad.</b> Every campaign in these accounts is an
+       App campaign, where the ad group holds a single <code>APP_AD</code> and all the
+       creative variety lives in the <b>assets</b> attached to it. So "how many ads" would
+       answer 1 on every row and tell you nothing; the Creatives column counts the
+       <b>video and image assets serving right now</b> — ${num(t.cre || 0)} of them across
+       ${GOOG.asset_groups} ad group(s), with ${num(t.cre_off || 0)} more attached but
+       retired and no longer serving.<br><br>
+       Google rates each one <b>BEST / GOOD / LOW</b> once it has enough data, and hovering
+       a count shows that split${(t.best || t.good || t.low)
+         ? ` — ${num(t.best)} best, ${num(t.good)} good, ${num(t.low)} low across this view`
+         : ''}. A group running twenty creatives of which eleven are LOW is a different
+       situation from one running twenty that are mostly GOOD, which is what a bare count
+       hides.<br><br>
+       <b>This column is current state, not the selected window.</b> Assets carry no date
+       here, so it says what a group holds today and cannot say what was running three
+       weeks ago. Every other column on this row is windowed; this one is not. An ad group
+       whose assets could not be read shows a dash, never a zero.`
+    : `<b>Creative counts are unavailable</b>, so the column shows a dash rather than a
+       zero. Everything else on the row is unaffected.
+       <span class="dimtxt">${(GOOG.asset_error||'').replace(/</g,'&lt;')}</span>`;
+
   return nsec('Google Ads only', scope)
     + nsec('Why there are two CPTs', two)
+    + nsec('What "Creatives" counts', cre)
     + nsec('How trials join to campaigns', join)
     + nsec('Spend', spend)
     + nsec('Where the figures came from', src);

@@ -369,6 +369,77 @@ def conv_daily(customer_id, since, until, suffix, login=None):
     return out
 
 
+GAQL_ASSETS = """
+SELECT campaign.name, ad_group.name, asset.type,
+       ad_group_ad_asset_view.performance_label, ad_group_ad_asset_view.enabled
+FROM ad_group_ad_asset_view
+WHERE ad_group.status != 'REMOVED' AND campaign.status != 'REMOVED'
+"""
+
+# What counts as a creative. Headlines and descriptions are assets too, but nobody means
+# them by "how many ads are in this group" -- the video or the image is the ad.
+_CREATIVE_TYPES = ("YOUTUBE_VIDEO", "IMAGE", "MEDIA_BUNDLE")
+
+
+def assets_by_group(customer_id, login=None):
+    """{(campaign, ad_group): {...counts}} -- how many creatives each ad group is running.
+
+    **A Google ad group has exactly ONE ad.** Every one of these accounts is App campaigns
+    (UAC), where the ad group holds a single `APP_AD` and the actual creative variety lives
+    in the ASSETS attached to it -- videos, images, headlines, descriptions. So "how many
+    ads" answers 1 for every row and means nothing; the number people are asking for is the
+    count of video and image assets, which is what this returns.
+
+    Google labels each asset BEST / GOOD / LOW / LEARNING / PENDING, its own verdict on
+    the creative, and those are carried through too: a group with 90 creatives of which 40
+    are LOW is a different situation from one with 90 that are mostly GOOD.
+
+    **This is CURRENT state, not windowed.** Assets carry no date here, so the count is
+    what the group holds now -- it cannot say what was running three weeks ago. The column
+    says so rather than letting it be read as a figure for the selected window.
+    """
+    global _last_error
+    c = creds()
+    if not c:
+        _last_error = "no Google Ads credentials"
+        return {}
+    cid = str(customer_id).replace("-", "")
+    try:
+        j = _post(f"/customers/{cid}/googleAds:searchStream", {"query": GAQL_ASSETS},
+                  c, login=login)
+    except urllib.error.HTTPError as e:
+        _last_error = _err(e)
+        return {}
+    except Exception as e:
+        _last_error = f"Google Ads: {str(e)[:200]}"
+        return {}
+    out = {}
+    for chunk in (j if isinstance(j, list) else [j]):
+        for row in (chunk.get("results") or []):
+            v = row.get("adGroupAdAssetView") or {}
+            key = ((row.get("campaign") or {}).get("name") or "",
+                   (row.get("adGroup") or {}).get("name") or "")
+            rec = out.get(key)
+            if rec is None:
+                rec = out[key] = {"cre": 0, "cre_off": 0, "txt": 0,
+                                  "best": 0, "good": 0, "low": 0, "learning": 0,
+                                  "pending": 0}
+            if (row.get("asset") or {}).get("type") not in _CREATIVE_TYPES:
+                rec["txt"] += 1
+                continue
+            # `enabled` false means the asset is attached but no longer serving. Counting
+            # it as live would say a group is running creatives it has already retired.
+            if not v.get("enabled"):
+                rec["cre_off"] += 1
+                continue
+            rec["cre"] += 1
+            lbl = (v.get("performanceLabel") or "").lower()
+            if lbl in rec:
+                rec[lbl] += 1
+    _last_error = None
+    return out
+
+
 def status():
     """A one-shot health read for the page and for the ops endpoint."""
     c = creds()
