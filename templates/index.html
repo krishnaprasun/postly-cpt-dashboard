@@ -298,6 +298,24 @@ section.ns p{margin:0}
    a screenshot of it has to carry that on its face. The badge is deliberately not a
    button; there is nothing to click. */
 .modelled{color:var(--gold-dk);font-weight:650}
+/* Which attribution a number came from, on the number itself. The Google channel shows
+   two CPTs side by side and a screenshot of one tile has to say which one it is -- a
+   legend somewhere else on the page does not survive being cropped. */
+.src{display:inline-block;font-size:9.5px;letter-spacing:.6px;text-transform:uppercase;
+     font-weight:650;padding:1px 5px;border-radius:4px;vertical-align:2px;margin-left:5px}
+.src.branch{background:var(--accent-lt);color:var(--accent-dk)}
+.src.gads{background:#EFF1F5;color:#4A5468}
+/* The two CPT tiles read as a pair rather than as two of six unrelated boxes. */
+/* The Google table carries two attributions side by side, so the header says which
+   columns belong to which. A vertical rule at each group boundary does the separating;
+   the group row above only has to name them. */
+thead tr.grp th{font-size:9.5px;letter-spacing:.7px;text-transform:uppercase;
+  font-weight:650;color:var(--muted);padding:5px 8px 3px;border-bottom:0;background:transparent}
+thead tr.grp th.gA{color:var(--accent-dk)}
+th.gsep, td.gsep, tfoot td.gsep{border-left:1px solid var(--line)}
+thead tr.grp th.gsep{border-left:1px solid var(--line)}
+.kpi.pairA{border-left:3px solid var(--accent)}
+.kpi.pairB{border-left:3px solid #8A93A6}
 
 /* ---- the control row ----
    Four questions in a line, each under its own label. Unlabelled button groups made the
@@ -671,6 +689,8 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
         <option value="cpt">CPT</option>
         <option value="inst">Installs</option>
         <option value="cpi">CPI</option>
+        <option value="gconv" data-c="google">Conversions (Google)</option>
+        <option value="gcpt" data-c="google">CPT (Google)</option>
       </select></label>
     <input type="search" id="sq" placeholder="Filter by name…">
     <label class="chk"><input type="checkbox" id="sTesting"> include testing</label>
@@ -1211,6 +1231,58 @@ function kpis(){
     const ins = c.inst;
     const split = (a, b) => (a + b) ? `${(100*a/(a+b)).toFixed(0)}% / ${(100*b/(a+b)).toFixed(0)}%` : '—';
     const dash = '<span class="dimtxt">—</span>';
+
+    /* ---------- two CPTs, on the Google channel ----------
+       The same spend over two different counts of the same event. Branch attributes it
+       from the install it saw; Google attributes it from the click IT saw, over its own
+       lookback. Neither is the other's error, and averaging them would invent a third
+       number that is nobody's. So both are shown, each labelled with whose count it is.
+
+       Only the Branch CPT is judged against the target: the target was agreed against
+       Branch's definition, and colouring a differently-counted number the same green
+       would say the two are interchangeable. They are not -- on Postly they are 4x apart.
+
+       Blended deliberately keeps Branch on BOTH sides instead of taking Google's own
+       count for the Google half. A blend of two attribution models is not a measurement
+       of anything; it is the one number on this page nobody could act on. */
+    if(CHAN === 'google'){
+      const gc  = gt ? gt.gconv : null;
+      const gk  = (gc && sp) ? sp / gc : null;                 // Google-reported CPT
+      const gap = (k !== null && gk !== null && k) ? 100 * (gk - k) / k : null;
+      const cnt = (a, b) => (a === null || b === null || !b) ? null : 100 * (a - b) / b;
+      const cGap = cnt(gc, tr);
+      document.getElementById('kpis').innerHTML = `
+       <div class="kpi hero pairA"><div class="k">CPT<span class="src branch">Branch</span></div>
+         <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
+         <div class="s">${waiting ? '<span class="spin"></span>loading Google'
+           : T===null ? `no target set · ${tr===null?'—':num(tr)} trials`
+           : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`}</div></div>
+       <div class="kpi pairB"><div class="k">CPT<span class="src gads">Google Ads</span></div>
+         <div class="v">${gk===null?dash:rs(gk)}</div>
+         <div class="s">${waiting ? '<span class="spin"></span>loading Google'
+           : gk===null ? (gt && gt.gwhy ? `unavailable — ${gt.gwhy}` : 'no conversions reported')
+           : gap===null ? "Google's own attribution"
+           : `${gap>0?'+':''}${gap.toFixed(0)}% vs Branch · same spend, its own count`}</div></div>
+       <div class="kpi"><div class="k">Spend</div>
+         <div class="v">${sp ? rs(sp) : dash}</div>
+         <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
+       <div class="kpi"><div class="k">Trials<span class="src branch">Branch</span></div>
+         <div class="v">${(waiting || tr === null) ? dash : num(tr)}</div>
+         <div class="s">${waiting ? '<span class="spin"></span>loading Google'
+           : tr === null ? `unavailable — ${(gt && gt.why) || 'Branch did not answer'}`
+           : 'joined to campaigns and ad groups by name'}</div></div>
+       <div class="kpi"><div class="k">Conversions<span class="src gads">Google Ads</span></div>
+         <div class="v">${gc===null?dash:num(Math.round(gc))}</div>
+         <div class="s">${gc===null ? 'unavailable, not zero'
+           : cGap===null ? (gt.convEvent || 'the trial event')
+           : `${cGap>0?'+':''}${cGap.toFixed(0)}% vs Branch's count`}</div></div>
+       <div class="kpi"><div class="k">Installs<span class="src branch">Branch</span></div>
+         <div class="v">${(waiting || ins === null) ? dash : num(ins)}</div>
+         <div class="s">${ins && sp ? `${rs(sp/ins)} each`
+           : ins === null ? 'unavailable, not zero' : 'no CPI yet'}</div></div>`;
+      return;
+    }
+
     document.getElementById('kpis').innerHTML = `
      <div class="kpi hero"><div class="k">Current CPT · ${segLbl}</div>
        <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
@@ -1604,9 +1676,15 @@ function googTotals(){
      rule is that unknown and zero must never look alike. Spend is independent: it comes
      from Google and is fine either way. */
   const known = !GOOG.trials_error && GOOG.trial_days > 0;
+  /* Google's own count of the same event, under Google's own attribution. Same rule as
+     everything else: no day answered means UNKNOWN, which is a dash, not a zero. */
+  const gKnown = !!GOOG.conv_ok;
   return {spend: t.spend || 0, ok: !!GOOG.spend_ok,
           trials: known ? (t[ev] || 0) : null,
           inst: known ? (t.inst || 0) : null,
+          gconv: gKnown ? (t.gconv || 0) : null,
+          gconvKnown: gKnown, gwhy: GOOG.conv_error || '',
+          convEvent: GOOG.conv_event || '',
           trialsKnown: known, why: GOOG.trials_error || ''};
 }
 const googKey = () => `${BRAND}|${RANGE}|${CUSTOM ? CUSTOM.since+CUSTOM.until : ''}`;
@@ -1663,7 +1741,12 @@ function googRows(){
       trials: r[ev] || 0,
       /* No spend means no CPT -- a dash, never a zero and never "free". */
       gcpt: (r.spend && r[ev]) ? r.spend / r[ev] : null,
-      gcpi: (r.spend && r.inst) ? r.spend / r.inst : null}));
+      gcpi: (r.spend && r.inst) ? r.spend / r.inst : null,
+      /* The same spend over Google's own count of the same event. `conv_ok` is the
+         window-level guard: with no conversion day answered the column is unknown for
+         every row, and an unknown must not render as a confident zero. */
+      conv: GOOG.conv_ok ? (r.gconv || 0) : null,
+      acpt: (GOOG.conv_ok && r.spend && r.gconv) ? r.spend / r.gconv : null}));
 }
 
 function renderGoogle(){
@@ -1674,13 +1757,17 @@ function renderGoogle(){
        is nothing here", which on a 15-second pull is wrong for 15 seconds. */
     const bar = w => `<div class="skl" style="width:${w}"></div>`;
     tbl.querySelector('thead').innerHTML =
-      `<tr><th class="l">Campaign</th><th class="l">Ad group</th><th>Spend</th>
-       <th>Trials</th><th>CPT</th><th>Installs</th><th>CPI</th></tr>`;
+      `<tr class="grp"><th colspan="2"></th><th>Cost</th>
+        <th class="gA gsep" colspan="4">Branch attribution</th>
+        <th class="gsep" colspan="2">Google attribution</th></tr>
+       <tr><th class="l">Campaign</th><th class="l">Ad group</th><th>Spend</th>
+       <th class="gsep">Trials</th><th>CPT</th><th>Installs</th><th>CPI</th>
+       <th class="gsep">Conv.</th><th>CPT</th></tr>`;
     tbl.querySelector('tbody').innerHTML = GOOGBUSY
       ? Array.from({length: 8}, () => `<tr>${
-          ['70%','52%','60%','48%','44%','52%','44%'].map(w => `<td>${bar(w)}</td>`).join('')
+          ['70%','52%','60%','48%','44%','52%','44%','48%','44%'].map(w => `<td>${bar(w)}</td>`).join('')
         }</tr>`).join('')
-      : `<tr><td class="l" colspan="7">No Google data for this window.</td></tr>`;
+      : `<tr><td class="l" colspan="9">No Google data for this window.</td></tr>`;
     tbl.querySelector('tfoot').innerHTML = '';
     document.getElementById('rowcount').textContent = '';
     return;
@@ -1689,27 +1776,37 @@ function renderGoogle(){
   const r = googRows();
   document.getElementById('gcount').textContent =
     `${GOOG.campaigns.length} campaign(s) · ${GOOG.ad_groups.length} ad group(s)`;
-  tbl.querySelector('thead').innerHTML = '<tr>' +
-    `<th class="l">Campaign</th>` + (byCamp ? '' : `<th class="l">Ad group</th>`) +
-    `<th>Spend</th><th>Trials</th><th>CPT</th><th>Installs</th><th>CPI</th></tr>`;
+  const nameCols = byCamp ? 1 : 2;
+  tbl.querySelector('thead').innerHTML =
+    `<tr class="grp"><th colspan="${nameCols}"></th><th>Cost</th>
+      <th class="gA gsep" colspan="4">Branch attribution</th>
+      <th class="gsep" colspan="2">Google attribution</th></tr>` +
+    '<tr>' + `<th class="l">Campaign</th>` + (byCamp ? '' : `<th class="l">Ad group</th>`) +
+    `<th>Spend</th><th class="gsep">Trials</th><th>CPT</th><th>Installs</th><th>CPI</th>
+     <th class="gsep">Conv.</th><th>CPT</th></tr>`;
   const money = v => v ? rs(v) : '<span class="dimtxt">—</span>';
   tbl.querySelector('tbody').innerHTML = r.map(o => `<tr>
       <td class="name" title="${(o.campaign||'').replace(/"/g,'&quot;')}">${o.campaign}</td>
       ${byCamp ? '' : `<td class="sub" title="${(o.ad_group||'').replace(/"/g,'&quot;')}">${o.ad_group}</td>`}
       <td>${money(o.spend)}</td>
-      <td>${num(o.trials)}</td>
+      <td class="gsep">${num(o.trials)}</td>
       <td class="${o.gcpt===null?'':cls(o.gcpt)}">${o.gcpt===null?'<span class="dimtxt">—</span>':rs(o.gcpt)}</td>
       <td>${num(o.inst||0)}</td>
-      <td>${o.gcpi===null?'<span class="dimtxt">—</span>':rs(o.gcpi)}</td></tr>`).join('')
-    || `<tr><td class="l" colspan="7">No rows match.</td></tr>`;
+      <td>${o.gcpi===null?'<span class="dimtxt">—</span>':rs(o.gcpi)}</td>
+      <td class="gsep">${o.conv===null?'<span class="dimtxt">—</span>':num(Math.round(o.conv))}</td>
+      <td>${o.acpt===null?'<span class="dimtxt">—</span>':rs(o.acpt)}</td></tr>`).join('')
+    || `<tr><td class="l" colspan="9">No rows match.</td></tr>`;
   const sum = k => r.reduce((a,o)=>a+(o[k]||0),0);
   const sp = sum('spend'), tr = sum('trials'), ins = sum('inst');
+  const gc = GOOG.conv_ok ? sum('gconv') : null;
   tbl.querySelector('tfoot').innerHTML = `<tr>
       <td class="l">${r.length} row(s)</td>${byCamp ? '' : '<td></td>'}
-      <td>${money(sp)}</td><td>${num(tr)}</td>
+      <td>${money(sp)}</td><td class="gsep">${num(tr)}</td>
       <td>${sp && tr ? rs(sp/tr) : '<span class="dimtxt">—</span>'}</td>
       <td>${num(ins)}</td>
-      <td>${sp && ins ? rs(sp/ins) : '<span class="dimtxt">—</span>'}</td></tr>`;
+      <td>${sp && ins ? rs(sp/ins) : '<span class="dimtxt">—</span>'}</td>
+      <td class="gsep">${gc===null ? '<span class="dimtxt">—</span>' : num(Math.round(gc))}</td>
+      <td>${(gc && sp) ? rs(sp/gc) : '<span class="dimtxt">—</span>'}</td></tr>`;
   document.getElementById('rowcount').textContent = `${r.length} rows`;
 }
 /* How many series the chart draws. 0 means every row the filters leave. Six was a fixed
@@ -1777,6 +1874,13 @@ const METRICS = {
      would report a CPM inflated by exactly the unmeasured fraction. */
   cpmille:{label:'CPM',     of:d=>(d&&d.imp)?1000*d.isp/d.imp:null, fmt:rs,
           agg:(sp,r)=>r.imp?1000*r.isp/r.imp:null},
+  /* Google's own count of the trial event, and the CPT it implies. Google-channel only:
+     there is no Meta equivalent, because on Meta the count and the cost already come
+     from the same place. A day Google did not answer for is blank, not zero. */
+  gconv: {label:'Conversions (Google)', of:d=>(d&&d.gconv!=null)?d.gconv:null, fmt:num,
+          agg:null},
+  gcpt:  {label:'CPT (Google)', of:d=>(d&&d.gconv)?d.spend/d.gconv:null, fmt:rs,
+          agg:(sp,r)=>r.gconv?sp/r.gconv:null, num:'gconv'},
 };
 const metricOf = () => METRICS[sMetric()] || METRICS.spend;
 
@@ -1818,6 +1922,18 @@ function sDimAvail(){
 }
 
 function sMetricAvail(){
+  /* Google-only metrics leave the list on Meta rather than sitting there dead -- same
+     rule the dimension picker follows, and the same reason: an option that cannot exist
+     on this channel is not a disabled choice, it is not a choice. And if the current
+     selection is one of them, it has to be moved off before the channel switches, or the
+     grid asks Meta's fold for a column it has never carried. */
+  const sel = document.getElementById('sMetric');
+  for(const opt of sel.options){
+    if(!opt.dataset.c) continue;
+    const mine = opt.dataset.c === (chanIsMeta() ? 'meta' : 'google');
+    opt.hidden = !mine; opt.disabled = !mine;
+    if(!mine && sel.value === opt.value) sel.value = 'spend';
+  }
   const o = document.querySelector('#sMetric option[value="bud"]');
   if(!o) return;
   /* Only judge once a fold has arrived. Treating "not loaded yet" as "no budget here"
@@ -1874,7 +1990,8 @@ const mPages = n => MPER ? Math.max(1, Math.ceil(n / MPER)) : 1;
 
 /* The window total for a row under the current metric. */
 const rowSums = r => ({t101:r.total_t101, inst:r.total_inst,
-                       imp:r.total_imp, clk:r.total_clk, isp:r.total_isp});
+                       imp:r.total_imp, clk:r.total_clk, isp:r.total_isp,
+                       gconv:r.total_gconv});
 function rowTotal(r){
   const m = metricOf();
   if(m.agg) return m.agg(r.total_spend, rowSums(r));
@@ -2159,24 +2276,30 @@ function renderMatrix(){
      answer to "and what is the whole window", which is no longer on screen. */
   const tot = set => {
     const colTot = d => { let sp=0, t=0, n=0, b=0, bAny=false, im=0, ck=0, isp=0;
+      let gc=0, gcAny=false;
       set.forEach(r => { const x=r.days[d]; if(!x) return;
         sp+=x.spend; t+=x.t101; n+=x.inst;
         if(x.imp != null){ im+=x.imp; ck+=x.clk; isp+=x.isp; }
+        if(x.gconv != null){ gc+=x.gconv; gcAny=true; }
         if(x.bud != null){ b+=x.bud; bAny=true; } });
-      if(m.agg) return m.agg(sp,{t101:t,inst:n,imp:im,clk:ck,isp:isp});
+      if(m.agg) return m.agg(sp,{t101:t,inst:n,imp:im,clk:ck,isp:isp,gconv:gcAny?gc:0});
       if(sMetric()==='imp') return im || null;
       if(sMetric()==='clk') return im ? ck : null;
+      /* Same rule as budget: a day Google reported nothing FOR is blank, not zero. */
+      if(sMetric()==='gconv') return gcAny ? gc : null;
       /* A budget column with no snapshot on that day totals to nothing, not to zero. */
       if(sMetric()==='bud') return bAny ? b : null;
       return sMetric()==='spend'?sp:sMetric()==='t101'?t:n; };
-    let sp=0,t=0,n=0,b=0,bAny=false,im=0,ck=0,isp=0;
+    let sp=0,t=0,n=0,b=0,bAny=false,im=0,ck=0,isp=0,gc=0,gcAny=false;
     set.forEach(r => { sp+=r.total_spend; t+=r.total_t101; n+=r.total_inst;
       if(r.total_imp != null){ im+=r.total_imp; ck+=r.total_clk; isp+=r.total_isp; }
+      if(r.total_gconv != null){ gc+=r.total_gconv; gcAny=true; }
       if(r.total_bud != null){ b+=r.total_bud; bAny=true; } });
-    const gt = m.agg ? m.agg(sp,{t101:t,inst:n,imp:im,clk:ck,isp:isp})
+    const gt = m.agg ? m.agg(sp,{t101:t,inst:n,imp:im,clk:ck,isp:isp,gconv:gcAny?gc:0})
              : sMetric()==='bud' ? (bAny ? b : null)
              : sMetric()==='imp' ? (im || null)
              : sMetric()==='clk' ? (im ? ck : null)
+             : sMetric()==='gconv' ? (gcAny ? gc : null)
              : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n);
     return `<td>${gt===null?'—':m.fmt(gt)}</td>` + dates.map(d => { const v = colTot(d);
       return `<td>${v===null||!isFinite(v)?'—':m.fmt(v)}</td>`; }).join('');
@@ -3087,7 +3210,42 @@ function googNote(){
   const src = `${GOOG.trial_days}/${GOOG.days} day(s) have trial data${
      GOOG.stored_days ? `, ${GOOG.stored_days} of them from the history store` : ''}.
      ${GOOG.trials_error ? `<b>Branch reported an error:</b> ${GOOG.trials_error}` : ''}`;
+
+  /* The two CPTs are the thing most likely to be misread as a bug, so the note leads
+     with WHY they differ and states the size of the gap on this brand's own numbers
+     rather than in the abstract. */
+  const tr = t[ev] || 0, gc = t.gconv || 0;
+  const gap = (tr && gc) ? 100 * (gc - tr) / tr : null;
+  const two = GOOG.conv_ok
+    ? `<b>Two CPTs, one spend.</b> The cost is not in dispute — it is what Google billed.
+       What differs is the count it is divided by.<br><br>
+       <b class="src branch">Branch</b> counts a trial when it sees the install and the
+       event, and attributes it to the ad group its own model credits.
+       <b class="src gads">Google Ads</b> counts the same event
+       ${GOOG.conv_event ? `(<code>${GOOG.conv_event}</code>)` : ''} when ITS model
+       credits a click or a view it served, over its own lookback windows.
+       ${gap === null ? '' : `Over this window Google counts
+         <b>${gap > 0 ? gap.toFixed(0) + '% more' : Math.abs(gap).toFixed(0) + '% fewer'}</b>
+         than Branch — ${num(Math.round(gc))} against ${num(tr)} —
+         ${Math.abs(gap) < 5
+           ? 'which is close enough that the two models agree here.'
+           : 'so the CPT you act on depends on which count you trust.'}`}<br><br>
+       Neither is the other's error and they are never averaged: a blend of two
+       attribution models measures nothing. Only the Branch CPT is judged against the
+       target, because the target was agreed against Branch's definition — and the rest of
+       this dashboard, including every Meta tab and the Blended view, counts trials that
+       same way. Google's number is here to be compared, not to be mixed in.<br><br>
+       Counted from <b>Google's <i>Conversions</i> column</b>, not <i>All conversions</i>.
+       The same event usually arrives twice, from Branch and from Firebase, and only one
+       feed is marked primary — <i>All conversions</i> would count both and report a CPT
+       well below the truth.`
+    : `<b>Google's own conversion count is unavailable for this window</b>, so the
+       Google-attribution columns show a dash rather than a zero. The Branch figures are
+       unaffected.
+       <span class="dimtxt">${(GOOG.conv_error||'').replace(/</g,'&lt;')}</span>`;
+
   return nsec('Google Ads only', scope)
+    + nsec('Why there are two CPTs', two)
     + nsec('How trials join to campaigns', join)
     + nsec('Spend', spend)
     + nsec('Where the figures came from', src);

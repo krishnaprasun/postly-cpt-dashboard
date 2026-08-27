@@ -13,6 +13,7 @@ are the only shared key -- the same trade the Meta side already makes at ad-name
 """
 import json
 import os
+import re
 import threading
 import time
 import urllib.error
@@ -273,6 +274,97 @@ def spend_daily(customer_id, since, until, login=None):
                 "spend": int(m.get("costMicros") or 0) / 1_000_000,
                 "imp": int(m.get("impressions") or 0),
                 "clk": int(m.get("clicks") or 0)})
+    _last_error = None
+    return out
+
+
+GAQL_CONV = """
+SELECT segments.date, segments.conversion_action_name,
+       campaign.id, campaign.name, ad_group.id, ad_group.name,
+       metrics.conversions
+FROM ad_group
+WHERE segments.date BETWEEN '{since}' AND '{until}'
+  AND segments.conversion_action_name LIKE '%{suffix}%'
+"""
+
+
+# Google appends the creation timestamp to a conversion action's name when the same event
+# is imported twice -- "... postly_trial_started_backend 2026-07-10T09:56:11.245". Two of
+# the three brands are named that way, so an endswith test against the raw name matches
+# nothing at all, which reads on the page as "Google reported no conversions".
+_TS_SUFFIX = re.compile(r"\s+\d{4}-\d{2}-\d{2}T[\d:.]+$")
+
+
+def _action_is(action, event):
+    """Whether this conversion action IS the brand's trial event.
+
+    The GAQL filter is a `contains`, because the event sits in the middle of the name once
+    a timestamp is appended. Contains alone is too loose -- an event that is a prefix of a
+    longer one (`trial_started` inside `trial_started_backend`) would swallow it -- so the
+    real test is done here: strip the timestamp, then require the name to END with the
+    event.
+    """
+    name = _TS_SUFFIX.sub("", action or "").strip()
+    return name.endswith(event)
+
+
+def conv_daily(customer_id, since, until, suffix, login=None):
+    """[{date, campaign, ad_group, conv}] -- what GOOGLE says the trial event earned.
+
+    The other half of a bifurcated CPT. Branch answers "which Google ad group earned this
+    trial" from its own attribution; Google answers the same question from its own, over
+    its own lookback windows, and the two do not agree. Neither is wrong; they are
+    different questions, and the page shows both rather than picking a winner.
+
+    Matched by NAME SUFFIX, not by conversion action id. A brand's Branch event
+    (`trial_started_backend`) arrives in Google as a conversion action called
+    "Funda: Daily learning in 1 Min (Android) trial_started_backend" -- the app prefixed
+    onto the event -- and the prefix differs per app, per feed and per account, while the
+    event name is exactly the thing this dashboard already keys everything else on.
+
+    **`metrics.conversions`, never `all_conversions`.** The same event usually arrives
+    twice, from two feeds: a third-party-analytics action (Branch) and a Firebase one.
+    Postly has both, and both end with `postly_trial_started_backend`. Only one is marked
+    primary, so `conversions` counts it once (508 and 0) while `all_conversions` would
+    count it twice (694 and 403) and report a CPT ~40% too low. `conversions` is also the
+    column Google itself bids on, which is what makes it the number worth comparing.
+    """
+    global _last_error
+    c = creds()
+    if not c:
+        _last_error = "no Google Ads credentials"
+        return []
+    # The suffix goes into a GAQL string literal. Event names are identifiers, but a
+    # quote or a backslash arriving from config must never be able to close it.
+    suffix = str(suffix or "").replace("\\", "").replace("'", "")
+    if not suffix:
+        return []
+    cid = str(customer_id).replace("-", "")
+    body = {"query": GAQL_CONV.format(since=since, until=until, suffix=suffix)}
+    try:
+        j = _post(f"/customers/{cid}/googleAds:searchStream", body, c, login=login)
+    except urllib.error.HTTPError as e:
+        _last_error = _err(e)
+        return []
+    except Exception as e:
+        _last_error = f"Google Ads: {str(e)[:200]}"
+        return []
+    out = []
+    for chunk in (j if isinstance(j, list) else [j]):
+        for row in (chunk.get("results") or []):
+            m = row.get("metrics") or {}
+            action = (row.get("segments") or {}).get("conversionActionName") or ""
+            if not _action_is(action, suffix):
+                continue
+            out.append({
+                "date": (row.get("segments") or {}).get("date"),
+                "customer_id": cid,
+                "campaign": (row.get("campaign") or {}).get("name") or "",
+                "ad_group": (row.get("adGroup") or {}).get("name") or "",
+                "action": action,
+                # Google reports fractional conversions; they are summed and rounded once
+                # at the top rather than per row.
+                "conv": float(m.get("conversions") or 0)})
     _last_error = None
     return out
 

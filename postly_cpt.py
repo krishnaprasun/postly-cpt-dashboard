@@ -1392,6 +1392,7 @@ def _google_series_build(brand, since, until, dim="gadgroup", force=False):
 
     # ---- spend, straight from Google Ads, already per day ---------------------
     spend_days, spend_err = set(), None
+    conv_days, conv_err = set(), None
     cust, how = ([], "no credentials")
     if GA.available():
         cust, how = google_customers(brand)
@@ -1413,8 +1414,26 @@ def _google_series_build(brand, since, until, dim="gadgroup", force=False):
                 spend_days.add(d)
         spend_err = GA.last_error() or (None if cust else
                                         "no Google Ads account is mapped to this brand")
+        # Google's own count of the same event, per day, so the trend and the grid can
+        # show both attributions rather than only the Branch one the Overview compares.
+        ev_name = B["events"].get(ev_keys[0]) if ev_keys else None
+        if ev_name:
+            keep = r_dates_set(dates)
+            for cid in cust:
+                for x in GA.conv_daily(cid, dates[0], dates[-1], ev_name):
+                    if x["date"] not in keep:
+                        continue
+                    r = cell(x["campaign"], x["ad_group"])
+                    rec = day_of(r, x["date"])
+                    rec["gconv"] = round(rec.get("gconv", 0) + x["conv"], 2)
+                    r["total_gconv"] = round((r.get("total_gconv") or 0) + x["conv"], 2)
+                    conv_days.add(x["date"])
+            conv_err = GA.last_error()
+        else:
+            conv_err = "this brand has no trial event configured"
     else:
         spend_err = "no Google Ads credentials on this instance"
+        conv_err = spend_err
 
     out_rows = sorted(rows.values(), key=lambda r: -r["total_spend"])
     for r in out_rows:
@@ -1432,6 +1451,8 @@ def _google_series_build(brand, since, until, dim="gadgroup", force=False):
             "total_rows": len(out_rows), "stored_days": len(stored),
             "trial_days": trial_days, "trials_error": trials_err,
             "spend_days": len(spend_days), "spend_error": spend_err,
+            "conv_days": len(conv_days), "conv_error": conv_err,
+            "conv_event": (B["events"].get(ev_keys[0]) if ev_keys else None),
             "customers": cust, "customers_how": how,
             # Google has no budget history here and no live/paused flag on an ad group,
             # so the controls that depend on those are told plainly rather than left to
@@ -1658,7 +1679,7 @@ def _google_window_build(brand, since, until, force=False):
     def cell(camp, group):
         return rows.setdefault((camp, group), {
             "campaign": camp or "(no campaign)", "ad_group": group or "(no ad group)",
-            "spend": 0.0, "imp": 0.0, "clk": 0.0,
+            "spend": 0.0, "imp": 0.0, "clk": 0.0, "gconv": 0.0,
             **{k: 0.0 for k in ev_keys}})
 
     trial_days = 0
@@ -1675,6 +1696,7 @@ def _google_window_build(brand, since, until, force=False):
 
     # ---- spend ---------------------------------------------------------------
     spend_days, spend_err = 0, None
+    conv_days, conv_err = set(), None
     cust, how = ([], "no credentials")
     if GA.available():
         cust, how = google_customers(brand)
@@ -1690,8 +1712,23 @@ def _google_window_build(brand, since, until, force=False):
         spend_days = len(seen_days)
         spend_err = GA.last_error() or (
             None if cust else "no Google Ads account is mapped to this brand")
+        # ---- and what Google itself says the same event earned -----------------
+        # A second, cheap query (tens of rows, ~2s) against the same customers. It is
+        # kept separate from spend so a conversion-side failure can never take the cost
+        # column down with it -- one is what we paid, which is not in doubt; the other is
+        # one attribution model's opinion of what it bought.
+        ev_name = B["events"].get(ev_keys[0]) if ev_keys else None
+        if ev_name:
+            for cid in cust:
+                for r in GA.conv_daily(cid, since, until, ev_name):
+                    cell(r["campaign"], r["ad_group"])["gconv"] += r["conv"]
+                    conv_days.add(r["date"])
+            conv_err = GA.last_error()
+        else:
+            conv_err = "this brand has no trial event configured"
     else:
         spend_err = GA.last_error() or "no Google Ads credentials on this instance"
+        conv_err = spend_err
 
     out_rows = sorted(rows.values(),
                       key=lambda r: (-r["spend"], -r.get(ev_keys[0], 0)))
@@ -1699,12 +1736,12 @@ def _google_window_build(brand, since, until, force=False):
     for r in out_rows:
         c = camps.setdefault(r["campaign"], {
             "campaign": r["campaign"], "ad_groups": 0, "spend": 0.0,
-            "imp": 0.0, "clk": 0.0, **{k: 0.0 for k in ev_keys}})
+            "imp": 0.0, "clk": 0.0, "gconv": 0.0, **{k: 0.0 for k in ev_keys}})
         c["ad_groups"] += 1
-        for k in ("spend", "imp", "clk", *ev_keys):
+        for k in ("spend", "imp", "clk", "gconv", *ev_keys):
             c[k] += r[k]
     tot = {k: round(sum(r[k] for r in out_rows), 2)
-           for k in ("spend", "imp", "clk", *ev_keys)}
+           for k in ("spend", "imp", "clk", "gconv", *ev_keys)}
     return {
         "brand": brand, "since": since, "until": until,
         "events": list(B["events"]), "event_labels": B["labels"],
@@ -1717,6 +1754,13 @@ def _google_window_build(brand, since, until, force=False):
         "customers": cust, "customers_how": how,
         "spend_ok": bool(spend_days),
         "spend_error": None if spend_days else spend_err,
+        # Google-reported conversions are a SECOND reading of the same window, so they
+        # get their own ok/error pair. Zero conversion days means the number is unknown,
+        # not zero -- the same rule the Branch side has always followed.
+        "conv_days": len(conv_days),
+        "conv_event": (B["events"].get(ev_keys[0]) if ev_keys else None),
+        "conv_ok": bool(conv_days),
+        "conv_error": None if conv_days else conv_err,
         "trials_error": err,
         "stored_days": len(stored),
         "generated_at": now_ist_str(),
