@@ -113,6 +113,20 @@ timestamp Google appends when an event is imported twice; two of the three brand
 named that way, so an exact-suffix test finds nothing at all and reads on the page as
 "Google reported no conversions".
 
+### Hook rate divides by video impressions, not all impressions
+
+Video was added to the pull a day after impressions, so days settled in between hold
+impressions and no video. Both rates therefore divide by `vimp` — the impressions of rows
+that actually reported video — and a day without video is blank, never a zero hook rate.
+On the trend it draws as a gap. Same rule as CPM dividing `imp_spend` rather than total
+spend, and for the same reason: a rate must not be diluted by the part of the window it
+never measured.
+
+The 3-second count has no field of its own in v21; it comes from the `video_view` entry
+inside `actions`, narrowed with the `filtering` parameter. That filter was checked against
+an unfiltered pull first — same 604 rows, same ₹258,000.84 — because if it had dropped
+rows it would have deleted spend, not just video.
+
 ### The Google creative count is assets, not ads, and is not windowed
 
 A Google ad group has exactly one ad — App campaigns put the variety in the assets. So the

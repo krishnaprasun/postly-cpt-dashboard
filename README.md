@@ -1301,6 +1301,55 @@ Three things make it safe to leave scheduled after it finishes:
 The stored day's **Branch trials are read and written back untouched**; losing a day's
 trials to a reach backfill would be an absurd trade.
 
+## Hook rate and ThruPlay %
+
+**Hook rate = 3-second video plays ÷ impressions** — of the people this reached, how many
+stopped scrolling. **ThruPlay % = ThruPlays ÷ impressions** — how many actually watched it,
+meaning to the end, or fifteen seconds for a longer video. Both appear at every level
+(account, campaign, ad set, ad) beside CTR and CPM, and as metrics on Daily trend and Day
+grid.
+
+Live on 2026-08-27, last 3 days:
+
+| brand | hook rate | ThruPlay % |
+|---|---:|---:|
+| Speakeasy | 26.25% | 9.12% |
+| Funda | 22.77% | 7.67% |
+| Postly | 21.97% | 3.32% |
+
+### Getting the 3-second count at all
+
+`video_3_sec_watched_actions` was removed and v21 rejects it outright. The count survives
+only as the `video_view` entry inside `actions` — and `actions` unfiltered is 27 action
+types per row, 346 KB a page. The `filtering` parameter narrows it to that one type, 112 KB.
+
+**That filter was verified not to drop rows before being relied on**, because if it had,
+it would have silently deleted spend: filtered and unfiltered both return 604 rows
+totalling ₹258,000.84, to the paisa.
+
+Both video fields are **absent when the count is zero** — 129 of 604 rows had plays and no
+ThruPlay key at all. So absence means nothing was watched, not "not a video ad", and both
+are read as 0. Rows carrying no video signal whatsoever were 0.0% of spend (₹15 of
+₹258,001), all of them one-impression rows.
+
+### Why video has its own denominator
+
+Impressions were added to the pull on 2026-08-26 and video on 2026-08-27, so **every day
+settled in between carries impressions and no video**. Dividing by `imp` would put those
+impressions under a zero numerator and report a hook rate diluted by exactly the
+unmeasured fraction.
+
+So the rows that report video accumulate their own impression base, `vimp`, and both rates
+divide by that — never by `imp`. The figure is then correct on day one over whatever
+fraction is measured, and `vid_coverage` states what that fraction is. On the trend a
+pre-video day is a **gap, not a zero**: the line breaks rather than dropping to the floor.
+
+Stored days can gain video the same way they gained impressions — `reach_backfill` now
+requires both, and its marker namespace moved to `{brand}reachdone2` so the completed
+impressions run does not report the days as finished. That reset the queue to 97–98 days
+per brand, which the existing `ads-reach-backfill-*` jobs work through between 00:00 and
+02:00 IST.
+
 ## Cache versioning
 
 `APP_VERSION` — a stamp derived from the mtimes of the app's own files — is folded into

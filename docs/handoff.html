@@ -766,6 +766,16 @@ Reverse any of them if there is a reason — but know what you are reversing.</p
   <strong>hidden</strong>, not greyed.</p>
 </div>
 <div class="dec">
+  <h4>Hook rate divides by video impressions, not all impressions</h4>
+  <p>Video was added to the pull a day after impressions, so days settled in between hold
+  impressions and no video. Both video rates divide by <code>vimp</code> — the impressions
+  of rows that actually reported video — and a day without video is blank, never a zero
+  hook rate; on the trend it draws as a gap. The 3-second count has no field of its own in
+  v21, so it comes from the <code>video_view</code> entry inside <code>actions</code>,
+  narrowed with <code>filtering</code> — a filter checked against an unfiltered pull first,
+  because if it dropped rows it would have deleted spend, not just video.</p>
+</div>
+<div class="dec">
   <h4>The Google creative count is assets, not ads</h4>
   <p>A Google ad group has exactly one ad — App campaigns put the variety in the assets —
   so counting <code>ad_group_ad</code> returns 1 on every row and answers nothing. The
