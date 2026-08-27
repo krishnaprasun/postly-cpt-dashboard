@@ -685,6 +685,8 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
         <option value="clk">Clicks</option>
         <option value="ctr">CTR</option>
         <option value="cpmille">CPM</option>
+        <option value="hook">Hook rate</option>
+        <option value="thru">ThruPlay %</option>
         <option value="t101">Trials</option>
         <option value="cpt">CPT</option>
         <option value="inst">Installs</option>
@@ -1899,6 +1901,13 @@ const METRICS = {
      would report a CPM inflated by exactly the unmeasured fraction. */
   cpmille:{label:'CPM',     of:d=>(d&&d.imp)?1000*d.isp/d.imp:null, fmt:rs,
           agg:(sp,r)=>r.imp?1000*r.isp/r.imp:null},
+  /* Both divide by `vimp`, the impressions that came WITH video, never by `imp`. A day
+     stored before video was fetched has impressions and no `vimp`, so it plots as a gap
+     rather than as a hook rate of zero. */
+  hook:  {label:'Hook rate', of:d=>(d&&d.vimp)?100*d.vv/d.vimp:null,
+          fmt:v=>v.toFixed(2)+'%', agg:(sp,r)=>r.vimp?100*r.vv/r.vimp:null},
+  thru:  {label:'ThruPlay %', of:d=>(d&&d.vimp)?100*d.tp/d.vimp:null,
+          fmt:v=>v.toFixed(2)+'%', agg:(sp,r)=>r.vimp?100*r.tp/r.vimp:null},
   /* Google's own count of the trial event, and the CPT it implies. Google-channel only:
      there is no Meta equivalent, because on Meta the count and the cost already come
      from the same place. A day Google did not answer for is blank, not zero. */
@@ -2016,6 +2025,7 @@ const mPages = n => MPER ? Math.max(1, Math.ceil(n / MPER)) : 1;
 /* The window total for a row under the current metric. */
 const rowSums = r => ({t101:r.total_t101, inst:r.total_inst,
                        imp:r.total_imp, clk:r.total_clk, isp:r.total_isp,
+                       vv:r.total_vv, tp:r.total_tp, vimp:r.total_vimp,
                        gconv:r.total_gconv});
 function rowTotal(r){
   const m = metricOf();
@@ -2301,13 +2311,15 @@ function renderMatrix(){
      answer to "and what is the whole window", which is no longer on screen. */
   const tot = set => {
     const colTot = d => { let sp=0, t=0, n=0, b=0, bAny=false, im=0, ck=0, isp=0;
-      let gc=0, gcAny=false;
+      let gc=0, gcAny=false, vv=0, tp=0, vi=0;
       set.forEach(r => { const x=r.days[d]; if(!x) return;
         sp+=x.spend; t+=x.t101; n+=x.inst;
         if(x.imp != null){ im+=x.imp; ck+=x.clk; isp+=x.isp; }
+        if(x.vimp != null){ vv+=x.vv; tp+=x.tp; vi+=x.vimp; }
         if(x.gconv != null){ gc+=x.gconv; gcAny=true; }
         if(x.bud != null){ b+=x.bud; bAny=true; } });
-      if(m.agg) return m.agg(sp,{t101:t,inst:n,imp:im,clk:ck,isp:isp,gconv:gcAny?gc:0});
+      if(m.agg) return m.agg(sp,{t101:t,inst:n,imp:im,clk:ck,isp:isp,gconv:gcAny?gc:0,
+                                 vv:vv,tp:tp,vimp:vi});
       if(sMetric()==='imp') return im || null;
       if(sMetric()==='clk') return im ? ck : null;
       /* Same rule as budget: a day Google reported nothing FOR is blank, not zero. */
@@ -2315,12 +2327,14 @@ function renderMatrix(){
       /* A budget column with no snapshot on that day totals to nothing, not to zero. */
       if(sMetric()==='bud') return bAny ? b : null;
       return sMetric()==='spend'?sp:sMetric()==='t101'?t:n; };
-    let sp=0,t=0,n=0,b=0,bAny=false,im=0,ck=0,isp=0,gc=0,gcAny=false;
+    let sp=0,t=0,n=0,b=0,bAny=false,im=0,ck=0,isp=0,gc=0,gcAny=false,vv=0,tp=0,vi=0;
     set.forEach(r => { sp+=r.total_spend; t+=r.total_t101; n+=r.total_inst;
       if(r.total_imp != null){ im+=r.total_imp; ck+=r.total_clk; isp+=r.total_isp; }
+      if(r.total_vimp != null){ vv+=r.total_vv; tp+=r.total_tp; vi+=r.total_vimp; }
       if(r.total_gconv != null){ gc+=r.total_gconv; gcAny=true; }
       if(r.total_bud != null){ b+=r.total_bud; bAny=true; } });
-    const gt = m.agg ? m.agg(sp,{t101:t,inst:n,imp:im,clk:ck,isp:isp,gconv:gcAny?gc:0})
+    const gt = m.agg ? m.agg(sp,{t101:t,inst:n,imp:im,clk:ck,isp:isp,gconv:gcAny?gc:0,
+                                 vv:vv,tp:tp,vimp:vi})
              : sMetric()==='bud' ? (bAny ? b : null)
              : sMetric()==='imp' ? (im || null)
              : sMetric()==='clk' ? (im ? ck : null)
@@ -2588,6 +2602,8 @@ const COLS = {
     {k:'cpt', t:'CPT', kind:'cpt'},
     {k:'ctr', t:'CTR', kind:'ctr'},
     {k:'cpmille', t:'CPM', kind:'rs'},
+    {k:'hook', t:'Hook', kind:'ctr'},
+    {k:'thru', t:'ThruPlay', kind:'ctr'},
     {k:'active_adsets', t:'Ad sets', kind:'num'},
     {k:'active_ads', t:'Ads', kind:'num'}],
   campaigns: [
@@ -2599,6 +2615,8 @@ const COLS = {
     {k:'cpt', t:'CPT', kind:'cpt'},
     {k:'ctr', t:'CTR', kind:'ctr'},
     {k:'cpmille', t:'CPM', kind:'rs'},
+    {k:'hook', t:'Hook', kind:'ctr'},
+    {k:'thru', t:'ThruPlay', kind:'ctr'},
     {k:'active_adsets', t:'Ad sets', kind:'num'},
     {k:'active_ads', t:'Ads', kind:'num'}],
   adsets: [
@@ -2610,6 +2628,8 @@ const COLS = {
     {k:'cpt', t:'CPT', kind:'cpt'},
     {k:'ctr', t:'CTR', kind:'ctr'},
     {k:'cpmille', t:'CPM', kind:'rs'},
+    {k:'hook', t:'Hook', kind:'ctr'},
+    {k:'thru', t:'ThruPlay', kind:'ctr'},
     {k:'active_ads', t:'Ads', kind:'num'}],
   ads: [
     {k:'name', t:'Ad', kind:'name'},
@@ -2618,7 +2638,9 @@ const COLS = {
     {k:'trials', t:'Trials', kind:'num'},
     {k:'cpt', t:'CPT', kind:'cpt'},
     {k:'ctr', t:'CTR', kind:'ctr'},
-    {k:'cpmille', t:'CPM', kind:'rs'}],
+    {k:'cpmille', t:'CPM', kind:'rs'},
+    {k:'hook', t:'Hook', kind:'ctr'},
+    {k:'thru', t:'ThruPlay', kind:'ctr'}],
 };
 
 /* Appended to whichever tab is showing, so signups and mandates sit on the same row as
@@ -2659,6 +2681,13 @@ function rows(tab, filtered){
          total spend would inflate CPM by exactly the ratio of unmeasured days. */
       ctr: o.imp ? 100 * o.clk / o.imp : null,
       cpmille: o.imp ? 1000 * o.imp_spend / o.imp : null,
+      /* Hook rate = 3-second plays / impressions: of the people this reached, how many
+         stopped scrolling. ThruPlay % = ThruPlays / impressions: how many actually
+         watched it. Both divide by `vimp` -- the impressions of rows that REPORTED video
+         -- never by `imp`. Days stored before video was fetched carry impressions and no
+         video, and dividing by `imp` would dilute both rates by exactly that fraction. */
+      hook: o.vimp ? 100 * o.vv / o.vimp : null,
+      thru: o.vimp ? 100 * o.tp / o.vimp : null,
       cps: cpt(o.spend, o.cp_signups), cpm: cpt(o.spend, o.cp_mandates),
       d0a: o.cp_mandates > 0 ? 100*o.cp_d0a/o.cp_mandates : null,
       d0c: o.cp_mandates > 0 ? 100*o.cp_d0c/o.cp_mandates : null}));
@@ -2984,6 +3013,7 @@ function renderTable(){
   /* Derived from the SUMS, never the mean of the rows' rates: an average CTR across ad
      sets of wildly different size is a number no impression actually experienced. */
   const im = sum('imp'), ck = sum('clk'), isp = sum('imp_spend');
+  const vv = sum('vv'), tp = sum('tp'), vi = sum('vimp');
   tbl.querySelector('tfoot').innerHTML = '<tr>' + cols.map(c => {
     if(c.kind==='name') return `<td>${r.length} rows shown</td>`;
     if(c.k==='spend') return `<td>${rs(sp)}</td>`;
@@ -2991,6 +3021,10 @@ function renderTable(){
     if(c.kind==='cpt') return `<td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`;
     if(c.k==='cps') return `<td>${cptTxt(sp,su)}</td>`;
     if(c.kind==='cpm') return `<td class="${cls(cpt(sp,md))}">${cptTxt(sp,md)}</td>`;
+    if(c.k==='hook') return `<td>${vi ? (100*vv/vi).toFixed(2)+'%'
+                                      : '<span class="dimtxt">—</span>'}</td>`;
+    if(c.k==='thru') return `<td>${vi ? (100*tp/vi).toFixed(2)+'%'
+                                      : '<span class="dimtxt">—</span>'}</td>`;
     if(c.kind==='ctr') return `<td>${im ? (100*ck/im).toFixed(2)+'%'
                                         : '<span class="dimtxt">—</span>'}</td>`;
     if(c.k==='cpmille') return `<td>${im ? rs(1000*isp/im)
@@ -3163,6 +3197,19 @@ function seriesNote(){
            earlier days hold spend and nothing else, and show a blank rather than a zero —
            a day with no measurement is not a day with no clicks. `)
     : '';
+  const vid = ['hook','thru'].includes(sMetric())
+    ? `<b>Hook rate is 3-second video plays ÷ impressions</b> — of the people this reached,
+       how many stopped scrolling. <b>ThruPlay %</b> is ThruPlays ÷ impressions: how many
+       actually watched it, meaning to the end, or fifteen seconds for a longer video.<br><br>
+       Both divide by the impressions that came <i>with</i> video, never by the row's whole
+       impression count. Video was added to the pull on ${SERIES.vid_from || 'a later date'},
+       so days stored before that carry impressions and no video — dividing by all
+       impressions would report a hook rate diluted by exactly that fraction. Those days
+       are <b>blank, not zero</b>, and the line breaks over them rather than dropping to
+       the floor.<br><br>
+       Meta omits both counts entirely when nothing was watched, so a row that reads 0.00%
+       genuinely got no plays; it is not a missing field. `
+    : '';
   const bud = sMetric() !== 'bud' ? ''
     : !SERIES.budget_dim
       ? `<b>Budget does not apply to this dimension</b> — Meta holds a budget against ad
@@ -3199,6 +3246,7 @@ function seriesNote(){
     + nsec('Pro rata', pro, true)
     + nsec('Rows', dimNote, true)
     + nsec('Impressions, CTR and CPM', reach)
+    + nsec('Hook rate and ThruPlay %', vid)
     + nsec('Budget', bud, true)
     + nsec('Coverage', `${trunc}${src}
         Trials and installs are split across rows that share an ad name by that
@@ -3441,12 +3489,33 @@ function mainNote(){
          WITH those impressions, not the window's total, so it is not inflated by the
          gap — but they are not the whole window yet. A row with nothing measured shows a
          dash, never a zero.<br><br>`;
+  /* Video's coverage is its OWN number: impressions were added a day earlier than video,
+     so the two fractions differ and quoting one for the other would misstate how much of
+     the window each rate actually covers. */
+  const vcov = DATA.vid_coverage;
+  const vidNote = (vcov === null || vcov === undefined) ? '' :
+    `<b>Hook rate</b> is 3-second video plays ÷ impressions — of the people this reached,
+     how many stopped scrolling. <b>ThruPlay %</b> is ThruPlays ÷ impressions: how many
+     actually watched it, meaning to the end, or fifteen seconds for a longer video.<br><br>
+     ${vcov >= 0.999
+       ? `Both are rolled up from the ad and derived from the sums, never averaged across
+          rows — an average hook rate over creatives of wildly different size is a rate no
+          impression experienced.`
+       : `<b>They cover ${(100*vcov).toFixed(0)}% of this window's impressions.</b> Video
+          was added to the pull on ${DATA.vid_from}; days stored before that carry
+          impressions and no video. Both rates divide by the impressions that came WITH
+          video, never by the window's whole count, so what is shown is true of the
+          measured part rather than diluted by the gap.`}<br><br>
+     Meta drops both counts entirely when nothing was watched, so a row reading 0.00% got
+     no plays — it is not a missing measurement. A row with no video measured at all shows
+     a dash.<br><br>`;
   const lag = `Today's numbers are still landing — Meta spend lags a few minutes${
      hasTrials() ? ' and Branch trials keep arriving through the day, so intraday CPT reads high early and settles down' : ''}.`;
   paintNote(
       nsec('Meta ads only', scope, true)
     + nsec('Where the figures came from', srcNote())
     + nsec('CTR and CPM', impNote, true)
+    + nsec('Hook rate and ThruPlay %', vidNote, true)
     + nsec('Which channel earned these trials', chanNote(), true)
     + nsec('Testing vs trial', segNote(), true)
     + nsec('Signups and mandates', cpNote(), true)

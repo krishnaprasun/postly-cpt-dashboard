@@ -287,13 +287,21 @@ def ad_preview(ad_id, fmt="MOBILE_FEED_STANDARD"):
 # scheduled. A run that finds nothing to do costs one cheap call and says so, which is
 # what lets the schedule sit there harmlessly after it has finished.
 def _day_has_reach(day):
-    """True when every Meta row in a stored day already reports impressions."""
+    """True when every Meta row in a stored day carries impressions AND video.
+
+    Both, because they arrived a day apart: days settled between IMP_FROM and VID_FROM
+    hold impressions and no hook rate. Requiring only impressions would call those days
+    finished and leave the video columns permanently blank on them.
+    """
     rows = [r for rs in ((day or {}).get("meta") or {}).values() for r in rs]
-    return bool(rows) and all(has_imp(r) for r in rows)
+    return bool(rows) and all(has_imp(r) and has_vid(r) for r in rows)
 
 
 def reach_ns(brand):
-    return f"{brand}reachdone"
+    # v2: the marker names WHAT was backfilled, and the answer changed when video joined
+    # impressions. Reusing the old namespace would hand back a completed list and the
+    # backfill would skip every day it now has more to fetch for.
+    return f"{brand}reachdone2"
 
 
 def reach_done(brand):
@@ -337,7 +345,7 @@ def reach_backfill(brand, budget_s=90, max_days=0, dry=False):
         # before the marker existed. Mark it and move on rather than paying for it again.
         if _day_has_reach(stored_day):
             fresh_done.add(d)
-            out["days"].append({"date": d, "skipped": "already has impressions"})
+            out["days"].append({"date": d, "skipped": "already has impressions and video"})
             continue
         t = time.time()
         try:
@@ -538,11 +546,62 @@ def budget_days(brand, dates):
     return H.fetch_raw(budget_ns(brand), list(dates))
 
 
+# ---- video: hook rate and ThruPlay % ---------------------------------------
+# Hook rate = 3-second video plays / impressions -- of the people this reached, how many
+# stopped scrolling. ThruPlay % = ThruPlays / impressions -- how many actually watched it
+# (to the end, or 15s for a longer video).
+#
+# The 3-second count has no field of its own any more: `video_3_sec_watched_actions` was
+# removed and v21 rejects it. It survives only as the `video_view` entry inside `actions`,
+# and `actions` unfiltered is 27 action types per row and 346 KB a page. The `filtering`
+# parameter narrows it to the one type -- 112 KB, and verified NOT to drop rows: filtered
+# and unfiltered both return 604 rows totalling 258,000.84 exactly. Getting that wrong
+# would have quietly deleted spend, so it was checked before being relied on.
+#
+# Both fields are ABSENT when the count is zero, not zero -- 129 of 604 rows had plays and
+# no ThruPlay key at all. So absence means nothing was watched, and `_vid` reads it as 0.
+VIDEO_FILTER = json.dumps([{"field": "action_type", "operator": "IN",
+                            "value": ["video_view"]}])
+VIDEO_FIELDS = ",video_thruplay_watched_actions,actions"
+
+
+def _action(r, key, action_type):
+    """One action total off an insights row, or None when the row does not carry it."""
+    v = r.get(key)
+    if not isinstance(v, list):
+        return None
+    for a in v:
+        if a.get("action_type") == action_type:
+            return _num(a.get("value"))
+    return None
+
+
+def _vid(rows):
+    """Flatten Meta's action lists into plain `vv` and `tp` numbers, in place.
+
+    Done at the fetch boundary so nothing downstream -- the rollups, the stored day, the
+    series -- ever has to know what shape Meta returned. A row that reports impressions
+    reports video too (both keys are simply omitted when nothing was watched), so `vv` is
+    set whenever the row is a measured one, and stays absent on rows from a day stored
+    before this shipped. That absence is what `has_vid` reads.
+    """
+    for r in rows:
+        if r.get("impressions") is None:
+            continue
+        r["vv"] = _action(r, "actions", "video_view") or 0.0
+        r["tp"] = _action(r, "video_thruplay_watched_actions", "video_view") or 0.0
+        r.pop("actions", None)
+        r.pop("video_thruplay_watched_actions", None)
+    return rows
+
+
 def meta_insights(acct, since, until):
     """Ad-level spend for the window. Re-pulled on every refresh; this is the number."""
-    return _graph(f"{acct}/insights", {
+    return _vid(_graph(f"{acct}/insights", {
         "level": "ad", "time_range": json.dumps({"since": since, "until": until}),
-        "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks"})
+        "filtering": VIDEO_FILTER,
+        "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,"
+                  "impressions,clicks" + VIDEO_FIELDS}))
 
 
 # ---- impressions and clicks ------------------------------------------------
@@ -564,6 +623,18 @@ IMP_FROM = os.environ.get("IMP_FROM", "2026-08-26")
 
 def has_imp(r):
     return r.get("impressions") is not None
+
+
+# Video needs its OWN gate and its own denominator, and this is the trap in it: every day
+# stored between 2026-08-26 and today carries impressions but NO video, so gating video on
+# has_imp() would put those impressions under a zero numerator and report a hook rate
+# diluted by exactly the unmeasured fraction. `vimp` is the impressions of rows that
+# actually reported video, and every rate below divides by that, never by `imp`.
+VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
+
+
+def has_vid(r):
+    return r.get("vv") is not None
 
 
 def _num(v):
@@ -1133,10 +1204,12 @@ def meta_insights_daily(acct, since, until):
     call it replaces: 933 aggregate rows and 1697 per-day rows over the same 3 days both
     total 828,048.30 exactly.
     """
-    return _graph(f"{acct}/insights", {
+    return _vid(_graph(f"{acct}/insights", {
         "level": "ad", "time_increment": 1,
         "time_range": json.dumps({"since": since, "until": until}),
-        "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,impressions,clicks"})
+        "filtering": VIDEO_FILTER,
+        "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,"
+                  "impressions,clicks" + VIDEO_FIELDS}))
 
 
 # Retry budget for the LIVE page vs the backfill. The long backoff that lets a backfill
@@ -2388,6 +2461,7 @@ def _dim_day(meta_rows, branch_day, keys, dim, testing_re, acct_names):
                                "spend": 0.0, "acct": acct, "acct_spend": 0.0,
                                "ad": None, "ad_spend": 0.0,
                                "imp": 0.0, "clk": 0.0, "isp": 0.0, "impn": 0,
+                               "vv": 0.0, "tp": 0.0, "vimp": 0.0,
                                **dict(blank)}
             if sp > e["acct_spend"]:
                 e["acct"], e["acct_spend"] = acct, sp
@@ -2405,6 +2479,10 @@ def _dim_day(meta_rows, branch_day, keys, dim, testing_re, acct_names):
                 e["imp"] += _num(r.get("impressions"))
                 e["clk"] += _num(r.get("clicks"))
                 e["isp"] += sp
+            if has_vid(r):
+                e["vv"] += _num(r.get("vv"))
+                e["tp"] += _num(r.get("tp"))
+                e["vimp"] += _num(r.get("impressions"))
             e["label"] = e["label"] or lbl
             # An ad name that appears under both stages is reported under the stage that
             # spent more on the day, rather than silently taking whichever row came last.
@@ -2607,6 +2685,16 @@ def series(brand, since, until, dim="script", force=False):
                 row["total_imp"] = (row.get("total_imp") or 0) + e["imp"]
                 row["total_clk"] = (row.get("total_clk") or 0) + e["clk"]
                 row["total_isp"] = round((row.get("total_isp") or 0) + e["isp"], 2)
+            # Written only when the day carried video, and keyed separately from `imp` so
+            # a day with impressions and no video stays BLANK on the two video metrics
+            # rather than plotting a zero hook rate it never measured.
+            if e.get("vimp"):
+                rec["vv"] = e["vv"]
+                rec["tp"] = e["tp"]
+                rec["vimp"] = e["vimp"]
+                row["total_vv"] = (row.get("total_vv") or 0) + e["vv"]
+                row["total_tp"] = (row.get("total_tp") or 0) + e["tp"]
+                row["total_vimp"] = (row.get("total_vimp") or 0) + e["vimp"]
 
     cap = SERIES_TOP if SERIES_TOP > 0 else SERIES_MAX_ROWS
     # ---- day-on-day budgets -------------------------------------------------
@@ -3208,6 +3296,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         accounts[a["id"]] = {"id": a["id"], "name": a["name"], "spend": 0.0,
                              "budget": 0.0, "t101": 0.0, "t10m": 0.0,
                              "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
+                "vv": 0.0, "tp": 0.0, "vimp": 0.0,
                              "active_adsets": 0, "active_ads": 0}
         cstat = {c["id"]: c for c in camps}
         live_set_ids = {s["id"] for s in live_sets}
@@ -3219,6 +3308,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                 "id": c["id"], "name": c["name"], "status": c.get("effective_status", ""),
                 "account": a["name"], "account_id": a["id"], "spend": 0.0, "budget": 0.0,
                 "t101": 0.0, "t10m": 0.0, "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
+                "vv": 0.0, "tp": 0.0, "vimp": 0.0,
                 "active_adsets": 0, "active_ads": 0}
         for s in live_sets:
             adsets[s["id"]] = {
@@ -3228,7 +3318,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                 "campaign": (cstat.get(s.get("campaign_id")) or {}).get("name", ""),
                 "account": a["name"], "account_id": a["id"],
                 "spend": 0.0, "t101": 0.0, "t10m": 0.0,
-                "imp": 0.0, "clk": 0.0, "imp_spend": 0.0, "active_ads": 0}
+                "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
+                "vv": 0.0, "tp": 0.0, "vimp": 0.0, "active_ads": 0}
         for x in live_ads:
             ads[x["id"]] = {
                 "id": x["id"], "name": x["name"], "status": x.get("effective_status", ""),
@@ -3236,7 +3327,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                 "campaign_id": x.get("campaign_id"), "campaign": "",
                 "account": a["name"], "account_id": a["id"],
                 "spend": 0.0, "t101": 0.0, "t10m": 0.0,
-                "imp": 0.0, "clk": 0.0, "imp_spend": 0.0}
+                "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
+                "vv": 0.0, "tp": 0.0, "vimp": 0.0}
 
         # spend; also picks up objects that spent in the window but are no longer active
         for r in insights:
@@ -3256,6 +3348,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                                "account": a["name"], "account_id": a["id"],
                                "spend": 0.0, "t101": 0.0, "t10m": 0.0,
                                "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
+                "vv": 0.0, "tp": 0.0, "vimp": 0.0,
                                "active_ads": 0}
             if aid and aid not in ads:
                 ads[aid] = {"id": aid, "name": r.get("ad_name", ""), "status": ad_status,
@@ -3263,7 +3356,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                             "campaign_id": cid, "campaign": r.get("campaign_name", ""),
                             "account": a["name"], "account_id": a["id"],
                             "spend": 0.0, "t101": 0.0, "t10m": 0.0,
-                            "imp": 0.0, "clk": 0.0, "imp_spend": 0.0}
+                            "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
+                "vv": 0.0, "tp": 0.0, "vimp": 0.0}
             if aid:
                 ads[aid]["spend"] += sp
                 # Only rows that actually report impressions feed CTR and CPM, and their
@@ -3273,6 +3367,12 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                     ads[aid]["imp"] += _num(r.get("impressions"))
                     ads[aid]["clk"] += _num(r.get("clicks"))
                     ads[aid]["imp_spend"] += sp
+                # Video keeps its own impression base: a day stored with impressions but
+                # no video must not land under a zero numerator.
+                if has_vid(r):
+                    ads[aid]["vv"] += _num(r.get("vv"))
+                    ads[aid]["tp"] += _num(r.get("tp"))
+                    ads[aid]["vimp"] += _num(r.get("impressions"))
                 ads[aid]["adset"] = ads[aid]["adset"] or r.get("adset_name", "")
                 ads[aid]["campaign"] = ads[aid]["campaign"] or r.get("campaign_name", "")
 
@@ -3398,7 +3498,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
             s[INSTALL_KEY] += x[INSTALL_KEY]
             for k in CP_KEYS:
                 s[k] += x[k]
-            for k in ("imp", "clk", "imp_spend"):
+            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp"):
                 s[k] += x[k]
             if x["active"]:
                 s["active_ads"] += 1
@@ -3409,7 +3509,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
             c[INSTALL_KEY] += s[INSTALL_KEY]
             for k in CP_KEYS:
                 c[k] += s[k]
-            for k in ("imp", "clk", "imp_spend"):
+            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp"):
                 c[k] += s[k]
             c["active_ads"] += s["active_ads"]
             if s["active"]:
@@ -3421,7 +3521,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
             a[INSTALL_KEY] += c[INSTALL_KEY]
             for k in CP_KEYS:
                 a[k] += c[k]
-            for k in ("imp", "clk", "imp_spend"):
+            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp"):
                 a[k] += c[k]
             a["budget"] += c["budget"]
 
@@ -3433,6 +3533,9 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
                 "imp": sum(a["imp"] for a in accounts.values()),
                 "clk": sum(a["clk"] for a in accounts.values()),
                 "imp_spend": sum(a["imp_spend"] for a in accounts.values()),
+                "vv": sum(a["vv"] for a in accounts.values()),
+                "tp": sum(a["tp"] for a in accounts.values()),
+                "vimp": sum(a["vimp"] for a in accounts.values()),
                 "active_adsets": sum(a["active_adsets"] for a in accounts.values()),
                 "active_ads": sum(a["active_ads"] for a in accounts.values())}
     for k in CP_KEYS:
@@ -3444,7 +3547,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     # tables are filtered client-side by the `seg` tag instead, because those rows exist
     # already and shipping three copies of them would treble the payload.
     NUM = (("spend", "budget", "t101", "t10m", INSTALL_KEY,
-            "imp", "clk", "imp_spend",
+            "imp", "clk", "imp_spend", "vv", "tp", "vimp",
             "active_adsets", "active_ads") + CP_KEYS)
 
     def _acct_rows(seg):
@@ -3600,6 +3703,11 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         # hour -- one "last refreshed" for all three was always a fiction.
         # What fraction of the window's spend has impressions behind it. Below 1.0 the
         # page must say so: CTR and CPM are then true of that fraction, not of the window.
+        # What fraction of this window's video rate is actually measured, so a reader is
+        # never left guessing whether a low hook rate is the creative or the coverage.
+        "vid_coverage": (round(combined["vimp"] / combined["imp"], 4)
+                         if combined.get("imp") else None),
+        "vid_from": VID_FROM,
         "imp_coverage": (round(combined["imp_spend"] / combined["spend"], 4)
                          if combined["spend"] else None),
         "imp_from": IMP_FROM,
