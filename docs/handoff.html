@@ -766,6 +766,15 @@ Reverse any of them if there is a reason — but know what you are reversing.</p
   <strong>hidden</strong>, not greyed.</p>
 </div>
 <div class="dec">
+  <h4>The Google creative count is assets, not ads</h4>
+  <p>A Google ad group has exactly one ad — App campaigns put the variety in the assets —
+  so counting <code>ad_group_ad</code> returns 1 on every row and answers nothing. The
+  Creatives column counts serving video and image assets, with retired ones counted
+  separately: a group holding 98 live and 488 retired creatives is not running 586. It is
+  also the only column there that is <strong>current state rather than the selected
+  window</strong>, since assets carry no date on that resource.</p>
+</div>
+<div class="dec">
   <h4>Google's Conversions column, never All conversions</h4>
   <p>The same event usually arrives in Google twice — once from Branch, once from Firebase
   — and only one feed is marked primary. <code>all_conversions</code> counts both and

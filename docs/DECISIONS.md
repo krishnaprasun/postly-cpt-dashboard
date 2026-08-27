@@ -113,6 +113,17 @@ timestamp Google appends when an event is imported twice; two of the three brand
 named that way, so an exact-suffix test finds nothing at all and reads on the page as
 "Google reported no conversions".
 
+### The Google creative count is assets, not ads, and is not windowed
+
+A Google ad group has exactly one ad — App campaigns put the variety in the assets. So the
+column counts serving video and image assets, not `ad_group_ad`, which would read 1 on
+every row. Retired assets are counted apart from live ones, because a group holding 98 live
+and 488 retired creatives is not running 586.
+
+It is also the one column on that table that is **current state rather than the selected
+window**: assets carry no date on this resource. Reading it as "creatives that ran during
+this window" would be wrong, so the header, the tooltip and the info panel each say so.
+
 ### Blended stops at the level where the two are comparable
 
 A Meta ad set and a Google ad group are not rows of the same table. Blended is the only

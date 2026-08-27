@@ -1452,6 +1452,37 @@ carry *Conversions (Google)* and *CPT (Google)* as metrics on the Google channel
 leave the picker entirely on Meta — there is no Meta equivalent, because there the count
 and the cost already come from the same place.
 
+### "How many ads are in this ad group" — and why the column says Creatives
+
+**One.** Always one. Every campaign in these accounts is an App campaign (UAC), where an
+ad group holds a single `APP_AD` and all the creative variety lives in the **assets**
+attached to it. Counting `ad_group_ad` returns 1 on every row for all three brands and
+answers nothing.
+
+What people mean by the question is how many videos and images are running, so that is
+what the **Creatives** column counts — `ad_group_ad_asset_view`, filtered to
+`YOUTUBE_VIDEO` / `IMAGE` / `MEDIA_BUNDLE`, and only the ones still `enabled`. An asset
+that is attached but no longer serving is counted separately as *retired* and shown in the
+tooltip rather than in the number: a group holding 98 live creatives and 488 retired ones
+is not running 586 ads.
+
+| brand | serving | retired | best / good / low |
+|---|---:|---:|---|
+| Funda | 804 | 1,095 | 65 / 267 / 271 |
+| Postly | 134 | 230 | 9 / 19 / 22 |
+
+Google rates each asset **BEST / GOOD / LOW** once it has data, and the tooltip carries
+that split. It is the part that makes the count actionable: a group running twenty
+creatives of which eleven are LOW is a different problem from one running twenty that are
+mostly GOOD, and a bare count hides the difference.
+
+**The column is current state, not the selected window** — assets carry no date on this
+resource, so it says what a group holds today and cannot say what ran three weeks ago.
+Every other column on that row is windowed; this one is not, and the header and the info
+panel both say so. An ad group whose assets could not be read shows a dash, never a zero;
+one that holds creatives but had no spend and no trials in the window is not a row at all,
+because a line with no cost and no result does not belong in a cost-per-trial table.
+
 ## The channel switch
 
 `Meta | Google | Blended`, beside the segment switch. It decides **whose money the page is
