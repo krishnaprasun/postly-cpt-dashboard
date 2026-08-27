@@ -68,15 +68,26 @@ jobs:
             case "$st" in
               live)
                 # Render reports `live` BEFORE it has detected the open port, and until it
-                # does every request 404s at the edge. So the deploy is not done until the
-                # app itself answers.
+                # does every request 404s at the edge. And a plain 200 proves nothing
+                # either: during a roll the OLD instance is still answering. So the test
+                # is that /healthz names OUR commit.
                 for _ in $(seq 1 20); do
-                  code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+                  body=$(curl -s --max-time 20 \
                          https://postly-cpt-dashboard.onrender.com/healthz || true)
-                  [ "$code" = "200" ] && { echo "healthz 200 — deploy is serving"; exit 0; }
+                  got=$(printf '%s' "$body" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("commit",""))
+except Exception: print("")' 2>/dev/null || true)
+                  if [ -n "$got" ]; then
+                    [ "$got" = "$GITHUB_SHA" ] && { echo "serving ${got:0:7} — deploy landed"; exit 0; }
+                    echo "still serving ${got:0:7}, want ${GITHUB_SHA:0:7}"
+                  else
+                    # Older image, or running off Render: no commit field to compare, so
+                    # fall back to the weaker check rather than failing a good deploy.
+                    case "$body" in *'"ok":true'*) echo "healthz ok (no commit field)"; exit 0 ;; esac
+                  fi
                   sleep 15
                 done
-                echo "::error::$id went live but /healthz never answered 200"; exit 1 ;;
+                echo "::error::$id went live but never served ${GITHUB_SHA:0:7}"; exit 1 ;;
               build_failed|update_failed|canceled|pre_deploy_failed)
                 echo "::error::deploy $id ended $st"; exit 1 ;;
             esac

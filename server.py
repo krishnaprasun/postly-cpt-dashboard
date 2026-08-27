@@ -938,8 +938,16 @@ def robots():
 
 @app.route("/healthz")
 def healthz():
-    """Public and cheap on purpose — Render's health check must not trigger a pull."""
-    return jsonify({"ok": True, "ist": P.today_ist(), "cached_windows": len(_cache)})
+    """Public and cheap on purpose — Render's health check must not trigger a pull.
+
+    It also names the commit it is running, because "the URL answered 200" does not mean
+    the deploy landed: during a roll the OLD instance is still serving, so a health check
+    alone cannot tell a finished deploy from one that has not started. Render injects
+    RENDER_GIT_COMMIT; the deploy workflow compares it with the sha it pushed and only
+    then calls the deploy done. Empty off Render, which is a fine answer locally.
+    """
+    return jsonify({"ok": True, "ist": P.today_ist(), "cached_windows": len(_cache),
+                    "commit": os.environ.get("RENDER_GIT_COMMIT", "")[:40]})
 
 
 if __name__ == "__main__":
