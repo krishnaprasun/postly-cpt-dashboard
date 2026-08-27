@@ -72,11 +72,8 @@ jobs:
                 # either: during a roll the OLD instance is still answering. So the test
                 # is that /healthz names OUR commit.
                 for _ in $(seq 1 20); do
-                  body=$(curl -s --max-time 20 \
-                         https://postly-cpt-dashboard.onrender.com/healthz || true)
-                  got=$(printf '%s' "$body" | python3 -c 'import json,sys
-try: print(json.load(sys.stdin).get("commit",""))
-except Exception: print("")' 2>/dev/null || true)
+                  body=$(curl -s --max-time 20 https://postly-cpt-dashboard.onrender.com/healthz || true)
+                  got=$(printf '%s' "$body" | sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p')
                   if [ -n "$got" ]; then
                     [ "$got" = "$GITHUB_SHA" ] && { echo "serving ${got:0:7} — deploy landed"; exit 0; }
                     echo "still serving ${got:0:7}, want ${GITHUB_SHA:0:7}"
