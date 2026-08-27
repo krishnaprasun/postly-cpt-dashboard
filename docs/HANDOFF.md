@@ -90,10 +90,17 @@ the trial and CPT columns are simply hidden.
 | Deploy | `git push origin main` — **but see the autoDeploy note below** |
 | Health check | `/healthz` (public, cheap, never triggers an upstream pull) |
 
-**AutoDeploy is not currently firing.** Render reports `autoDeploy: yes` and the service
-is not suspended, but three pushes on 2026-08-27 produced no deploy, and the GitHub repo
-carries no webhooks at all. Until the repo is reconnected in Render's dashboard, a push
-must be followed by a manual trigger:
+**AutoDeploy has never fired.** Render reports `autoDeploy: yes` and the service is not
+suspended, but **all 40 deploys in the API's history are `trigger: api`** — every one was
+launched by an API call, never by a push. The GitHub repo carries no webhooks at all, and
+neither does the sibling `postly-insta-daily`, whose deploys are also 100% `api`. So this
+is not a regression; the GitHub side of the connection was never established for this
+account, and it went unnoticed because deploys were always triggered by API anyway.
+
+Toggling `autoDeploy` and re-`PATCH`ing `repo` both return 200 and change nothing —
+re-establishing the connection needs the dashboard's OAuth flow, which the REST API does
+not expose. Until someone clicks through it, a push must be followed by a manual
+trigger:
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $(cat ~/.anthropic/render_key)" \

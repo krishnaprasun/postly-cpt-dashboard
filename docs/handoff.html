@@ -576,10 +576,14 @@ mostly stored, and faster.</p>
 <div class="note crit">
   <span class="lbl">AutoDeploy is not currently firing</span>
   <p>Render reports <code>autoDeploy: yes</code> and the service is not suspended, but
-  three pushes on 27 Aug 2026 produced no deploy, and the GitHub repo carries no webhooks
-  at all. Until the repo is reconnected in Render's dashboard, follow every push with a
-  manual trigger — <code>POST /v1/services/srv-da3cttibkg8c738a4nvg/deploys</code> with the
-  Render API key.</p>
+  <strong>all 40 deploys in the API's history are <code>trigger: api</code></strong> — every
+  one launched by an API call, never by a push. The repo carries no webhooks, and neither
+  does the sibling <code>postly-insta-daily</code>. This is not a regression: the GitHub
+  side of the connection was never established, and it went unnoticed because deploys were
+  always triggered by API anyway. Toggling <code>autoDeploy</code> and re-<code>PATCH</code>ing
+  <code>repo</code> both return 200 and change nothing — reconnecting needs the dashboard's
+  OAuth flow. Until then, follow every push with
+  <code>POST /v1/services/srv-da3cttibkg8c738a4nvg/deploys</code>.</p>
 </div>
 <pre><span class="c"># the repo is public — scan before every push</span>
 git diff --cached | grep -inE 'EAA[A-Za-z0-9]{40}|1//[A-Za-z0-9_-]{40}|rnd_[A-Za-z0-9]{20}' \
