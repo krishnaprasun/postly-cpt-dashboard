@@ -1,0 +1,790 @@
+<title>Ads Performance Handoff</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Serif:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+:root{
+  --ground:#F3F6F7; --surface:#FFFFFF; --surface-2:#EAEFF1;
+  --ink:#13181C; --body:#2C343B; --muted:#5E6A73; --faint:#8C979F;
+  --rule:#D8E0E4; --rule-soft:#E7ECEF;
+  --accent:#0B5C63; --accent-ink:#08454A; --accent-wash:#E2EFEF;
+  --good:#1B7A50; --warn:#9A6606; --crit:#A93226;
+  --good-w:#E2F1EA; --warn-w:#F7EEDC; --crit-w:#F7E5E2;
+  --shadow:0 1px 2px rgba(19,24,28,.05), 0 8px 24px -16px rgba(19,24,28,.25);
+  --mono:"IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --sans:"IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --serif:"IBM Plex Serif", Georgia, serif;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --ground:#0E1316; --surface:#161D21; --surface-2:#1D262B;
+    --ink:#E9EEF0; --body:#C3CDD2; --muted:#909CA3; --faint:#6C7880;
+    --rule:#2A353B; --rule-soft:#212B30;
+    --accent:#4FB3B8; --accent-ink:#7FCED1; --accent-wash:#15292C;
+    --good:#57C08C; --warn:#D9A340; --crit:#E0796C;
+    --good-w:#14261D; --warn-w:#27200F; --crit-w:#2A1815;
+    --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px -16px rgba(0,0,0,.7);
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#0E1316; --surface:#161D21; --surface-2:#1D262B;
+  --ink:#E9EEF0; --body:#C3CDD2; --muted:#909CA3; --faint:#6C7880;
+  --rule:#2A353B; --rule-soft:#212B30;
+  --accent:#4FB3B8; --accent-ink:#7FCED1; --accent-wash:#15292C;
+  --good:#57C08C; --warn:#D9A340; --crit:#E0796C;
+  --good-w:#14261D; --warn-w:#27200F; --crit-w:#2A1815;
+  --shadow:0 1px 2px rgba(0,0,0,.3), 0 8px 24px -16px rgba(0,0,0,.7);
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--ground); color:var(--body);
+  font-family:var(--sans); font-size:16px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1180px; margin:0 auto; padding:0 28px 96px}
+
+/* ---------- masthead ---------- */
+header.mast{
+  border-bottom:1px solid var(--rule);
+  background:var(--surface);
+}
+.mast-in{max-width:1180px; margin:0 auto; padding:44px 28px 34px}
+.eyebrow{
+  font-family:var(--mono); font-size:11.5px; letter-spacing:.14em;
+  text-transform:uppercase; color:var(--accent); font-weight:500;
+}
+h1{
+  font-family:var(--serif); font-weight:600; color:var(--ink);
+  font-size:clamp(34px,4.6vw,52px); line-height:1.08; letter-spacing:-.02em;
+  margin:12px 0 0; text-wrap:balance;
+}
+.standfirst{
+  font-family:var(--serif); font-size:clamp(17px,1.9vw,20px); line-height:1.55;
+  color:var(--muted); max-width:60ch; margin:16px 0 0;
+}
+.factbar{
+  display:flex; flex-wrap:wrap; gap:0; margin-top:28px;
+  border:1px solid var(--rule); border-radius:3px; overflow:hidden; background:var(--surface);
+}
+.fact{
+  flex:1 1 180px; padding:12px 16px; border-right:1px solid var(--rule-soft); min-width:0;
+}
+.fact:last-child{border-right:0}
+.fact dt{
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--faint); margin:0 0 4px;
+}
+.fact dd{
+  margin:0; font-family:var(--mono); font-size:13px; color:var(--ink);
+  font-weight:500; overflow-wrap:anywhere;
+}
+.fact dd a{color:var(--accent); text-decoration:none; border-bottom:1px solid var(--accent-wash)}
+.fact dd a:hover{border-bottom-color:var(--accent)}
+
+/* ---------- layout ---------- */
+.cols{display:grid; grid-template-columns:200px minmax(0,1fr); gap:56px; padding-top:40px}
+@media (max-width:900px){ .cols{grid-template-columns:1fr; gap:0} nav.rail{display:none} }
+
+nav.rail{position:sticky; top:24px; align-self:start; max-height:calc(100vh - 48px); overflow-y:auto}
+.rail-h{
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--faint); padding-bottom:10px; border-bottom:1px solid var(--rule); margin-bottom:10px;
+}
+.rail a{
+  display:block; padding:5px 0 5px 12px; margin-left:-1px;
+  border-left:2px solid var(--rule-soft);
+  color:var(--muted); text-decoration:none; font-size:13.5px; line-height:1.35;
+}
+.rail a:hover{color:var(--ink); border-left-color:var(--rule)}
+.rail a.on{color:var(--accent); border-left-color:var(--accent); font-weight:500}
+.rail .grp{
+  font-family:var(--mono); font-size:10px; letter-spacing:.12em; text-transform:uppercase;
+  color:var(--faint); margin:16px 0 4px 12px;
+}
+
+main{min-width:0; max-width:78ch}
+
+/* ---------- doc sections ---------- */
+.doc{margin:0 0 8px; padding-top:8px}
+.doc-head{
+  display:flex; align-items:baseline; gap:12px; flex-wrap:wrap;
+  padding-bottom:12px; border-bottom:2px solid var(--ink); margin-bottom:8px; margin-top:56px;
+}
+.doc-head .kind{
+  font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--accent);
+}
+.doc-head h2{
+  font-family:var(--serif); font-size:28px; font-weight:600; color:var(--ink);
+  margin:0; letter-spacing:-.01em;
+}
+.doc-head .file{font-family:var(--mono); font-size:12px; color:var(--faint); margin-left:auto}
+
+h3{
+  font-family:var(--sans); font-size:19px; font-weight:600; color:var(--ink);
+  margin:38px 0 10px; letter-spacing:-.005em; text-wrap:balance; scroll-margin-top:24px;
+}
+h4{
+  font-family:var(--mono); font-size:12px; font-weight:600; letter-spacing:.08em;
+  text-transform:uppercase; color:var(--muted); margin:26px 0 8px;
+}
+p{margin:0 0 14px; max-width:68ch}
+strong{color:var(--ink); font-weight:600}
+em{font-style:italic}
+code{
+  font-family:var(--mono); font-size:.875em; background:var(--surface-2);
+  padding:1.5px 5px; border-radius:2px; color:var(--ink); overflow-wrap:anywhere;
+}
+a{color:var(--accent)}
+
+ul{margin:0 0 14px; padding-left:20px; max-width:68ch}
+li{margin-bottom:7px}
+li::marker{color:var(--faint)}
+
+/* ---------- callout ---------- */
+.note{
+  border-left:3px solid var(--accent); background:var(--accent-wash);
+  padding:14px 18px; margin:20px 0; border-radius:0 3px 3px 0;
+}
+.note p{margin:0; max-width:64ch}
+.note.crit{border-left-color:var(--crit); background:var(--crit-w)}
+.note .lbl{
+  display:block; font-family:var(--mono); font-size:10.5px; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--accent-ink); margin-bottom:5px;
+}
+.note.crit .lbl{color:var(--crit)}
+
+/* ---------- tables ---------- */
+.tw{overflow-x:auto; margin:18px 0 24px; border:1px solid var(--rule); border-radius:3px; background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-size:14px}
+th{
+  font-family:var(--mono); font-size:10.5px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--faint); text-align:left; font-weight:500;
+  padding:10px 14px; border-bottom:1px solid var(--rule); white-space:nowrap;
+}
+td{padding:10px 14px; border-bottom:1px solid var(--rule-soft); vertical-align:top; color:var(--body)}
+tr:last-child td{border-bottom:0}
+td:first-child{color:var(--ink); font-weight:500}
+td.mono, th.mono, .num{font-family:var(--mono); font-size:13px; font-variant-numeric:tabular-nums}
+.num{text-align:right}
+
+/* ---------- code blocks ---------- */
+pre{
+  font-family:var(--mono); font-size:13px; line-height:1.6;
+  background:var(--surface); color:var(--ink);
+  border:1px solid var(--rule); border-radius:3px;
+  padding:14px 16px; overflow-x:auto; margin:16px 0 22px;
+}
+pre .c{color:var(--faint)}
+
+/* ---------- pills ---------- */
+.pill{
+  display:inline-block; font-family:var(--mono); font-size:10.5px; letter-spacing:.08em;
+  text-transform:uppercase; padding:2.5px 8px; border-radius:2px; white-space:nowrap; font-weight:500;
+}
+.pill.now{background:var(--crit-w); color:var(--crit)}
+.pill.soon{background:var(--warn-w); color:var(--warn)}
+.pill.ok{background:var(--good-w); color:var(--good)}
+.pill.later{background:var(--surface-2); color:var(--muted)}
+
+/* ---------- flow diagram ---------- */
+.flow{
+  display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:1px;
+  background:var(--rule); border:1px solid var(--rule); border-radius:3px;
+  margin:22px 0 8px; overflow:hidden;
+}
+.flow .node{background:var(--surface); padding:14px 16px}
+.flow .node .t{
+  font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--accent); margin-bottom:6px;
+}
+.flow .node .n{font-family:var(--mono); font-size:13px; color:var(--ink); font-weight:500}
+.flow .node .d{font-size:13px; color:var(--muted); margin-top:5px; line-height:1.45}
+.flow-cap{font-size:13px; color:var(--faint); margin:0 0 26px}
+
+/* ---------- truth cards ---------- */
+.truths{display:grid; gap:1px; background:var(--rule); border:1px solid var(--rule); border-radius:3px; margin:20px 0 26px}
+.truth{background:var(--surface); padding:18px 20px}
+.truth h4{margin:0 0 6px; font-family:var(--serif); font-size:17px; font-weight:600;
+  color:var(--ink); text-transform:none; letter-spacing:0}
+.truth p{margin:0; font-size:14.5px; max-width:66ch}
+
+/* ---------- decision list ---------- */
+.dec{border-top:1px solid var(--rule-soft); padding:18px 0}
+.dec:first-of-type{border-top:1px solid var(--rule)}
+.dec h4{
+  font-family:var(--sans); font-size:16px; font-weight:600; color:var(--ink);
+  text-transform:none; letter-spacing:0; margin:0 0 6px;
+}
+.dec p{margin:0 0 8px; font-size:14.5px}
+.dec p:last-child{margin-bottom:0}
+
+footer{
+  margin-top:64px; padding-top:20px; border-top:1px solid var(--rule);
+  font-family:var(--mono); font-size:12px; color:var(--faint);
+  display:flex; justify-content:space-between; gap:16px; flex-wrap:wrap;
+}
+:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+
+<header class="mast">
+  <div class="mast-in">
+    <div class="eyebrow">Handoff pack · verified 27 Aug 2026</div>
+    <h1>Ads Performance</h1>
+    <p class="standfirst">One Flask app that answers <em>what is a trial costing us right
+    now</em> — three brands, two ad platforms, from the whole account down to the
+    individual creative. Read-only: it never writes to Meta, Google or Branch.</p>
+    <dl class="factbar">
+      <div class="fact"><dt>Live</dt><dd><a href="https://postly-cpt-dashboard.onrender.com">postly-cpt-dashboard.onrender.com</a></dd></div>
+      <div class="fact"><dt>Repo</dt><dd>krishnaprasun/postly-cpt-dashboard <span class="pill now">public</span></dd></div>
+      <div class="fact"><dt>Deploy</dt><dd>git push origin main</dd></div>
+      <div class="fact"><dt>Stack</dt><dd>Flask · gunicorn · Docker · Render</dd></div>
+      <div class="fact"><dt>Status</dt><dd>all systems live <span class="pill ok">healthy</span></dd></div>
+    </dl>
+  </div>
+</header>
+
+<div class="wrap">
+<div class="cols">
+
+<nav class="rail" aria-label="Contents">
+  <div class="rail-h">Contents</div>
+  <div class="grp">The map</div>
+  <a href="#system">System</a>
+  <a href="#truths">Three truths</a>
+  <a href="#brands">Brands</a>
+  <a href="#where">Where it lives</a>
+  <a href="#access">Access</a>
+  <a href="#files">Files</a>
+  <a href="#cache">Caching</a>
+  <a href="#state">State &amp; open items</a>
+  <div class="grp">The runbook</div>
+  <a href="#deploy">Deploy</a>
+  <a href="#playbooks">Playbooks</a>
+  <a href="#routine">Routine tasks</a>
+  <div class="grp">The decisions</div>
+  <a href="#decisions">Not to reverse</a>
+</nav>
+
+<main>
+
+<div class="note crit">
+  <span class="lbl">Before you push</span>
+  <p>The repo is <strong>public</strong>. Nothing secret may ever be committed — run a
+  secret scan before every push. Every credential is a Render env var or a
+  <code>chmod 600</code> file under <code>~/.anthropic/</code>.</p>
+</div>
+
+<p><code>README.md</code> at the repo root is the reference manual — 1,400 lines, every
+mechanism explained. This page is the map to it, and mirrors
+<code>docs/HANDOFF.md</code>, <code>docs/RUNBOOK.md</code> and
+<code>docs/DECISIONS.md</code> in the repo.</p>
+
+<!-- ══════════════════ THE MAP ══════════════════ -->
+<div class="doc-head">
+  <span class="kind">Document one</span>
+  <h2>The map</h2>
+  <span class="file">docs/HANDOFF.md</span>
+</div>
+
+<h3 id="system">The system</h3>
+<div class="flow">
+  <div class="node"><div class="t">Source</div><div class="n">Meta v21.0</div>
+    <div class="d">Spend, impressions, clicks, budgets, statuses. 7 ad accounts, one token.</div></div>
+  <div class="node"><div class="t">Source</div><div class="n">Branch Query API</div>
+    <div class="d">Trials and installs, attributed to an ad by name. One app per brand.</div></div>
+  <div class="node"><div class="t">Source</div><div class="n">Google Ads v22</div>
+    <div class="d">Spend per campaign per ad group, through the Testbook MCC.</div></div>
+  <div class="node"><div class="t">Source</div><div class="n">Classplus Redash</div>
+    <div class="d">Signups and trial mandates. Postly only, optional.</div></div>
+</div>
+<p class="flow-cap">All four fold into <code>postly_cpt.py</code> — the pulls, the join,
+the rollup — served by <code>server.py</code> into a single hand-written
+<code>index.html</code>, with settled days read from a GCS store and the browser holding
+its own copy.</p>
+
+<h3 id="truths">Three truths to understand before changing anything</h3>
+<div class="truths">
+  <div class="truth">
+    <h4>The join is on names, not ids</h4>
+    <p>Branch exposes <code>~ad_name</code> and <code>~ad_set_name</code> but no ids, so
+    ad name is the only shared key with Meta. For Google, Branch leaves the ad name empty
+    but <em>fills in campaign and ad group</em> — which is why a Google CPT exists at all,
+    and why it stops at ad-group level. A campaign renamed mid-window shows as two rows
+    until the window rolls past the rename.</p>
+  </div>
+  <div class="truth">
+    <h4>Pro rata is the only reading</h4>
+    <p>Branch trials carrying no ad name are allocated to Meta and Google in proportion to
+    each platform's share of <em>attributed</em> volume. Google's own measured trials are
+    never in the pool being divided — putting them back makes the calculation circular,
+    which was the original bug. <code>meta_pro + google_pro == branch_total</code>,
+    exactly. There is no switch; the numbers are always pro rata.</p>
+  </div>
+  <div class="truth">
+    <h4>A missing value is not a zero</h4>
+    <p>"We do not know what this cost" and "this cost nothing" are opposite claims. A
+    stored day lacking an impressions key means <em>not recorded</em>; trials Branch
+    refused to answer means <em>unknown</em>. Every one renders as a dash. Two live bugs
+    came from collapsing that — the worse reported a blended CPT of ₹354 against a true
+    ₹191, because a guard added on Google's side was not added to the identical hole on
+    Meta's.</p>
+  </div>
+</div>
+
+<h3 id="brands">Brands</h3>
+<p>Everything brand-specific lives in one table: <code>BRANDS</code> in
+<code>config.py</code>.</p>
+<div class="tw"><table>
+<thead><tr><th>Brand</th><th>Meta accounts</th><th>Branch headline event</th><th class="mono">CPT target</th><th>Classplus</th></tr></thead>
+<tbody>
+<tr><td>Postly</td><td class="mono">act_964790132585820<br>act_2383113182218548</td><td class="mono">postly_trial_started_backend</td><td class="num">₹150</td><td>yes</td></tr>
+<tr><td>Speakeasy</td><td class="mono">act_874500498817876<br>act_909676394829541</td><td class="mono">speakeasy_trial_started</td><td class="num">₹275</td><td>no</td></tr>
+<tr><td>Funda</td><td class="mono">act_1415034359774559<br>act_1662727118397158<br>act_826851770432701</td><td class="mono">trial_started_backend</td><td class="num">₹180</td><td>no</td></tr>
+</tbody></table></div>
+
+<p>One Meta token reaches all seven accounts. Branch is one app per brand. Google Ads is
+one OAuth credential reaching 18 customer accounts through MCC <code>3343252288</code>.</p>
+
+<div class="note">
+  <span class="lbl">Not a data bug</span>
+  <p>Ad-name match rates differ enormously by brand. Of each brand's <em>attributed</em>
+  Branch trials, the share whose ad name exists in Meta is Funda 99.7%, Postly ~95%,
+  Speakeasy 62%. This is a property of how each brand names its ads, not a fault to fix.</p>
+</div>
+
+<p>Adding a fourth brand is: one entry in <code>BRANDS</code>, one Branch key pair, one
+<code>BRAND_LINK_*</code> env var. A brand with no Branch key is a supported state — its
+Meta side works in full and the trial and CPT columns are simply hidden.</p>
+
+<h3 id="where">Where everything lives</h3>
+
+<h4>Hosting</h4>
+<div class="tw"><table><tbody>
+<tr><td>Render service</td><td class="mono">srv-da3cttibkg8c738a4nvg</td></tr>
+<tr><td>Workspace</td><td class="mono">tea-d9tnoaqjobas73df4bpg</td></tr>
+<tr><td>Region / plan</td><td>Singapore · <strong>free</strong></td></tr>
+<tr><td>Runtime</td><td>Docker · gunicorn · <strong>1 worker / 8 threads / 180s timeout</strong></td></tr>
+<tr><td>Deploy</td><td><code>git push origin main</code> — autoDeploy is on</td></tr>
+<tr><td>Health check</td><td><code>/healthz</code> — public, cheap, never triggers an upstream pull</td></tr>
+</tbody></table></div>
+
+<div class="note">
+  <span class="lbl">Inert file</span>
+  <p><code>render.yaml</code> is <strong>documentation only</strong> for this service. It
+  was created through the REST API, not the Blueprint flow, so plan, region, health check
+  and env vars live in Render's own config. Editing <code>render.yaml</code> changes
+  nothing.</p>
+</div>
+
+<h4>The history store</h4>
+<p>Settled days are served from GCS rather than re-pulled on every view. A 30-day window
+is 27 stored + 3 live; today is entirely live.</p>
+<div class="tw"><table><tbody>
+<tr><td>Bucket</td><td class="mono">admanagementpostly-ads-history (asia-south1)</td></tr>
+<tr><td>Front door</td><td class="mono">Cloud Run <code>ads-history</code> → ads-history-360124450287.asia-south1.run.app</td></tr>
+<tr><td>Service account</td><td class="mono">ads-history@admanagementpostly.iam.gserviceaccount.com — objectAdmin on that bucket only</td></tr>
+<tr><td>Auth</td><td>bearer token — <code>~/.anthropic/ads_history_token</code>, Render <code>HISTORY_TOKEN</code></td></tr>
+</tbody></table></div>
+
+<p><strong>Why a proxy and not direct GCS:</strong> the org enforces
+<code>constraints/iam.disableServiceAccountKeyCreation</code>, so no downloadable SA key
+exists, and Render issues no OIDC identity Google accepts. No Google credential can live
+on Render. The Cloud Run service uses ambient credentials and enforces the bearer token
+itself with <code>hmac.compare_digest</code>; it is <code>--allow-unauthenticated</code>
+at the IAM layer on purpose.</p>
+
+<p><code>/healthz</code> on <em>that</em> service returns a Google-branded 404,
+intercepted at Google's edge. Not a bug — use <code>/v1/have</code> as its liveness
+probe.</p>
+
+<h4>Scheduled jobs</h4>
+<p>21 <code>ads-*</code> jobs in Cloud Scheduler, <code>admanagementpostly</code> /
+asia-south1, all Asia/Kolkata, authorizing with the history bearer token.</p>
+<div class="tw"><table>
+<thead><tr><th>Jobs</th><th>Schedule</th><th>What</th></tr></thead>
+<tbody>
+<tr><td class="mono">ads-history-*</td><td class="mono">03:40 / 03:50 / 04:00</td><td>store settled days</td></tr>
+<tr><td class="mono">ads-longevity-*</td><td class="mono">04:15–04:35, 13:15–13:35</td><td>precompute the Lifespan tab</td></tr>
+<tr><td class="mono">ads-budget-*</td><td class="mono">09:xx, 15:xx, 23:xx</td><td>budget snapshots, forward-only</td></tr>
+<tr><td class="mono">ads-reach-backfill-*</td><td class="mono">every 10 min, 00–02</td><td><span class="pill ok">complete</span> delete these</td></tr>
+<tr><td class="mono">ads-google-backfill-*</td><td class="mono">every 20 min, 01–04</td><td>Postly has 14 days left, then delete</td></tr>
+</tbody></table></div>
+
+<h4>Credentials</h4>
+<p>Each is a Render env var or a <code>chmod 600</code> file under
+<code>~/.anthropic/</code>. <code>config.py</code> resolves env → <code>~/.anthropic/</code>
+→ the Desktop toolkit, in that order.</p>
+<div class="tw"><table>
+<thead><tr><th>File</th><th>Env var(s)</th><th>Reaches</th></tr></thead>
+<tbody>
+<tr><td class="mono">meta_token</td><td class="mono">META_TOKEN</td><td>all 7 Meta accounts — system user, non-expiring</td></tr>
+<tr><td class="mono">branch_creds.json</td><td class="mono">BRANCH_KEY/SECRET, SPEAKEASY_BRANCH_*, FUNDA_BRANCH_*</td><td>one Branch app per brand</td></tr>
+<tr><td class="mono">google_ads.json</td><td class="mono">GOOGLE_ADS_*</td><td>18 Google customers via the MCC</td></tr>
+<tr><td class="mono">classplus_creds.json</td><td class="mono">CLASSPLUS_QUERIES, CLASSPLUS_HOST</td><td>Redash query 19695, Postly only</td></tr>
+<tr><td class="mono">ads_history_token</td><td class="mono">HISTORY_TOKEN, HISTORY_URL</td><td>the GCS store and every ops endpoint</td></tr>
+<tr><td class="mono">brand_links.json</td><td class="mono">BRAND_LINK_*</td><td>per-team access links</td></tr>
+<tr><td class="mono">render_key</td><td>—</td><td>the Render API</td></tr>
+</tbody></table></div>
+
+<div class="note">
+  <span class="lbl">macOS gotcha, worth remembering beyond this project</span>
+  <p>A process launched as a dev server — and likely launchd and cron too — is not granted
+  access to <code>~/Desktop</code>, so an import from a Desktop path raises
+  <code>ModuleNotFoundError</code> at serve time even though the identical import works
+  from a shell. Nothing long-running may depend on a path under <code>~/Desktop</code>,
+  <code>~/Documents</code> or <code>~/Downloads</code>.</p>
+</div>
+
+<h3 id="access">Access</h3>
+<p>There is <strong>no login</strong>, by the owner's explicit decision after being told a
+public <code>.onrender.com</code> URL exposes live spend, budgets and every ad name.
+Mitigations shipped instead: <code>X-Robots-Tag: noindex</code>, a disallow-all
+<code>robots.txt</code>, and per-brand links.</p>
+
+<p><strong>Per-brand links</strong> narrow "anyone with the URL" from one secret covering
+everything to one secret per team — <code>/b/&lt;value&gt;</code>. Opening one locks the
+page to that brand and hides the brand switcher; every API call carries <code>k=</code>
+and the server narrows the request. A valid key asking for another brand is served
+<em>its own</em> brand; an invalid key gets a 403 naming no brands and revealing no
+count.</p>
+
+<div class="note">
+  <span class="lbl">Say it correctly</span>
+  <p>The link is <strong>not a login</strong>. A forwarded link works until rotated, and
+  rotating is changing one env var — no deploy. <code>ROOT_OPEN</code> is currently
+  <code>1</code>, so the bare <code>/</code> URL still serves all brands with full
+  controls; set it to <code>0</code> the day every team holds its own link.</p>
+</div>
+
+<p>A <code>full</code> capability gates the two things that make the app <em>spend</em>: a
+forced Meta roster re-read and a longevity recompute. Team links are read-only in that
+sense; <code>BRAND_LINK_ALL</code> is not. Ops endpoints ignore links entirely and require
+the bearer token.</p>
+
+<h3 id="files">Files</h3>
+<div class="tw"><table>
+<thead><tr><th>File</th><th class="mono">Lines</th><th>What</th></tr></thead>
+<tbody>
+<tr><td class="mono">postly_cpt.py</td><td class="num">3,561</td><td>every pull, the join, the rollup, pro rata, caching, backfills</td></tr>
+<tr><td class="mono">templates/index.html</td><td class="num">3,839</td><td>the whole UI — no build step, no framework, no bundler</td></tr>
+<tr><td class="mono">server.py</td><td class="num">949</td><td>Flask routes, the payload cache, gzip, the ops endpoints</td></tr>
+<tr><td class="mono">config.py</td><td class="num">324</td><td>brands, credential resolution, brand links</td></tr>
+<tr><td class="mono">google_ads.py</td><td class="num">296</td><td>OAuth refresh, customer discovery, GAQL spend per ad group</td></tr>
+<tr><td class="mono">history.py</td><td class="num">283</td><td>the GCS store client</td></tr>
+<tr><td class="mono">tools/*.py</td><td class="num">832</td><td>backfills and the Google credential tools</td></tr>
+<tr><td class="mono">README.md</td><td class="num">1,400+</td><td>the reference manual</td></tr>
+</tbody></table></div>
+<p><strong>There is no build step.</strong> <code>index.html</code> is served as-is —
+deliberately. It keeps the whole UI editable by anyone who can read HTML, and it makes a
+deploy a <code>git push</code>.</p>
+
+<h3 id="cache">Caching — three layers, and why</h3>
+<p>Meta and Branch are the constraint. Everything here exists to reduce calls to them.</p>
+<ul>
+  <li><strong>In-process payload cache</strong>, <code>CACHE_TTL=780s</code>,
+  stale-while-revalidate. A woken instance answers instantly from its last numbers and
+  refreshes behind the request. <strong>One gunicorn worker on purpose</strong> — a second
+  keeps its own copy, doubling upstream calls while halving the hit rate.</li>
+  <li><strong>GCS-persisted artifacts</strong> — settled days, and the payload cache
+  itself, so a cold instance serves in ~0.5s instead of a 10–17s rebuild on top of a
+  15–30s wake.</li>
+  <li><strong>Browser IndexedDB</strong>, soft 90s / TTL 15 min / hard 12 h, keyed on
+  <code>APP_VERSION</code>. A warm reload renders the page in 13 ms and 4,136 matrix rows
+  in 80 ms with zero network.</li>
+</ul>
+<p>The page refreshes every <strong>15 minutes, unforced</strong> — the first tab past the
+server TTL triggers one rebuild and everyone else is served from it. Hidden tabs skip the
+pull. A <code>/healthz</code> ping every 10 minutes keeps the instance warm and touches no
+upstream API.</p>
+
+<div class="note">
+  <span class="lbl">Version stamps</span>
+  <p><code>PRORATA_MODEL</code>, <code>SERIES_SHAPE</code>, <code>row_cap</code>,
+  <code>APP_VERSION</code>. Change the shape of a stored thing and bump its stamp —
+  otherwise old artifacts are served against new code, which has already happened twice.</p>
+</div>
+
+<p><strong>Counter-intuitive:</strong> a 3-day window sits entirely inside the settle
+window, so it is 100% live and is the <em>slowest</em> view. 30- and 90-day windows are
+mostly stored, and faster.</p>
+
+<h3 id="state">Current state, verified 27 Aug 2026</h3>
+<ul>
+  <li>Google Ads is <strong>fully live</strong> — spend, impressions and clicks per
+  campaign per ad group. Last 7 days: Postly ₹1.59 L, SpeakEasy ₹14.2 L, Funda ₹1.99 Cr.</li>
+  <li>Reach backfill (impressions/clicks into stored days): <strong>complete, all three
+  brands</strong>.</li>
+  <li>Google trials backfill: Speakeasy and Funda complete at 97 days each;
+  <strong>Postly has 14 days left</strong>, which its 01–04 IST schedule finishes on its own.</li>
+  <li>21 scheduled jobs enabled, nothing failing. <code>/healthz</code> 200 in 0.18 s.</li>
+</ul>
+
+<h4>Open items — owner action required</h4>
+<div class="tw"><table>
+<thead><tr><th>Item</th><th>Why it matters</th><th>When</th></tr></thead>
+<tbody>
+<tr><td>Publish the Google OAuth consent screen<br><span class="mono" style="font-weight:400;color:var(--muted)">project 734843757980</span></td>
+    <td>a refresh token minted while the screen is in <em>Testing</em> dies after 7 days — this already happened once and took Google spend off the page</td>
+    <td><span class="pill now">by 2 Sep</span></td></tr>
+<tr><td>Rotate the Render API key</td>
+    <td>it was pasted into a chat transcript against advice; a Render key reaches every workspace the account belongs to and cannot be scoped down</td>
+    <td><span class="pill soon">soon</span></td></tr>
+<tr><td>Delete <code>ads-reach-backfill-*</code></td>
+    <td>complete; they wake the free instance 3 h a night against a 750 h monthly pool</td>
+    <td><span class="pill soon">now</span></td></tr>
+<tr><td>Delete <code>ads-google-backfill-*</code></td>
+    <td>after Postly's last 14 days land tonight</td>
+    <td><span class="pill later">tomorrow</span></td></tr>
+<tr><td>Rotate <code>HISTORY_TOKEN</code></td>
+    <td>echoed into a transcript by a gcloud error; carried by 9+ scheduler jobs, so rotation means updating each</td>
+    <td><span class="pill later">optional</span></td></tr>
+<tr><td>Request Meta Standard Access</td>
+    <td>raises the rate limits that currently force degraded budget and status reads</td>
+    <td><span class="pill later">optional</span></td></tr>
+<tr><td>Set <code>ROOT_OPEN=0</code></td>
+    <td>closes the bare URL once every team holds its own link</td>
+    <td><span class="pill later">at handover</span></td></tr>
+</tbody></table></div>
+
+<!-- ══════════════════ THE RUNBOOK ══════════════════ -->
+<div class="doc-head">
+  <span class="kind">Document two</span>
+  <h2>The runbook</h2>
+  <span class="file">docs/RUNBOOK.md</span>
+</div>
+
+<h3 id="deploy">Deploy</h3>
+<pre><span class="c"># the repo is public — scan before every push</span>
+git diff --cached | grep -inE 'EAA[A-Za-z0-9]{40}|1//[A-Za-z0-9_-]{40}|rnd_[A-Za-z0-9]{20}' \
+  &amp;&amp; echo "STOP" || echo "clean"
+
+git add -A &amp;&amp; git commit -m "..." &amp;&amp; git push origin main   <span class="c"># autoDeploy takes it</span></pre>
+
+<div class="note crit">
+  <span class="lbl">The Render trap that cost 20 minutes once</span>
+  <p>Render logs <code>==&gt; Your service is live 🎉</code> and the API reports
+  <code>live</code> <strong>before</strong> it has detected the open port. Until the
+  <code>==&gt; Detected service running on port NNNN</code> line appears — five minutes
+  later, on one deploy — every request returns a bodiless <code>text/plain</code>
+  <strong>404</strong>, not a 502 and not a wake screen. Tell them apart by the
+  <code>rndr-id</code> response header: present means the request reached the app, absent
+  means it died at Render's edge. Don't debug the app during that window.</p>
+</div>
+
+<p>Env vars change with no deploy — but Render env <strong>overrides code defaults</strong>,
+and one of them (<code>CACHE_TTL=90</code>) silently defeated a code change once. Check
+there before concluding a change didn't ship.</p>
+
+<h4>Verifying a UI change</h4>
+<div class="note crit">
+  <span class="lbl">Do not grep a DOM dump for an error string</span>
+  <p>This template's <em>source</em> contains the words <code>ReferenceError</code>,
+  <code>loading</code> and every class name you might search for — so a grep matches on a
+  healthy page and a broken one alike. That mistake shipped a live
+  <code>ReferenceError</code> that broke the Google and Blended views, twice. Drive a real
+  browser and read <code>Runtime.exceptionThrown</code> over CDP instead. Count rendered
+  elements by class, not by substring.</p>
+</div>
+
+<h3 id="playbooks">Playbooks</h3>
+
+<h4>The page shows a dash where a number should be</h4>
+<p>Working as designed, in almost every case. A dash means <em>unknown</em>, never
+<em>zero</em>. Check which: Branch refused (rate limit), the day predates the field being
+stored, or the credential is down. <code>/api/google/status</code> answers the Google half
+directly.</p>
+
+<h4>Google figures vanish</h4>
+<pre>python3 tools/google_ads_check.py</pre>
+<p>Four things must be true and they fail in ways that look identical from outside — an
+empty result can mean <em>no spend</em>, <em>test access only</em>, <em>wrong account</em>
+or <em>token expired</em>. The check tests them in order and stops at the first failure.</p>
+<ul>
+  <li><code>invalid_grant</code> → the refresh token died. Publish the consent screen, run
+  <code>tools/google_ads_token.py</code>, update the Render env var.</li>
+  <li><code>PERMISSION_DENIED</code> on every account → <code>login_customer_id</code> is
+  wrong. It names the <strong>manager you act through</strong>, never the account you are
+  reading. The correct value is the Testbook MCC <code>3343252288</code>. This looks
+  exactly like a test-level developer token and was misdiagnosed as one for an hour.</li>
+  <li>Everything passes but spend is empty → genuinely test-level developer access.</li>
+</ul>
+<p><code>listAccessibleCustomers</code> returns what the <em>user</em> reaches — one
+manager — not the accounts beneath it. Expanding to the real 18 needs
+<code>customer_client</code>.</p>
+
+<h4>Meta calls start failing</h4>
+<p>Codes <strong>4, 17 and 613</strong> are rate limits, and they bind on request
+<em>time</em>, not request count. The app degrades rather than erroring: budgets and
+statuses go unknown while spend and trials keep working. Speakeasy's accounts run hot from
+its own automation, so expect degraded reads there more often. Nothing to do but wait,
+unless it is persistent — the fix is Meta Standard Access, not more retries.</p>
+
+<h4>Branch starts returning 429</h4>
+<p>Branch throttles per app key and caps a page at 1,000 rows. A backfill once exhausted
+the quota and took the dashboard's own numbers down with it. <strong>Run backfills
+overnight, with a budget, never during the day.</strong></p>
+
+<h4>The instance is asleep</h4>
+<p>Expected on the free plan: ~15 min idle → spin-down, 15–30 s cold wake. The app answers
+a woken request from its last cached numbers and refreshes behind it, so the wake shows
+real figures rather than a blank page.</p>
+<div class="note crit">
+  <span class="lbl">Do not add a 24/7 keep-alive pinger</span>
+  <p>Render's free tier is 750 instance-hours per month <strong>per workspace</strong>, and
+  this workspace runs three free web services. Keeping one awake round the clock is 744 h,
+  which exhausts the pool — and Render's response is to suspend <em>every</em> free web
+  service in the workspace until the 1st. A windowed keep-alive was offered and declined
+  on 23 Aug 2026. The real fix, if it comes up again, is Starter at $7/mo.</p>
+</div>
+
+<h4>A stored day looks wrong</h4>
+<p>Nothing rechecks a stored day, so a day stored while still moving stays wrong forever —
+<code>HISTORY_SETTLE_DAYS=3</code> exists for exactly this. A day where <strong>both</strong>
+sources return nothing is refused and never written, because "no spend" and "past
+retention" are indistinguishable. To re-store a range, use
+<code>tools/backfill_history.py</code> — resumable, skips stored days, refuses unsettled
+ones.</p>
+
+<h4>Numbers don't match the code you just shipped</h4>
+<p>Cache layering, in order of likelihood: the browser's IndexedDB copy (bump
+<code>APP_VERSION</code>), the server payload cache (wait out <code>CACHE_TTL</code>, or
+<code>?force=1</code>), a stored artifact whose shape changed (bump its stamp), or a
+Render env var overriding the code default.</p>
+
+<h3 id="routine">Routine tasks</h3>
+<ul>
+  <li><strong>Add a brand</strong> — one entry in <code>BRANDS</code>, one Branch key pair,
+  one <code>BRAND_LINK_*</code>. No other file changes.</li>
+  <li><strong>Change a CPT target</strong> — <code>cpt_target</code> in
+  <code>BRANDS</code>. <code>None</code> means <em>show the number, do not colour it</em>.</li>
+  <li><strong>Rotate a brand link</strong> — change the Render env var. No deploy.</li>
+  <li><strong>Check a backfill before deleting its jobs</strong> —
+  <code>/api/backfill/google?brand=X&amp;budget=10&amp;dry=1</code>;
+  <code>pending_after: 0</code> across all brands means done.</li>
+</ul>
+
+<div class="note">
+  <span class="lbl">The CSS trap</span>
+  <p>The semantic <code>.good</code> / <code>.warn</code> / <code>.bad</code> rules
+  <strong>must stay at the very bottom</strong> of the <code>&lt;style&gt;</code> block
+  with their <code>.kpi .v.x</code>, <code>td.x</code> and <code>tfoot td.x</code>
+  variants. <code>.kpi .v</code>, <code>td</code> and <code>tfoot td</code> each declare a
+  colour and out-specify a bare <code>.bad</code>, which silently turned the CPT colour
+  coding off with no error — it just rendered navy. Verify by reading the
+  <em>computed</em> colour, not by eyeballing.</p>
+</div>
+
+<!-- ══════════════════ THE DECISIONS ══════════════════ -->
+<div class="doc-head">
+  <span class="kind">Document three</span>
+  <h2>The decisions</h2>
+  <span class="file">docs/DECISIONS.md</span>
+</div>
+
+<p id="decisions">Things that look like bugs, omissions or easy wins, and are none of
+those. Each was decided deliberately, most after getting it wrong the other way first.
+Reverse any of them if there is a reason — but know what you are reversing.</p>
+
+<div class="dec">
+  <h4>No login</h4>
+  <p>The owner was told plainly that a public URL exposes live spend, budgets and every ad
+  name for seven accounts, and chose no login anyway. <strong>Do not re-litigate this
+  unprompted.</strong> <code>ADMIN_PASS</code> switches HTTP basic auth on with no code
+  change — path already tested. Offer it if the exposure becomes a real problem; not
+  otherwise.</p>
+</div>
+<div class="dec">
+  <h4>Pro rata is the only mode, and there is no badge</h4>
+  <p>There was a measured/pro-rata switch. The owner removed it — the <em>measured</em>
+  reading was the useless one — and then removed the badge announcing it. The numbers are
+  always pro rata and the page does not say so; the explanation lives in the info panel.</p>
+</div>
+<div class="dec">
+  <h4>An unagreed CPT target is worse than none</h4>
+  <p><code>cpt_target: None</code> renders the figure uncoloured. A red cell reads as an
+  instruction, and borrowing another brand's target to have <em>something</em> to colour
+  against is how you get someone acting on a number nobody agreed to.</p>
+</div>
+<div class="dec">
+  <h4>Testing and trial spend are never blended</h4>
+  <p>A testing campaign is looking for a creative that works and is expected to cost more
+  per trial; a trial campaign is scaling one that already does. Blending them produces a
+  CPT that describes neither, and judging a testing ad set against the trial target kills
+  the pipeline that feeds it.</p>
+</div>
+<div class="dec">
+  <h4>The 15-minute refresh is unforced</h4>
+  <p>The old 30-minute cycle used <code>force</code>, bypassing the server cache — so every
+  open tab paid for its own rebuild. Unforced at 15 minutes makes <em>fewer</em> upstream
+  calls than forced at 30. The <code>/healthz</code> keepalive does not skip hidden tabs,
+  because keeping the instance warm is the one thing worth doing while nobody is watching.</p>
+</div>
+<div class="dec">
+  <h4>A closed day is not a settled day</h4>
+  <p>Storing unsettled days provisionally would make 3-day windows fast — they are
+  currently the <em>slowest</em> view — but it would change what yesterday's spend means.
+  Deliberately not done.</p>
+</div>
+<div class="dec">
+  <h4>Ad sets renames itself to Ad groups on Google</h4>
+  <p>Same slot, one rung below campaign. Two buttons meaning the same thing on different
+  channels is worse than one that renames itself. Tabs that mean nothing on a channel are
+  <strong>hidden</strong>, not greyed.</p>
+</div>
+<div class="dec">
+  <h4>Blended stops where the two are comparable</h4>
+  <p>A Meta ad set and a Google ad group are not rows of the same table. Blended is the
+  only view where the channels are added, and it has no per-row breakdown for that reason.</p>
+</div>
+<div class="dec">
+  <h4>No build step</h4>
+  <p>3,839 lines of hand-written HTML is a lot for one file. It keeps the whole UI editable
+  by anyone who can read HTML and makes a deploy a <code>git push</code>. Still the right
+  trade here.</p>
+</div>
+<div class="dec">
+  <h4>Every third source is optional</h4>
+  <p>Meta is the one hard requirement — it is the only source of spend, and spend is what
+  every other number divides by. Branch missing degrades a brand to Meta-only, a legible
+  state. Google, Classplus and the history store are each <em>never load-bearing</em>: with
+  no credential or the service down, they return empty, say why, and the page renders as it
+  did before they existed.</p>
+</div>
+<div class="dec">
+  <h4>The link is not a login</h4>
+  <p>Per-brand links narrow one secret covering everything to one secret per team. A
+  forwarded link keeps working until rotated. Say "access link", never "login".</p>
+</div>
+
+<footer>
+  <span>Ads Performance · handoff pack</span>
+  <span>docs/ in krishnaprasun/postly-cpt-dashboard · 27 Aug 2026</span>
+</footer>
+
+</main>
+</div>
+</div>
+
+<script>
+(function(){
+  var links = Array.prototype.slice.call(document.querySelectorAll('nav.rail a'));
+  var targets = links.map(function(a){ return document.getElementById(a.getAttribute('href').slice(1)); });
+  function spy(){
+    var best = 0;
+    for (var i = 0; i < targets.length; i++){
+      var t = targets[i];
+      if (t && t.getBoundingClientRect().top <= 120) best = i;
+    }
+    links.forEach(function(a, i){ a.classList.toggle('on', i === best); });
+  }
+  var tick = false;
+  window.addEventListener('scroll', function(){
+    if (tick) return; tick = true;
+    window.requestAnimationFrame(function(){ spy(); tick = false; });
+  }, {passive:true});
+  spy();
+})();
+</script>
