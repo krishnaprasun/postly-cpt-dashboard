@@ -87,26 +87,31 @@ the trial and CPT columns are simply hidden.
 | Render service | `srv-da3cttibkg8c738a4nvg`, workspace `tea-d9tnoaqjobas73df4bpg` |
 | Region / plan | Singapore, **free** |
 | Runtime | Docker, gunicorn, **1 worker / 8 threads / 180s timeout** |
-| Deploy | `git push origin main` — **but see the autoDeploy note below** |
+| Deploy | `git push origin main` — a GitHub Action ships it (see below) |
 | Health check | `/healthz` (public, cheap, never triggers an upstream pull) |
 
-**AutoDeploy has never fired.** Render reports `autoDeploy: yes` and the service is not
-suspended, but **all 40 deploys in the API's history are `trigger: api`** — every one was
-launched by an API call, never by a push. The GitHub repo carries no webhooks at all, and
-neither does the sibling `postly-insta-daily`, whose deploys are also 100% `api`. So this
-is not a regression; the GitHub side of the connection was never established for this
-account, and it went unnoticed because deploys were always triggered by API anyway.
+**Deploys run from GitHub Actions, not from Render's own GitHub hook.** Render reports
+`autoDeploy: yes` and `autoDeployTrigger: commit`, and both are correct — but the repo has
+no webhook and no Render GitHub App installation, so GitHub never told Render a push
+happened. **All 40 deploys before 2026-08-27 were `trigger: api`**; the sibling
+`postly-insta-daily` is the same, so this was never a regression — the GitHub side of the
+connection was simply never established, and nobody noticed because deploys were always
+triggered by API anyway. Toggling `autoDeploy` and re-`PATCH`ing `repo` both return 200
+and change nothing; re-establishing it needs the dashboard's OAuth flow.
 
-Toggling `autoDeploy` and re-`PATCH`ing `repo` both return 200 and change nothing —
-re-establishing the connection needs the dashboard's OAuth flow, which the REST API does
-not expose. Until someone clicks through it, a push must be followed by a manual
-trigger:
+So `.github/workflows/deploy.yml` does what the missing webhook would: on a push to `main`
+it calls Render's deploy API, waits, and **fails the run unless `/healthz` comes back
+naming the pushed commit**. That last part matters — during a roll the *old* instance is
+still answering, so a plain 200 cannot tell a finished deploy from one that never started.
 
-```bash
-curl -s -X POST -H "Authorization: Bearer $(cat ~/.anthropic/render_key)" \
-  -H "Content-Type: application/json" -d '{"clearCache":"do_not_clear"}' \
-  https://api.render.com/v1/services/srv-da3cttibkg8c738a4nvg/deploys
-```
+- **Documentation pushes do not deploy** (`paths-ignore: docs/**, **.md`) — they ship no
+  code and a needless deploy costs a cold restart. Use the workflow's **Run workflow**
+  button to deploy one anyway.
+- **The `RENDER_API_KEY` repo secret is the credential.** Rotating the Render key — which
+  is overdue — means updating this secret in the same breath, or deploys start 401ing:
+  `gh secret set RENDER_API_KEY --repo krishnaprasun/postly-cpt-dashboard`
+- Manual trigger, if the Action is ever the problem:
+  `POST https://api.render.com/v1/services/srv-da3cttibkg8c738a4nvg/deploys`
 
 `render.yaml` is **documentation only** for this service. It was created through the REST
 API, not the Blueprint flow, so plan, region, health check and env vars live in Render's
@@ -268,10 +273,10 @@ live and is the *slowest* view. 30- and 90-day windows are mostly stored and are
 | item | why it matters | urgency |
 |---|---|---|
 | **Publish the Google OAuth consent screen** in project `734843757980` | a refresh token minted while the screen is in *Testing* dies after 7 days — this already happened once and took Google spend off the page | **before ~2026-09-02** |
-| **Rotate the Render API key** | it was pasted into a chat transcript against advice; a Render key grants access to every workspace the account belongs to and cannot be scoped down | soon |
+| **Rotate the Render API key** | it was pasted into a chat transcript against advice; a Render key grants access to every workspace the account belongs to and cannot be scoped down. **Update the `RENDER_API_KEY` repo secret in the same breath** or deploys break | soon |
+| Reconnect GitHub in the Render dashboard | optional now — it would let the Action be deleted, but the Action works and verifies more than Render's hook would | optional |
 | Delete `ads-reach-backfill-*` (3 jobs) | complete; they wake the free instance 3 h/night against a 750 h monthly pool | now |
 | Delete `ads-google-backfill-*` (3 jobs) | after Postly's last 14 days land tonight | tomorrow |
 | Rotate `HISTORY_TOKEN` | it was echoed into a transcript by a gcloud error message; carried by 9+ scheduler jobs, so rotation means updating each | optional |
 | Request Meta Standard Access | raises the rate limits that currently force degraded budget/status reads | optional |
-| **Reconnect the repo in Render** | autoDeploy silently stopped firing; every push now needs a manual API trigger | soon |
 | Set `ROOT_OPEN=0` | closes the bare URL once every team holds its own link | when handover is done |

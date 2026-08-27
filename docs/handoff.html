@@ -239,7 +239,7 @@ footer{
     <dl class="factbar">
       <div class="fact"><dt>Live</dt><dd><a href="https://postly-cpt-dashboard.onrender.com">postly-cpt-dashboard.onrender.com</a></dd></div>
       <div class="fact"><dt>Repo</dt><dd>krishnaprasun/postly-cpt-dashboard <span class="pill now">public</span></dd></div>
-      <div class="fact"><dt>Deploy</dt><dd>git push origin main</dd></div>
+      <div class="fact"><dt>Deploy</dt><dd>git push → GitHub Action</dd></div>
       <div class="fact"><dt>Stack</dt><dd>Flask · gunicorn · Docker · Render</dd></div>
       <div class="fact"><dt>Status</dt><dd>all systems live <span class="pill ok">healthy</span></dd></div>
     </dl>
@@ -377,7 +377,7 @@ Meta side works in full and the trial and CPT columns are simply hidden.</p>
 <tr><td>Workspace</td><td class="mono">tea-d9tnoaqjobas73df4bpg</td></tr>
 <tr><td>Region / plan</td><td>Singapore · <strong>free</strong></td></tr>
 <tr><td>Runtime</td><td>Docker · gunicorn · <strong>1 worker / 8 threads / 180s timeout</strong></td></tr>
-<tr><td>Deploy</td><td><code>git push origin main</code> — autoDeploy is on</td></tr>
+<tr><td>Deploy</td><td><code>git push origin main</code> — a GitHub Action ships it</td></tr>
 <tr><td>Health check</td><td><code>/healthz</code> — public, cheap, never triggers an upstream pull</td></tr>
 </tbody></table></div>
 
@@ -542,11 +542,8 @@ mostly stored, and faster.</p>
 <tr><td>Publish the Google OAuth consent screen<br><span class="mono" style="font-weight:400;color:var(--muted)">project 734843757980</span></td>
     <td>a refresh token minted while the screen is in <em>Testing</em> dies after 7 days — this already happened once and took Google spend off the page</td>
     <td><span class="pill now">by 2 Sep</span></td></tr>
-<tr><td>Reconnect the repo in Render</td>
-    <td>autoDeploy silently stopped firing; every push now needs a manual API trigger</td>
-    <td><span class="pill soon">soon</span></td></tr>
 <tr><td>Rotate the Render API key</td>
-    <td>it was pasted into a chat transcript against advice; a Render key reaches every workspace the account belongs to and cannot be scoped down</td>
+    <td>it was pasted into a chat transcript against advice; a Render key reaches every workspace the account belongs to and cannot be scoped down. <strong>Update the <code>RENDER_API_KEY</code> repo secret in the same breath</strong> or deploys break</td>
     <td><span class="pill soon">soon</span></td></tr>
 <tr><td>Delete <code>ads-reach-backfill-*</code></td>
     <td>complete; they wake the free instance 3 h a night against a 750 h monthly pool</td>
@@ -573,17 +570,23 @@ mostly stored, and faster.</p>
 </div>
 
 <h3 id="deploy">Deploy</h3>
-<div class="note crit">
-  <span class="lbl">AutoDeploy is not currently firing</span>
-  <p>Render reports <code>autoDeploy: yes</code> and the service is not suspended, but
-  <strong>all 40 deploys in the API's history are <code>trigger: api</code></strong> — every
-  one launched by an API call, never by a push. The repo carries no webhooks, and neither
-  does the sibling <code>postly-insta-daily</code>. This is not a regression: the GitHub
-  side of the connection was never established, and it went unnoticed because deploys were
-  always triggered by API anyway. Toggling <code>autoDeploy</code> and re-<code>PATCH</code>ing
-  <code>repo</code> both return 200 and change nothing — reconnecting needs the dashboard's
-  OAuth flow. Until then, follow every push with
-  <code>POST /v1/services/srv-da3cttibkg8c738a4nvg/deploys</code>.</p>
+<div class="note">
+  <span class="lbl">Deploys run from GitHub Actions</span>
+  <p>Render reports <code>autoDeploy: yes</code> and <code>autoDeployTrigger: commit</code>,
+  and both are correct — but the repo has no webhook and no Render GitHub App installation,
+  so GitHub never told Render a push happened. <strong>All 40 deploys before 27 Aug 2026
+  were <code>trigger: api</code></strong>, and the sibling <code>postly-insta-daily</code>
+  is the same: not a regression, just a connection that was never established. Toggling
+  <code>autoDeploy</code> and re-<code>PATCH</code>ing <code>repo</code> return 200 and
+  change nothing; reconnecting needs the dashboard's OAuth flow.<br><br>
+  So <code>.github/workflows/deploy.yml</code> does the missing webhook's job: on a push to
+  <code>main</code> it calls Render's deploy API, waits, and <strong>fails the run unless
+  <code>/healthz</code> comes back naming the pushed commit</strong> — during a roll the
+  old instance still answers, so a plain 200 cannot tell a finished deploy from one that
+  never started. Docs-only pushes deliberately skip the deploy; the Actions tab's
+  <em>Run workflow</em> button ships one anyway. The <code>RENDER_API_KEY</code> repo
+  secret is the credential: rotating the Render key means updating that secret in the same
+  breath.</p>
 </div>
 <pre><span class="c"># the repo is public — scan before every push</span>
 git diff --cached | grep -inE 'EAA[A-Za-z0-9]{40}|1//[A-Za-z0-9_-]{40}|rnd_[A-Za-z0-9]{20}' \

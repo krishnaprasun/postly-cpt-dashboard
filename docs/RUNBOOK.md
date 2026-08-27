@@ -18,7 +18,28 @@ Read-only API calls need a brand link instead: `?k=$(python3 -c "import json;pri
 
 ```bash
 cd ~/postly-cpt-dashboard
-git add -A && git commit -m "..." && git push origin main    # autoDeploy takes it from here
+git add -A && git commit -m "..." && git push origin main    # the GitHub Action ships it
+```
+
+Render's own GitHub connection is not wired for this account (see `HANDOFF.md`), so
+`.github/workflows/deploy.yml` calls Render's API on every push to `main` and then waits
+until `/healthz` names the pushed commit. Watch it with `gh run watch` or:
+
+```bash
+gh run list --repo krishnaprasun/postly-cpt-dashboard --limit 3
+curl -s https://postly-cpt-dashboard.onrender.com/healthz   # {"commit":"<sha>", ...}
+```
+
+Docs-only pushes deliberately do not deploy. To ship one anyway, use **Run workflow** on
+the Actions tab.
+
+**Editing the workflow: validate before pushing.** A YAML parse error produces a run with
+**zero jobs, no log and no annotations** — it just says `failure`, which reads like a
+deploy failure and is not one. The classic cause is a continuation line inside a `run: |`
+block starting at column 0, which breaks out of the block. Check both layers first:
+
+```bash
+ruby -ryaml -e 'YAML.load_file(".github/workflows/deploy.yml"); puts "YAML OK"'
 ```
 
 **Before every push: scan for secrets.** The repo is public.
