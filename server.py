@@ -223,6 +223,11 @@ def get_data(since, until, brand, force=False, hard=False):
         if saved and saved.get("prorata") \
                 and saved.get("prorata_model") != P.PRORATA_MODEL:
             saved = None
+        # Same argument, one level up: a payload built before a field existed cannot grow
+        # it, and the page would render blanks off it until the artifact aged out. Cheaper
+        # to rebuild once than to serve a shape the shipped code no longer matches.
+        if saved and saved.get("payload_shape") != P.PAYLOAD_SHAPE:
+            saved = None
         if saved and saved.get("combined"):
             age = int(max(0, time.time() - (saved.get("_saved_at") or 0)))
             with _lock:

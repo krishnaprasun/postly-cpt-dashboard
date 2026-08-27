@@ -632,6 +632,15 @@ def has_imp(r):
 # actually reported video, and every rate below divides by that, never by `imp`.
 VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 
+# The shape of the built payload. Bump it whenever a FIELD is added or removed, because
+# the payload is persisted to GCS for cold starts and a restored one is served whole --
+# so the shipped code reads new fields off an old payload and finds nothing. That is not
+# staleness, it is a page rendering blanks for up to twelve hours after a deploy.
+# Every other stored artifact already carries a stamp (PRORATA_MODEL, SERIES_SHAPE,
+# row_cap); the payload was the one that did not, and adding video is what found it.
+#   2 - hook rate and ThruPlay (vv / tp / vimp) at every level
+PAYLOAD_SHAPE = 2
+
 
 def has_vid(r):
     return r.get("vv") is not None
@@ -3708,6 +3717,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         "vid_coverage": (round(combined["vimp"] / combined["imp"], 4)
                          if combined.get("imp") else None),
         "vid_from": VID_FROM,
+        "payload_shape": PAYLOAD_SHAPE,
         "imp_coverage": (round(combined["imp_spend"] / combined["spend"], 4)
                          if combined["spend"] else None),
         "imp_from": IMP_FROM,
