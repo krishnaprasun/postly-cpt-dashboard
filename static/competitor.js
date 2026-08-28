@@ -62,8 +62,10 @@
 
   function brand() { return (document.body.dataset.brand || ''); }
   function targetUrl() {
+    // embed=1 asks the competitor app to hide its own brand toggle (it opens locked to
+    // the brand of the page you're on). Harmless if that app doesn't read the flag yet.
     var b = brand();
-    return URL_BASE + (BRANDS[b] ? ('?brand=' + encodeURIComponent(b)) : '');
+    return URL_BASE + '?embed=1' + (BRANDS[b] ? ('&brand=' + encodeURIComponent(b)) : '');
   }
 
   // The button lives in the tab row; no data-t / data-ctrl, so neither the data dashboard's
@@ -99,35 +101,66 @@
     if (frame.getAttribute('src') !== want) frame.setAttribute('src', want);
   }
 
+  // While the competitor view is open, the CPT dashboard's KPI cards and the other data
+  // tabs are noise — hide them so the competitor view gets the whole screen, and restore
+  // them exactly on exit. The Competitor button stays (it toggles the view off).
+  var extras = null;
+  function hideExtras() {
+    if (extras) return;
+    extras = { kpis: null, btns: [] };
+    var k = document.getElementById('kpis');
+    if (k) { extras.kpis = k.style.display; k.style.display = 'none'; }
+    for (var i = 0; i < tabs.children.length; i++) {
+      var c = tabs.children[i];
+      if (c === btn) continue;
+      extras.btns.push({ el: c, d: c.style.display, on: c.classList.contains('on') });
+      c.classList.remove('on'); c.style.display = 'none';
+    }
+  }
+  function showExtras() {
+    if (!extras) return;
+    var k = document.getElementById('kpis');
+    if (k) k.style.display = extras.kpis || '';
+    extras.btns.forEach(function (o) { o.el.style.display = o.d || ''; });
+    extras = null;
+  }
+
+  var isOn = false;
   function enter() {
-    for (var i = 0; i < tabs.children.length; i++) tabs.children[i].classList.remove('on');
+    isOn = true;
     btn.classList.add('on');
+    hideExtras();
     cpx.activate(panel);
     load(); fit();
   }
-  function markOff() { btn.classList.remove('on'); }
+  function leave() {
+    isOn = false;
+    btn.classList.remove('on');
+    cpx.deactivate();
+    showExtras();
+  }
 
-  // Capture phase so it runs before the data dashboard's own onclick.
+  // Capture phase so it runs before the data dashboard's own onclick. The button toggles.
   tabs.addEventListener('click', function (e) {
     var b = e.target.closest ? e.target.closest('button') : null;
     if (!b) return;
-    if (b.hasAttribute('data-ci')) { e.preventDefault(); enter(); }
-    else { markOff(); if (b.dataset && b.dataset.t) cpx.deactivate(); }
+    if (b.hasAttribute('data-ci')) { e.preventDefault(); e.stopPropagation(); isOn ? leave() : enter(); }
+    else if (b.dataset && b.dataset.t) { if (isOn) leave(); }
   }, true);
 
-  window.addEventListener('resize', function () { if (cpx.active() === panel) fit(); });
+  window.addEventListener('resize', function () { if (isOn) fit(); });
 
   // Only mount for brands with competitor data; keep the view in sync when the brand
   // switches up top (the data dashboard sets document.body.dataset.brand).
   function sync() {
     var ok = !!BRANDS[brand()];
-    if (ok && !btn.parentNode) tabs.appendChild(btn);
-    else if (!ok && btn.parentNode) {
-      btn.parentNode.removeChild(btn);
-      if (cpx.active() === panel) { cpx.deactivate(); markOff(); }   // leave competitor if brand lost it
+    if (!ok) {
+      if (isOn) leave();                         // switched to a brand with no competitor data
+      if (btn.parentNode) btn.parentNode.removeChild(btn);
       return;
     }
-    if (ok && cpx.active() === panel) { load(); fit(); }             // follow the brand switch in place
+    if (!btn.parentNode) tabs.appendChild(btn);
+    if (isOn) { load(); fit(); }                 // follow the brand switch in place
   }
   sync();
   try {
