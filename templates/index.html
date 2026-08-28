@@ -443,9 +443,38 @@ select.sel{appearance:none;-webkit-appearance:none;padding-right:29px;
   background-repeat:no-repeat;background-position:right 10px center}
 select.sel:focus,input[type=date]:focus{outline:0;border-color:var(--accent);
   box-shadow:0 0 0 3px var(--accent-lt)}
-#customWrap{display:none;gap:7px;align-items:center}
+/* The custom range is ONE control, and it was three loose ones. Two small things made
+   the row look broken the moment anyone picked a custom range: it was a bare flex div in
+   a row whose items are top-aligned, so it floated level with the LABELS rather than with
+   the controls; and a native date input is taller than everything beside it, so even
+   level it would not have lined up. It is a .fgrp like every other group now, and the two
+   dates sit inside one bordered shell exactly like a segmented switch. */
+#customWrap{display:none}
 #customWrap.on{display:flex}
-#customWrap span{font-size:12px;color:var(--faint)}
+.dtrow{display:flex;align-items:center;gap:8px;height:34px}
+.dtwrap{display:inline-flex;align-items:center;height:34px;box-sizing:border-box;
+  background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:0 3px}
+.dtwrap input[type=date]{border:0;background:transparent;box-shadow:none;height:26px;
+  padding:0 7px;border-radius:7px;font-weight:550;color:var(--ink)}
+.dtwrap input[type=date]:hover{background:var(--white)}
+.dtwrap input[type=date]:focus{outline:0;background:var(--white);
+  box-shadow:0 0 0 2px var(--accent-lt)}
+/* Chrome draws its own calendar glyph and gives it more room than this row can spare.
+   Shrunk and dimmed to the weight of the select's chevron rather than hidden — hiding it
+   removes the only thing on the field that says it opens a picker. */
+.dtwrap input[type=date]::-webkit-calendar-picker-indicator{opacity:.42;cursor:pointer;
+  padding:0;margin:0 0 0 3px}
+.dtwrap input[type=date]::-webkit-calendar-picker-indicator:hover{opacity:.9}
+.dtwrap .arw{font-size:12px;color:var(--faint);padding:0 2px;user-select:none}
+/* The Longevity filter reads as a sentence — "went live X -> Y" — so its copy of the
+   shell is one size down and sits inline in the line of text. */
+.dtwrap.sm{height:28px;margin-left:5px}
+.dtwrap.sm input[type=date]{height:21px;padding:0 5px;font-size:12px}
+/* Apply is filled, unlike every other button here, because it is the one control on the
+   page that does nothing until it is pressed — the dates alone change nothing, and a
+   quiet button next to two filled-in fields reads as already applied. */
+.btn.go{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.go:hover{background:var(--accent-dk);border-color:var(--accent-dk);color:#fff}
 
 /* Loading veil. The page behind it is blurred rather than blanked so the shape of what
    is coming stays visible. Deliberately NOT shown for the 30-minute auto refresh or a
@@ -612,9 +641,16 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
         <option value="custom">Custom range…</option>
       </select>
     </div>
-    <div id="customWrap">
-      <input type="date" id="cSince"><span>→</span><input type="date" id="cUntil">
-      <button class="btn" id="cGo">Apply</button>
+    <div class="fgrp" id="customWrap">
+      <label>Dates</label>
+      <div class="dtrow">
+        <div class="dtwrap">
+          <input type="date" id="cSince" aria-label="Start date">
+          <span class="arw">→</span>
+          <input type="date" id="cUntil" aria-label="End date">
+        </div>
+        <button class="btn go" id="cGo">Apply</button>
+      </div>
     </div>
   </div>
 </header>
@@ -727,8 +763,11 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     </select>
     <input type="search" id="lq" placeholder="Filter by ad set or campaign…">
     <label class="chk">went live
-      <input type="date" id="lFrom" style="margin-left:4px"><span>→</span>
-      <input type="date" id="lTo"></label>
+      <span class="dtwrap sm">
+        <input type="date" id="lFrom" aria-label="Live from">
+        <span class="arw">→</span>
+        <input type="date" id="lTo" aria-label="Live until">
+      </span></label>
     <label class="chk"><input type="checkbox" id="lActive"> still running only</label>
     {% if can_act %}<button class="btn" id="lGo">Refresh</button>{% endif %}
     <span class="meta" id="lcount"></span>
