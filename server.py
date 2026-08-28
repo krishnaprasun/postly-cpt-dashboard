@@ -34,6 +34,15 @@ app = Flask(__name__)
 app.config["TEMPLATES_AUTO_RELOAD"] = True
 app.jinja_env.auto_reload = True
 
+# Control layer (ads-ops write actions) lives in its own module `control.py` and its own
+# `static/control.js`; it registers here as a blueprint so the read dashboard and its data
+# pipeline are untouched. Wrapped: control is optional and must never block the read app.
+try:
+    from control import bp as _control_bp
+    app.register_blueprint(_control_bp)
+except Exception:
+    traceback.print_exc()
+
 # 90s: short enough that the figures on screen are never meaningfully behind Meta
 # (which lags a few minutes anyway), long enough that clicking between tabs and
 # ranges does not re-pull. Past this the cache is served stale and refreshed behind
