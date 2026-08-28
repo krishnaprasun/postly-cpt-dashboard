@@ -161,3 +161,26 @@ page renders as it did before they existed.
 
 Per-brand links narrow one secret covering everything to one secret per team. A forwarded
 link keeps working until rotated. Say "access link", never "login".
+
+### The summary divides by the brand total; the tables sum their rows
+
+Branch attributes a trial to an ad NAME, and a name only becomes a table row when that ad
+also spent inside the window. Nearly all of them do, until an account stops delivering —
+then the trials keep arriving from installs those ads had already bought, and the ads they
+name no longer have a row. Funda, 2026-08-28: three accounts fell from ₹25.9L/day to ₹1.4L
+when 114 ads hit Page Privacy Check Fail, 99 were paused for a compromised user and 57
+failed a privacy check; 332 of 454 Meta trials then named an ad with no spend that day, and
+the headline read ₹1,170 against a true ₹315.
+
+So the KPI tiles divide by Meta's whole bucket (`channels[ev].meta`, or `prorata[ev].meta`
+when the model is on). **Do not "fix" this back to the row sum.** The error it removes runs
+in the one direction that matters: it made a HALTED account look like an expensive one,
+which is the reading that gets working ad sets killed. It also made `vs prior` compare two
+different measures — `prior_window` has always used the channel index, i.e. the total.
+
+The tables stay row-based, because a trial whose ad has no row has nowhere to sit and
+spreading it would credit ads with trials they did not earn. Where the two differ by more
+than 2% the Trials tile says so and a note explains it; below that the tile keeps the event
+name. On a segment the off-row trials are shared out by that segment's share of the trials
+that do have rows — testing/trial is a campaign property and an off-row trial has no
+campaign — and the segments still sum to the brand exactly.
