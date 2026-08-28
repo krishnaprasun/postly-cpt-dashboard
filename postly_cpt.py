@@ -639,7 +639,7 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 # Every other stored artifact already carries a stamp (PRORATA_MODEL, SERIES_SHAPE,
 # row_cap); the payload was the one that did not, and adding video is what found it.
 #   2 - hook rate and ThruPlay (vv / tp / vimp) at every level
-PAYLOAD_SHAPE = 2
+PAYLOAD_SHAPE = 3
 
 
 def has_vid(r):
@@ -3465,9 +3465,16 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     # is what every CPT on the page divides by, and quietly adding a third series to them
     # would change the attribution figure into something nobody asked for.
     inst_matched = 0.0
+    inst_meta = 0.0
     for name, n in trials.get(INSTALL_KEY, {}).items():
         nm = name if isinstance(name, str) else ""
-        if not nm or nm == "null" or nm.startswith(NONE_PREFIX) or nm not in by_name:
+        if not nm or nm == "null" or nm.startswith(NONE_PREFIX):
+            continue
+        # A name means Meta (see NONE_PREFIX), whether or not that ad still has a row in
+        # this window. The summary tiles divide by this; the ad rows can only carry the
+        # matched part, exactly as with trials.
+        inst_meta += n
+        if nm not in by_name:
             continue
         group = by_name[nm]
         inst_matched += n
@@ -3694,7 +3701,11 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
         # Branch installs, joined to ads by the same name key as trials. Reported
         # separately from `matched` because installs are not what CPT divides by.
         "installs": {"branch_total": round(sum(trials.get(INSTALL_KEY, {}).values()), 1),
-                     "matched": round(inst_matched, 1)},
+                     "matched": round(inst_matched, 1),
+                     # Meta's whole bucket and the part of it no ad row can carry, so the
+                     # summary can divide by the same thing the trial tiles do.
+                     "meta": round(inst_meta, 1),
+                     "orphan": round(inst_meta - inst_matched, 1)},
         # The modelled view. `uplift` is the multiplier the page applies to every trial
         # count when pro-rata mode is on; 1.0 means the model changes nothing.
         "prorata": prorata,

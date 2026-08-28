@@ -1121,6 +1121,65 @@ function upliftOf(ev){
    as modelled. */
 function proOn(){ return !!(RAW && RAW.prorata && hasTrials()); }
 
+/* ---------- the brand total, versus the sum of the rows ----------
+   Every table on this page is keyed by ad NAME, so a trial can only sit on a row when the
+   ad it names also spent inside the window. On an ordinary day nearly all of them do.
+
+   On the day an account STOPS delivering, they do not. The trials keep arriving — from
+   installs those ads bought before they were stopped — and the ads they name no longer
+   have a row, so they dropped out of the summary while the spend stayed in it. Funda,
+   2026-08-28: 311 of 433 Meta trials named an ad that spent nothing that day, and the
+   headline read Rs1,122 against a true Rs305. The error runs in the worst possible
+   direction — it makes an account that has HALTED look like an expensive one, which is
+   the reading that gets working ad sets killed.
+
+   So the tiles at the top divide by Meta's whole bucket, which Branch reports directly and
+   which `vs prior` has always compared against. The tables keep summing their rows: a
+   trial whose ad has no row genuinely has nowhere to sit, and inventing a home for it
+   would credit an ad with trials it did not earn.
+
+   Testing vs trial is a property of the CAMPAIGN, and a trial whose ad has no row has no
+   campaign either — so on a segment the off-row trials are shared out by that segment's
+   share of the trials that DO have rows. The two segments therefore still add back up to
+   the brand exactly, and `apportioned` is set so the note can say which it is.
+
+   null means there is no total to use and the caller falls back to the rows: a payload
+   restored from before channels existed, or a brand with no Branch app. */
+function metaTotals(ev){
+  const ch = RAW && RAW.channels && RAW.channels[ev];
+  if(!ch || typeof ch.meta !== 'number' || !DATA || !DATA.combined) return null;
+  const p = RAW.prorata && RAW.prorata[ev];
+  /* p.meta is already the modelled total — measured Meta plus Meta's share of the pool —
+     so it is used as-is and never multiplied by the row uplift, which exists only to
+     spread that same allocation across the rows. */
+  const brand = (proOn() && p && typeof p.meta === 'number') ? p.meta : ch.meta;
+  const allRows = DATA.combined[ev] || 0;          // every ad row, both segments
+  const seg = totals();
+  const rows = seg[ev] || 0;
+  /* This segment's share of the off-row trials. By trials wherever any row has one,
+     because trials are the thing being shared out; by spend only when no row anywhere
+     carries a trial yet and a ratio of zeros would throw the whole figure away. */
+  const one = SEG === 'blended';
+  const share = one ? 1
+    : allRows > 0 ? rows / allRows
+    : DATA.combined.spend > 0 ? (seg.spend || 0) / DATA.combined.spend : 0;
+  const off = (brand - allRows) * share;
+  const instBrand = (RAW.installs && typeof RAW.installs.meta === 'number')
+    ? RAW.installs.meta : null;
+  const instOff = instBrand === null ? 0
+    : (instBrand - (DATA.combined.inst || 0)) * share;
+  return {total: rows + off, rows, off,
+          inst: instBrand === null ? null : (seg.inst || 0) + instOff,
+          instOff, apportioned: !one};
+}
+
+/* Worth telling the reader about. Below this the two counts differ by a handful of trials
+   out of thousands, and saying so would push the event name — which people actually use
+   to check they are reading the right metric — off the tile for no gain. */
+function offMatters(MT){
+  return !!(MT && MT.off >= 1 && MT.total > 0 && MT.off / MT.total >= 0.02);
+}
+
 function applyAttr(src){
   if(!src || !src.prorata) return src;
   const evs = src.events || [], U = {};
@@ -1182,7 +1241,13 @@ function chanOf(){ return (DATA && DATA.channels && DATA.channels[EV]) || null; 
 
 /* ---------- KPIs ---------- */
 function kpis(){
-  const mc = totals();
+  /* The summary divides by the brand's whole Meta bucket, not by the sum of the ad rows
+     — see metaTotals(). MT is null when that cannot be done, and the rows are used. */
+  const MT = metaTotals(EV);
+  const mc0 = totals();
+  const mc = MT ? Object.assign({}, mc0, {[EV]: MT.total,
+                                          inst: MT.inst === null ? mc0.inst : MT.inst})
+                : mc0;
   const g = googTotals();
   /* Blended adds the two channels; Google shows only Google. Both wait for the Google
      payload rather than treating "not loaded yet" as zero -- a CPT that quietly reads
@@ -1351,7 +1416,10 @@ function kpis(){
              : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
    (trials ? `
    <div class="kpi"><div class="k">Trials${modLbl}</div><div class="v">${num(tr)}</div>
-     <div class="s">${DATA.event_note[EV]||EV}${SEG==='blended' ? ''
+     <div class="s">${offMatters(MT)
+       ? `${num(MT.rows)} sit on the ad rows below · <span class="warn">${num(MT.off)}</span>
+          name an ad with no spend in this window`
+       : (DATA.event_note[EV]||EV)}${SEG==='blended' ? ''
        : ` · ${segLbl} campaigns only`}</div></div>`
    : `
    <div class="kpi"><div class="k">Budget/day</div><div class="v">${rs(c.budget)}</div>
@@ -1613,7 +1681,11 @@ function priorDelta(){
   const pt = PRIOR.trials[EV];
   if(!pt || !PRIOR.spend) return null;
   const was = PRIOR.spend / pt;
-  const now = cpt(totals().spend, totals()[EV]);
+  /* PRIOR.trials comes from the channel index, which is Meta's WHOLE bucket, so `now`
+     has to be the brand total too. Divided by the row sum instead, a day on which
+     delivery stopped read as a CPT blow-out against a prior week counted differently. */
+  const MT = metaTotals(EV);
+  const now = cpt(totals().spend, MT ? MT.total : totals()[EV]);
   if(now === null || !was) return null;
   return {was, now, pct: 100 * (now - was) / was};
 }
@@ -3403,6 +3475,41 @@ function longNote(){
         everything older than the settle window cannot have changed since.`) : '');
 }
 
+/* The tiles at the top and the table below count the same trials differently, on purpose,
+   and a difference nobody explained would read as a bug in whichever one the reader
+   trusted less. Shown only when there IS a difference. */
+function splitNote(){
+  const MT = metaTotals(EV);
+  if(!offMatters(MT)) return '';
+  const sp = totals().spend;
+  return `<b>The summary counts every Meta trial. The table can only count the ones with an
+     ad to sit on.</b> Branch attributes a trial to an ad NAME, and a name only becomes a
+     row here when that ad also spent inside this window. Of the ${num(MT.total)} trials
+     Branch credits to ${DATA.brand_label}'s Meta ads, <b>${num(MT.off)}</b> name an ad that
+     spent nothing in this window — almost always an ad that was running recently and has
+     since been stopped, blocked or paused, still delivering trials from installs it had
+     already bought.<br><br>
+     Those trials are real and this brand's spend bought them, so the tiles at the top
+     divide by all ${num(MT.total)} — <b>${rs(sp/MT.total)}</b>. The rows below add up to
+     ${num(MT.rows)} and ${rs(sp/MT.rows)}. Dropping the ${num(MT.off)} from the headline
+     would make an account whose ads have just been switched off look like an expensive
+     one rather than a stopped one${MT.off > MT.rows
+       ? `, and here they are the majority of the brand's trials` : ''}.
+     Spreading them across the rows instead would credit ads with trials they did not
+     earn, so the table stays as measured. Judge an individual ad on the rows; judge the
+     brand on the tiles.${MT.instOff >= 1
+       ? ` Installs are counted the same way — ${num(MT.instOff)} of them name an ad with
+           no spend here.` : ''}
+     ${MT.apportioned
+       ? `<br><br>One caveat on this view. Testing and trial are properties of the
+          <i>campaign</i>, and an off-row trial has no campaign either — so the
+          ${num(MT.off)} counted here are this segment's share of the brand's off-row
+          trials, split by how many trials each segment's own rows carry. The segments
+          still add back up to the brand exactly. Switch to <b>blended</b> for the figure
+          measured whole.`
+       : ''}<br><br>`;
+}
+
 /* The breakdown behind the attribution figure. Written out in full because "44%
    attributed" reads as a broken pipeline when what it actually means is "56% of these
    trials were bought on Google" — a completely different fact, with a completely
@@ -3424,8 +3531,9 @@ function chanNote(){
           measured.</b> Of the ${num(p.pool)} trials no channel claims,
           this model hands Meta ${num(p.allocated)} and Google the rest, by their measured
           shares. Google's own trials are untouched. Every trial count on the page is lifted
-          <b>×${p.uplift.toFixed(3)}</b> and every CPT divided by it, so brand-wide CPT
-          reads ${rs(sp/p.trials)} where the measured figure is ${rs(sp/p.matched)}.
+          <b>×${p.uplift.toFixed(3)}</b> and every CPT divided by it. Brand-wide CPT
+          reads ${rs(sp/p.meta)} where the measured figure is ${rs(sp/c.meta)}; the rows
+          themselves carry ${num(p.trials)} of those trials and cost ${rs(sp/p.trials)}.
           The lift is worked out for each of the ${p.days_covered} of
           ${p.days_total} day(s) in this window on its own and then summed, so a window
           where Google's share moved is not flattened to one ratio.${p.unallocated > 0
@@ -3441,15 +3549,16 @@ function chanNote(){
       : `<br><b>The pro-rata model could not be applied to this window</b>, so the figures
           above are measured. Applied, it would share the ${num(p.pool)} unclaimed trials
           between Meta and Google by their measured shares, credit Meta with
-          ${num(p.allocated)} of them, and print a brand-wide CPT of ${rs(sp/p.trials)}
-          against the measured ${rs(sp/p.matched)}.`;
+          ${num(p.allocated)} of them, and print a brand-wide CPT of ${rs(sp/p.meta)}
+          against the measured ${rs(sp/c.meta)}.`;
   }
   return `<b>Which channel earned these trials.</b> Branch fills in an ad name for Meta ads
      and leaves it empty for Google — so a trial with no ad name is not an untraceable one,
      it is a Google or organic trial, and Branch says which. Measured over this window${
        proOn() ? ', before the pro-rata model is applied' : ''}:
-     ${row('Meta', c.meta, c.meta_orphan ? `${num(c.meta_orphan)} of them name an ad no
-        longer in the account, so they are Meta's but sit outside every row above` : '')}
+     ${row('Meta', c.meta, c.meta_orphan ? `${num(c.meta_orphan)} of them name an ad that
+        did not spend in this window — counted in the summary at the top, which is why it
+        does not equal the table, and with no row of their own below` : '')}
      ${row('Google Ads', c.google, `counted here; this dashboard does not read Google
         spend, so there is no CPT beside it yet`)}
      ${row('Organic / direct', c.organic)}
@@ -3517,6 +3626,7 @@ function mainNote(){
     + nsec('CTR and CPM', impNote, true)
     + nsec('Hook rate and ThruPlay %', vidNote, true)
     + nsec('Which channel earned these trials', chanNote(), true)
+    + nsec('Why the summary does not equal the table', splitNote(), true)
     + nsec('Testing vs trial', segNote(), true)
     + nsec('Signups and mandates', cpNote(), true)
     + nsec(hasTrials() ? 'How CPT is calculated' : 'No trial feed for this brand', (hasTrials()
