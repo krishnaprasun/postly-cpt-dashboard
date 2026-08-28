@@ -65,7 +65,7 @@
     // embed=1 asks the competitor app to hide its own brand toggle (it opens locked to
     // the brand of the page you're on). Harmless if that app doesn't read the flag yet.
     var b = brand();
-    return URL_BASE + '?embed=1' + (BRANDS[b] ? ('&brand=' + encodeURIComponent(b)) : '');
+    return URL_BASE + '?embed=1' + (BRANDS[b] ? ('&product=' + encodeURIComponent(b)) : '');
   }
 
   // The button lives in the tab row; no data-t / data-ctrl, so neither the data dashboard's
