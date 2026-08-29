@@ -145,6 +145,8 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    change nothing about what you can do, and it was pushing Export and Refresh off the
    line on a laptop. It is on the button's title, in the menu, and read out by the
    aria-label -- three places, none of them the middle of the toolbar. */
+.btn.signin{border-color:var(--accent);color:var(--accent-dk);font-weight:650}
+.btn.signin:hover{background:var(--accent-lt)}
 .whowrap{position:relative}
 .whobtn{display:inline-flex;align-items:center;gap:5px;background:none;border:0;padding:2px;
   border-radius:99px;cursor:pointer;font:inherit;color:var(--muted)}
@@ -633,6 +635,11 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
            server refuses them regardless — see _gate — so this is about not offering a
            button that would not work, not about security. -->
       <span class="meta" id="viewonly" title="This access is view-only">view-only</span>
+      {% endif %}
+      {% if google_auth and not signed_in %}
+      <!-- The open front door makes signed-in and signed-out identical. Say which one
+           this is, and offer the way through. -->
+      <a class="btn signin" href="/auth/login">Sign in</a>
       {% endif %}
       {% if signed_in %}
       <!-- Who is looking. On a shared screen "whose numbers are these" is the first

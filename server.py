@@ -540,6 +540,10 @@ def index(key=None):
         # Who is looking, when that is a person rather than a link. The page shows it
         # beside a sign-out, so a shared screen is never a mystery.
         signed_in=caps.get("email", ""),
+        # Whether signing in is even possible here. While the front door is open, being
+        # signed in and not being signed in look exactly alike — which is how someone can
+        # believe they signed in, wonder where their Access link went, and be right to.
+        google_auth=GA.on(),
         role_label=U.ROLE_LABELS.get(caps.get("role", ""), ""),
         is_super=caps.get("role") == "super",
         # Only the brands this link may see. A switcher listing brands the key cannot
