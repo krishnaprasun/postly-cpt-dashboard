@@ -168,9 +168,10 @@ def delta(now, was):
     d_tr = now["trials"] - (was.get("trials") or 0)
     if abs(d_sp) < 1 and abs(d_tr) < 1:
         return ""
-    out = f"{signed(d_sp, rs)}/{signed(d_tr, num)}"
+    out = f"{signed(d_sp, rs)} spend, {signed(d_tr, num)} trials"
     if d_tr >= 1 and d_sp > 0:
-        out += f" at {rs0(d_sp/d_tr)}"
+        # An arrow, because this is what that spend BOUGHT — not another running total.
+        out += f" \u2192 CPT {rs0(d_sp/d_tr)}"
     return out
 
 
@@ -190,18 +191,21 @@ def brand_block(f, prev):
     c = cpt(t["spend"], t["trials"])
     tgt = f["target"]
 
-    head = (f"{mark(c, tgt)} *{f['label']}* CPT *{rs0(c) if c else '—'}*"
-            + (f" vs {rs0(tgt)}" if tgt else "")
-            + f" · {rs(t['spend']) if t['spend'] is not None else '—'}"
+    # Every figure says what it is. Six numbers on a line with nothing naming them is
+    # a line people stop reading — and these three are different KINDS of thing: a rate,
+    # a running total, and a change.
+    head = (f"{mark(c, tgt)} *{f['label']}* — CPT *{rs0(c) if c else '—'}*"
+            + (f" (target {rs0(tgt)})" if tgt else "")
+            + f" · spend {rs(t['spend']) if t['spend'] is not None else '—'}"
             + ("" if whole else " _(Meta only)_"))
     d = delta(t, prev if whole else prev.get("meta"))
     if d:
-        head += f" · this hour {d}"
+        head += f" · last hour {d}"
 
     bits = []
     for name, side in (("Meta", f["meta"]), ("Google", f["google"])):
         cc = cpt(side["spend"], side["trials"])
-        piece = f"{name} {rs0(cc) if cc else '—'}"
+        piece = f"{name} CPT {rs0(cc) if cc else '—'}"
         # Google counts the same event from the click it saw, Branch from the install.
         # Worth saying only where the two disagree enough to change what you would do.
         if name == "Google" and cc and side.get("gconv") and side["spend"]:
@@ -211,7 +215,7 @@ def brand_block(f, prev):
         bits.append(piece)
     if f["meta"]["budget"] and f["budgets_known"]:
         bits.append(f"{100*f['meta']['spend']/f['meta']['budget']:.0f}%"
-                    f" of {rs(f['meta']['budget'])} budget")
+                    f" of {rs(f['meta']['budget'])} Meta day budget used")
     lines = [head, "     " + " · ".join(bits)]
 
     # Warnings still get their own line — they are the reason to look at all.
@@ -269,7 +273,7 @@ def hour_strip(points, rows):
         out.append(f"{label} {rs(d_sp)}·{num(d_tr)}")
     if not out:
         return ""
-    return "_Last hours:_ " + " · ".join(out[-5:])
+    return "_Each hour (spend · trials):_ " + " · ".join(out[-5:])
 
 
 def compose(rows, prev_by_brand, when, points=None, link=None):
@@ -281,8 +285,8 @@ def compose(rows, prev_by_brand, when, points=None, link=None):
     trs = [f["total"]["trials"] for f in rows]
     tr = None if any(t is None for t in trs) else sum(trs)
     c = cpt(sp, tr)
-    head = (f"*Ads · {when} IST* — {rs(sp)} · "
-            + (f"{num(tr)} trials · CPT {rs0(c)}" if c else "trials pending"))
+    head = (f"*Ads · {when} IST* — spend {rs(sp)}"
+            + (f" · {num(tr)} trials · CPT {rs0(c)}" if c else " · trials pending"))
     body = "\n".join(brand_block(f, prev_by_brand.get(f["brand"])) for f in rows)
     out = [head, "", body]
     strip = hour_strip(points or [], rows)
