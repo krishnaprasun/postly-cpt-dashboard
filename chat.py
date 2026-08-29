@@ -153,12 +153,12 @@ def mark(v, target):
     early in the day a thin trial count moves CPT around on its own."""
     if not target or not v:
         return ""
-    return (" \U0001f7e2" if v <= target
-            else " \U0001f7e1" if v <= 1.5 * target else " \U0001f534")
+    return ("\U0001f7e2" if v <= target
+            else "\U0001f7e1" if v <= 1.5 * target else "\U0001f534")
 
 
 def delta(now, was):
-    """"+₹48.0k, +131 trials" for the hour just gone, or "" when there is no hour to
+    """"+₹48.0k/+131 at ₹366" for the hour just gone, or "" when there is no hour to
     compare or nothing moved in it. Two pushes inside one cache window produce identical
     numbers, and printing that anyway reads as an hour in which nothing happened rather
     than an hour that was not measured."""
@@ -168,77 +168,64 @@ def delta(now, was):
     d_tr = now["trials"] - (was.get("trials") or 0)
     if abs(d_sp) < 1 and abs(d_tr) < 1:
         return ""
-    out = f"{signed(d_sp, rs)}, {signed(d_tr, num)} this hour"
+    out = f"{signed(d_sp, rs)}/{signed(d_tr, num)}"
     if d_tr >= 1 and d_sp > 0:
         out += f" at {rs0(d_sp/d_tr)}"
     return out
 
 
-def chan_line(name, cur, was, event, target=None):
-    """One channel's line. Unknown prints as a dash and says why -- never as a zero."""
-    c = cpt(cur["spend"], cur["trials"])
-    sp = "—" if cur["spend"] is None else rs(cur["spend"])
-    tr = "—" if cur["trials"] is None else num(cur["trials"])
-    bits = [f"*{name}* {sp} · {tr} {event.lower()}",
-            f"CPT {rs0(c) if c else '—'}{mark(c, target)}"]
-    d = delta(cur, was)
-    if d:
-        bits.append(d)
-    line = "   " + " · ".join(bits)
-    gc = cur.get("gconv")
-    if gc and cur["spend"]:
-        line += f"\n      _Google's own count: {num(gc)} → {rs0(cur['spend']/gc)}_"
-    return line
-
-
 def brand_block(f, prev):
-    """One brand: the blended headline, then Meta and Google under it."""
+    """One brand in two lines.
+
+    Line one is what you act on: is this brand over target, on how much money, and which
+    way did the last hour push it. Line two is the split -- one CPT per channel, and how
+    much of the day's Meta budget has gone. Everything else (installs, CPI, live ad set
+    count, both attributions of every Google number) was true, and none of it was read
+    at 11pm: twenty lines a push is a wall, and a wall gets skimmed.
+    """
     prev = prev or {}
-    ev = f["event"]
-    t = f["total"]
-    # A channel that did not answer makes the BLEND unknown, not smaller. Rather than
-    # print a headline of dashes, fall back to the channel that did answer and say so --
-    # a Google outage should cost the message its Google line, not its headline.
-    whole = t["spend"] is not None and t["trials"] is not None
-    t = t if whole else f["meta"]
-    tc = cpt(t["spend"], t["trials"])
-    head = (f"*{f['label']}* — CPT *{rs0(tc) if tc else '—'}*"
-            + (f" vs {rs0(f['target'])}{mark(tc, f['target'])}" if f["target"] else "")
-            + f" · {'—' if t['spend'] is None else rs(t['spend'])}"
-            + f" · {'—' if t['trials'] is None else num(t['trials'])} {ev.lower()}"
-            + ("" if whole else "  _(Meta only)_"))
+    t, whole = f["total"], True
+    if t["spend"] is None or t["trials"] is None:
+        t, whole = f["meta"], False
+    c = cpt(t["spend"], t["trials"])
+    tgt = f["target"]
 
-    # The blended change belongs on the headline: the two channel lines each carry their
-    # own, and reading the total's movement should not mean adding them up by eye.
-    td = delta(t, prev if whole else prev.get("meta"))
-    if td:
-        head += f" · *{td}*"
+    head = (f"{mark(c, tgt)} *{f['label']}* CPT *{rs0(c) if c else '—'}*"
+            + (f" vs {rs0(tgt)}" if tgt else "")
+            + f" · {rs(t['spend']) if t['spend'] is not None else '—'}"
+            + ("" if whole else " _(Meta only)_"))
+    d = delta(t, prev if whole else prev.get("meta"))
+    if d:
+        head += f" · this hour {d}"
 
-    lines = [head,
-             chan_line("Meta", f["meta"], prev.get("meta"), ev, f["target"]),
-             chan_line("Google", f["google"], prev.get("google"), ev, f["target"])]
-
-    tail = []
+    bits = []
+    for name, side in (("Meta", f["meta"]), ("Google", f["google"])):
+        cc = cpt(side["spend"], side["trials"])
+        piece = f"{name} {rs0(cc) if cc else '—'}"
+        # Google counts the same event from the click it saw, Branch from the install.
+        # Worth saying only where the two disagree enough to change what you would do.
+        if name == "Google" and cc and side.get("gconv") and side["spend"]:
+            alt = side["spend"] / side["gconv"]
+            if alt and (cc / alt > 1.5 or alt / cc > 1.5):
+                piece += f" _({rs0(alt)} by Google's count)_"
+        bits.append(piece)
     if f["meta"]["budget"] and f["budgets_known"]:
-        tail.append(f"{100*f['meta']['spend']/f['meta']['budget']:.0f}%"
-                    f" of {rs(f['meta']['budget'])} Meta budget")
-    tail.append(f"{f['meta']['adsets']:,} live ad sets")
-    ins = t["installs"]
-    tail.append(f"{'—' if ins is None else num(ins)} installs"
-                + ("" if whole else ", Meta"))
-    lines.append("   _" + " · ".join(tail) + "_")
+        bits.append(f"{100*f['meta']['spend']/f['meta']['budget']:.0f}%"
+                    f" of {rs(f['meta']['budget'])} budget")
+    lines = [head, "     " + " · ".join(bits)]
 
+    # Warnings still get their own line — they are the reason to look at all.
     for a in f["stalled"]:
-        lines.append(f"   ⚠️ *{a['name']}* has spent {rs(a['spend'])} against "
-                     f"{rs(a['budget'])} of live budget")
+        lines.append(f"     ⚠️ *{a['name']}* spent {rs(a['spend'])} of "
+                     f"{rs(a['budget'])} budget")
     if f["trials_error"]:
-        lines.append(f"   ⚠️ Meta trial counts unavailable — {f['trials_error']}")
+        lines.append(f"     ⚠️ Meta trials unavailable — {f['trials_error']}")
     if f["google"]["trials"] is None and f["google"]["why"]:
-        lines.append(f"   ⚠️ Google not counted — {f['google']['why']}")
+        lines.append(f"     ⚠️ Google not counted — {f['google']['why']}")
     if f["degraded"]:
-        lines.append("   ⚠️ partial data: " + ", ".join(str(d) for d in f["degraded"]))
+        lines.append("     ⚠️ partial data: " + ", ".join(str(d) for d in f["degraded"]))
     if f["throttled"]:
-        lines.append("   ⚠️ Meta is throttling this account — figures may lag")
+        lines.append("     ⚠️ Meta is throttling — figures may lag")
     return "\n".join(lines)
 
 
@@ -277,20 +264,26 @@ def hour_strip(points, rows):
         d_sp, d_tr = tr - sp, tb - ta
         if d_sp < 1 and d_tr < 1:
             continue
-        out.append(f"{b.get('t') or b.get('at', '')} {rs(d_sp)}·{num(d_tr)}")
+        # "10 PM", not "10:00 PM" — the minutes are always :00 and never the point.
+        label = (b.get("t") or b.get("at", "")).replace(":00", "")
+        out.append(f"{label} {rs(d_sp)}·{num(d_tr)}")
     if not out:
         return ""
-    # Six is a screenful on a phone; the rest of the day is on the dashboard.
-    return ("_Hour by hour, all brands, at the hour it ended (spend · trials):_ "
-            + "  ".join(out[-6:]))
+    return "_Last hours:_ " + " · ".join(out[-5:])
 
 
 def compose(rows, prev_by_brand, when, points=None, link=None):
-    """The whole message. `rows` are figures() dicts, in the order they should read."""
-    head = f"*Ads — today so far* · {when} IST"
-    # A blank line between brands: on a phone these blocks are five or six wrapped lines
-    # each, and run together they read as one paragraph about nothing.
-    body = "\n\n".join(brand_block(f, prev_by_brand.get(f["brand"])) for f in rows)
+    """The whole message. Biggest spender first — that is the order they get read in."""
+    rows = sorted(rows, key=lambda f: -((f["total"]["spend"] if f["total"]["spend"]
+                                         is not None else f["meta"]["spend"]) or 0))
+    sp = sum((f["total"]["spend"] if f["total"]["spend"] is not None
+              else f["meta"]["spend"]) or 0 for f in rows)
+    trs = [f["total"]["trials"] for f in rows]
+    tr = None if any(t is None for t in trs) else sum(trs)
+    c = cpt(sp, tr)
+    head = (f"*Ads · {when} IST* — {rs(sp)} · "
+            + (f"{num(tr)} trials · CPT {rs0(c)}" if c else "trials pending"))
+    body = "\n".join(brand_block(f, prev_by_brand.get(f["brand"])) for f in rows)
     out = [head, "", body]
     strip = hour_strip(points or [], rows)
     if strip:
