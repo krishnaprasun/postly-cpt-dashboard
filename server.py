@@ -342,28 +342,35 @@ def resolve_range(rng, since, until):
 # a colleague on their first day, or you on a phone. It gets a card, a mark and the
 # dashboard's own palette rather than three lines of text adrift in the viewport.
 SIGNIN_CSS = """
-:root{--ink:#1A1C2E;--muted:#787E91;--faint:#A2A7B6;--line:#E6E3DA;--white:#fff;
-  --bg:#FDFCF7;--panel:#F6F4EC;--accent:#20A75D;--accent-dk:#127A42;--accent-lt:#EAF7F0;
-  --bad:#B3261E;--badlt:#FCEEEC}
-@media(prefers-color-scheme:dark){:root{--ink:#EDEEF2;--muted:#9AA0B0;--faint:#6E7486;
-  --line:#2C2F3E;--white:#1B1D28;--bg:#14151D;--panel:#22242F;--accent-lt:#12301F;
-  --badlt:#3A1A17;--accent-dk:#5FD394}}
+:root{--ink:#1A1C2E;--muted:#787E91;--faint:#A2A7B6;--line:#E6E3DA;--line2:#F0EDE4;
+  --white:#fff;--bg:#FDFCF7;--panel:#F7F5EE;--accent:#20A75D;--accent-dk:#127A42;
+  --accent-lt:#EAF7F0;--bad:#B3261E;--badlt:#FCEEEC}
 *{box-sizing:border-box}
+/* Light only, on purpose. This page is the front door and it should look the same to
+   everyone who arrives at it, whatever their laptop is set to. */
+html{color-scheme:light}
+/* Flex, not grid, to centre this. A grid track under `place-items:center` is sized to
+   the item's max-content, so a percentage width on the card resolves against that rather
+   than against the viewport. Flex has no such trap. */
 body{font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);
-  color:var(--ink);margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
-  -webkit-font-smoothing:antialiased}
-.card{width:100%;max-width:372px;background:var(--white);border:1px solid var(--line);
-  border-radius:16px;padding:34px 30px 26px;text-align:center;
-  box-shadow:0 1px 2px rgba(26,28,46,.04),0 14px 40px -18px rgba(26,28,46,.16)}
-/* colour, not a literal white: in dark mode --ink IS the light colour, so bars painted
-   #fff sat on a near-white square and vanished. currentColor makes the pair invert
-   together. */
-.mark{width:44px;height:44px;border-radius:12px;background:var(--ink);color:var(--white);
-  display:grid;place-items:center;margin:0 auto 16px}
-h1{font-size:18px;margin:0 0 5px;letter-spacing:-.01em}
-.sub{color:var(--muted);margin:0 0 22px;font-size:13.5px}
-.note{border-radius:10px;padding:9px 13px;margin:0 0 18px;font-size:13px;text-align:left;
-  line-height:1.5}
+  color:var(--ink);margin:0;min-height:100vh;display:flex;align-items:center;
+  justify-content:center;padding:24px;-webkit-font-smoothing:antialiased}
+.shell{width:100%;max-width:720px;background:var(--white);border:1px solid var(--line);
+  border-radius:18px;overflow:hidden;display:grid;grid-template-columns:1fr 1fr;
+  box-shadow:0 1px 2px rgba(26,28,46,.04),0 18px 50px -20px rgba(26,28,46,.18)}
+.about{background:var(--panel);border-right:1px solid var(--line);padding:34px 30px}
+.mark{width:42px;height:42px;border-radius:12px;background:var(--ink);color:var(--white);
+  display:grid;place-items:center;margin:0 0 16px}
+h1{font-size:19px;margin:0 0 8px;letter-spacing:-.015em}
+.blurb{color:var(--muted);font-size:13.5px;margin:0 0 20px;line-height:1.55}
+ul{list-style:none;margin:0;padding:0}
+li{display:flex;gap:9px;align-items:flex-start;font-size:13px;color:var(--ink);
+  padding:6px 0;line-height:1.45}
+li svg{flex:none;margin-top:3px;color:var(--accent)}
+.side{padding:34px 30px;display:flex;flex-direction:column;justify-content:center}
+h2{font-size:16px;margin:0 0 4px}
+.sub{color:var(--muted);font-size:13.5px;margin:0 0 20px}
+.note{border-radius:10px;padding:9px 13px;margin:0 0 16px;font-size:13px;line-height:1.5}
 .note.err{color:var(--bad);background:var(--badlt)}
 .note.ok{color:var(--accent-dk);background:var(--accent-lt)}
 .note.info{color:var(--muted);background:var(--panel)}
@@ -371,14 +378,30 @@ a.g{display:flex;align-items:center;justify-content:center;gap:10px;text-decorat
   background:var(--white);color:var(--ink);border:1px solid var(--line);border-radius:11px;
   padding:12px 18px;font-weight:600;font-size:14.5px;transition:.14s}
 a.g:hover{border-color:var(--accent);background:var(--accent-lt);color:var(--accent-dk)}
-.foot{color:var(--faint);font-size:12px;margin:20px 0 0;line-height:1.55}
+.foot{color:var(--faint);font-size:12px;margin:18px 0 0;line-height:1.55}
+@media(max-width:620px){
+  .shell{grid-template-columns:1fr}
+  .about{border-right:0;border-bottom:1px solid var(--line);padding:26px 24px 22px}
+  .side{padding:24px}
+  ul{display:none}          /* the pitch is for a desktop first visit, not a phone */
+}
 """
 # A rising bar chart, drawn rather than picked from a brand: this tool serves three of
 # them and wearing one brand's logo on the way in would name the wrong owner.
-MARK = ('<svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true" fill="none">'
+# currentColor, not #fff -- see .mark, which owns the pairing.
+MARK = ('<svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true" fill="none">'
         '<rect x="3" y="13" width="4" height="8" rx="1.4" fill="currentColor" opacity=".5"/>'
         '<rect x="10" y="8" width="4" height="13" rx="1.4" fill="currentColor" opacity=".75"/>'
         '<rect x="17" y="3" width="4" height="18" rx="1.4" fill="currentColor"/></svg>')
+TICK = ('<svg width="13" height="13" viewBox="0 0 16 16" aria-hidden="true">'
+        '<path d="M2.5 8.5l3.5 3.5 7.5-8" fill="none" stroke="currentColor"'
+        ' stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+# What the tool is, in the three lines someone needs before deciding this is the right
+# tab. Deliberately no brand names and no figures: this page is public.
+SIGNIN_POINTS = ("Spend, trials and cost per trial, updated through the day",
+                 "Meta and Google side by side, or blended",
+                 "Every campaign, ad set and ad, with daily history")
+
 # Google's mark, inline: the CSP on this app allows no external images, and a sign-in
 # button with a broken icon looks like a phishing page.
 GOOGLE_G = (
@@ -408,29 +431,40 @@ def _safe_next(path):
 
 
 def _signin_page(note="", status=200, kind="err"):
-    """The way in. `kind` separates a refusal from a plain statement of fact — signing
-    out is not an error, and colouring it like one tells people something went wrong."""
+    """The way in, and for anyone not yet signed in it is the whole product.
+
+    `kind` separates a refusal from a plain statement of fact — signing out is not an
+    error, and colouring it like one tells people something went wrong.
+    """
     doms = GA.domains()
-    who = (f"Sign in with your <b>{escape(doms[0])}</b> account."
-           if len(doms) == 1 else "Sign in with your work Google account.")
+    who = (f"Use your <b>{escape(doms[0])}</b> account."
+           if len(doms) == 1 else "Use your work Google account.")
     login = url_for("auth_login",
                     next=_safe_next(request.args.get("next")
                                     or request.full_path.rstrip("?")))
+    points = "".join(f"<li>{TICK}<span>{escape(p)}</span></li>" for p in SIGNIN_POINTS)
     return Response(
         "<!doctype html><html lang=en><meta charset=utf-8>"
         "<title>Sign in \u00b7 Ads Performance</title>"
         '<meta name="viewport" content="width=device-width,initial-scale=1">'
         '<meta name="robots" content="noindex,nofollow">'
-        f"<style>{SIGNIN_CSS}</style><div class=card>"
+        f"<style>{SIGNIN_CSS}</style>"
+        '<div class="shell">'
+        '<div class="about">'
         f'<div class="mark">{MARK}</div>'
         "<h1>Ads Performance</h1>"
+        '<p class="blurb">One live view of what the ads are spending and what they are '
+        'bringing back \u2014 read straight from Meta, Google and Branch.</p>'
+        f"<ul>{points}</ul>"
+        "</div>"
+        '<div class="side">'
+        "<h2>Sign in</h2>"
         f'<p class="sub">{who}</p>'
         + (f'<div class="note {kind}">{escape(note)}</div>' if note else "")
         + f'<a class="g" href="{escape(login)}">{GOOGLE_G}Sign in with Google</a>'
-        # Team links are retired, so offering one would send people looking for something
-        # that no longer exists. What is true now: an admin has to let you in.
         + '<p class="foot">Access is by invitation. If you cannot get in, ask whoever '
-          'runs this dashboard to add you.</p></div>',
+          'runs this dashboard to add you.</p>'
+        "</div></div>",
         status, mimetype="text/html")
 
 
