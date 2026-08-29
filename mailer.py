@@ -5,20 +5,29 @@ a save, on a schedule or on a sign-in: an invitation is a message from a person 
 person, and an app that mails people as a side effect of an edit will eventually mail the
 wrong person.
 
-Transport is plain SMTP over STARTTLS, credentials in the environment. No provider SDK,
-because one message per new colleague is not a mail pipeline, and the failure mode of a
-pipeline nobody watches is worse than the failure mode of a button that says it did not
-send.
+Two transports, tried in that order:
+
+  * an HTTPS email API (Resend today, `MAIL_API_KEY`), because most hosts — Render
+    included — block outbound SMTP outright. Errno 101 from a credential that works
+    perfectly from a laptop is the host, not the mail server.
+  * plain SMTP over STARTTLS, which is right on a box that allows it and is what the
+    Gmail app password is for.
+
+No provider SDK either way: one message per new colleague is not a mail pipeline, and a
+pipeline nobody watches fails worse than a button that says it did not send.
 
 With no MAIL_HOST configured, `ready()` is False, the button is not offered, and the page
 falls back to a mailto: draft the admin sends from their own client — which is where these
 should arguably come from anyway.
 """
 
+import json
 import os
 import re
 import smtplib
 import ssl
+import urllib.error
+import urllib.request
 from email.message import EmailMessage
 from email.utils import formataddr
 
@@ -38,7 +47,7 @@ def _env(k, d=""):
 
 
 def ready():
-    return bool(_env("MAIL_HOST") and _env("MAIL_FROM"))
+    return bool(_env("MAIL_FROM") and (_env("MAIL_API_KEY") or _env("MAIL_HOST")))
 
 
 def dash_url():
@@ -137,12 +146,39 @@ def build(email, role, brands, inviter=""):
     return subject, html, text
 
 
+BLOCKED = ("the host this dashboard runs on does not allow outbound SMTP. "
+           "Set MAIL_API_KEY to send over HTTPS instead.")
+
+
+def _api_send(to, subject, html, text, reply_to):
+    """Resend's HTTPS API. Chosen because it is one POST and needs no SDK."""
+    body = {"from": f'{_env("MAIL_FROM_NAME", "Ads Performance")} <{_env("MAIL_FROM")}>',
+            "to": [to], "subject": subject, "html": html, "text": text}
+    if reply_to:
+        body["reply_to"] = reply_to
+    req = urllib.request.Request(
+        _env("MAIL_API_URL", "https://api.resend.com/emails"),
+        data=json.dumps(body).encode(),
+        headers={"Authorization": "Bearer " + _env("MAIL_API_KEY"),
+                 "Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return True, f"sent (api, http {r.status})"
+    except urllib.error.HTTPError as e:
+        detail = (e.read() or b"")[:200].decode("utf-8", "replace")
+        return False, f"The mail API refused it (http {e.code}): {detail}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {str(e)[:180]}"
+
+
 def send(to, subject, html, text, reply_to=""):
-    """(ok, detail). Never raises, and `detail` never carries the password."""
+    """(ok, detail). Never raises, and `detail` never carries the key or the password."""
     if not ready():
         return False, "No mail server is configured."
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", to or ""):
         return False, "That is not an email address."
+    if _env("MAIL_API_KEY"):
+        return _api_send(to, subject, html, text, reply_to)
     msg = EmailMessage()
     msg["Subject"] = subject
     msg["From"] = formataddr((_env("MAIL_FROM_NAME", "Ads Performance"), _env("MAIL_FROM")))
@@ -152,22 +188,41 @@ def send(to, subject, html, text, reply_to=""):
     msg.set_content(text)
     msg.add_alternative(html, subtype="html")
 
-    host, port = _env("MAIL_HOST"), int(_env("MAIL_PORT", "587") or 587)
+    host = _env("MAIL_HOST")
     user, pw = _env("MAIL_USER") or _env("MAIL_FROM"), os.environ.get("MAIL_PASS", "")
-    try:
-        if port == 465:
-            srv = smtplib.SMTP_SSL(host, port, timeout=TIMEOUT,
-                                   context=ssl.create_default_context())
-        else:
-            srv = smtplib.SMTP(host, port, timeout=TIMEOUT)
-            srv.starttls(context=ssl.create_default_context())
-        with srv:
-            if pw:
-                srv.login(user, pw)
-            srv.send_message(msg)
-        return True, "sent"
-    except smtplib.SMTPAuthenticationError:
-        return False, ("The mail server rejected the credentials. If this is Gmail, it "
-                       "needs an App Password, not the account password.")
-    except Exception as e:
-        return False, f"{type(e).__name__}: {str(e)[:180]}"
+    # Both of Gmail's ports, because a host that blocks one sometimes allows the other,
+    # and finding that out should not need a deploy.
+    first = int(_env("MAIL_PORT", "587") or 587)
+    ports = [first] + [p for p in (587, 465) if p != first]
+    blocked = False
+    last = ""
+    for port in ports:
+        try:
+            if port == 465:
+                srv = smtplib.SMTP_SSL(host, port, timeout=TIMEOUT,
+                                       context=ssl.create_default_context())
+            else:
+                srv = smtplib.SMTP(host, port, timeout=TIMEOUT)
+                srv.starttls(context=ssl.create_default_context())
+            with srv:
+                if pw:
+                    srv.login(user, pw)
+                srv.send_message(msg)
+            return True, f"sent (smtp :{port})"
+        except smtplib.SMTPAuthenticationError:
+            # A rejected credential is not a port problem; trying the other one just
+            # rejects it again, more slowly.
+            return False, ("The mail server rejected the credentials. If this is Gmail, "
+                           "it needs an App Password, not the account password.")
+        except OSError as e:
+            # errno 101/111 with a credential that works elsewhere is the host refusing
+            # to let SMTP out, which no amount of retrying fixes.
+            # 101 network unreachable, 111 refused (Linux), 61 refused (macOS). Every
+            # one of them, on both ports, from a credential that works elsewhere, means
+            # the host — not the mail server.
+            blocked = blocked or getattr(e, "errno", None) in (101, 111, 61) \
+                or "unreachable" in str(e).lower() or "timed out" in str(e).lower()
+            last = f"{type(e).__name__}: {str(e)[:120]}"
+        except Exception as e:
+            last = f"{type(e).__name__}: {str(e)[:120]}"
+    return False, (BLOCKED if blocked else last or "Could not send.")

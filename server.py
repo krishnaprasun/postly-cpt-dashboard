@@ -522,8 +522,11 @@ def api_users_invite():
         return jsonify({"error": "No mail server is configured."}), 503
     subject, html, text = M.build(email, caps["role"], caps["brands"], inviter=me["email"])
     ok, detail = M.send(email, subject, html, text, reply_to=me["email"])
-    return (jsonify({"sent": True, "email": email}) if ok
-            else (jsonify({"error": detail}), 502))
+    if ok:
+        return jsonify({"sent": True, "email": email})
+    # `blocked` means the host will not let mail out at all — the page turns that into a
+    # draft in the admin's own client rather than a dead end with an error on it.
+    return jsonify({"error": detail, "blocked": detail == M.BLOCKED}), 502
 
 
 @app.route("/api/users/preview")

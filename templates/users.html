@@ -244,6 +244,14 @@ rows.addEventListener('click', async e => {
       headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:u.email})});
     const j = await r.json();
     if(r.ok){ inv.textContent = 'Sent ✓'; msg('Invitation sent to ' + u.email + '.', 'ok'); }
+    else if(j.blocked){
+      /* The server cannot send from where it runs. Hand the admin the same message as a
+         draft rather than an error they can do nothing about. */
+      inv.disabled = false; inv.textContent = 'Invite';
+      msg('This server cannot send email — opening a draft in your mail client instead.',
+          'info');
+      mailtoInvite(u);
+    }
     else { inv.disabled = false; inv.textContent = 'Invite'; msg(j.error || 'Could not send.', 'err'); }
   }catch(_){
     inv.disabled = false; inv.textContent = 'Invite';
