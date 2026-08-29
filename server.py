@@ -27,6 +27,7 @@ from flask import (Flask, Response, jsonify, redirect, render_template,
 import chat as CH
 import config as C
 import gauth as GA
+import users as U
 import history as H
 import postly_cpt as P
 
@@ -414,6 +415,75 @@ def auth_whoami():
                     "domains": GA.domains()})
 
 
+# ---------------------------------------------------------------- user admin ---
+# Managing who gets in is a thing the person running this does at 9pm from a phone, so it
+# is a page in the app rather than an environment variable and a redeploy. Only a super
+# admin can open it, and only a super admin can save.
+def _me():
+    """The signed-in caps for this request, or None. Sessions only -- a link is not a
+    person and must never be able to edit who the people are."""
+    return GA.session_caps(session)
+
+
+def _require_super():
+    me = _me()
+    if not me:
+        return None, (jsonify({"error": "Sign in first."}), 401)
+    if me.get("role") != "super":
+        return None, (jsonify({"error": "Only a super admin can manage access."}), 403)
+    return me, None
+
+
+@app.route("/api/users", methods=["GET"])
+def api_users():
+    me, err = _require_super()
+    if err:
+        return err
+    rows, ok = U.listing()
+    return jsonify({"users": rows, "store_ok": ok, "brands": list(C.BRANDS),
+                    "brand_labels": {k: v["label"] for k, v in C.BRANDS.items()},
+                    "me": me["email"],
+                    "store": bool(H.available())})
+
+
+@app.route("/api/users", methods=["PUT"])
+def api_users_save():
+    me, err = _require_super()
+    if err:
+        return err
+    body = request.get_json(silent=True) or {}
+    rows = body.get("users")
+    if not isinstance(rows, list):
+        return jsonify({"error": "Expected a list of users."}), 400
+    # Bootstrap supers are not in the saved list -- they come from the environment and
+    # outrank it -- so dropping them here is not losing them.
+    boot = set(U.supers())
+    rows = [r for r in rows if (r.get("email") or "").strip().lower() not in boot]
+    if not any(r.get("role") == "super" for r in rows) and not boot:
+        return jsonify({"error": "That would leave nobody able to manage access."}), 400
+    ok, msg = U.save(rows, me["email"])
+    if not ok:
+        return jsonify({"error": msg}), 502
+    fresh, store_ok = U.listing()
+    return jsonify({"saved": True, "users": fresh, "store_ok": store_ok})
+
+
+@app.route("/admin/users")
+def admin_users():
+    me = _me()
+    if not me:
+        return _signin_page("Sign in to manage access.") if GA.on() else redirect("/")
+    if me.get("role") != "super":
+        return Response("<!doctype html><meta charset=utf-8><title>Access</title>"
+                        f"<style>{SIGNIN_CSS}</style><div class=card><h1>Access</h1>"
+                        "<p>Only a super admin can manage who gets in.</p>"
+                        "<p class=foot><a href='/'>Back to the dashboard</a></p></div>",
+                        403, mimetype="text/html")
+    return render_template("users.html", me=me["email"],
+                           brands=[{"key": k, "label": C.BRANDS[k]["label"]}
+                                   for k in C.BRANDS])
+
+
 @app.route("/b/<key>")
 @protected
 def branded(key):
@@ -454,6 +524,7 @@ def index(key=None):
         # Who is looking, when that is a person rather than a link. The page shows it
         # beside a sign-out, so a shared screen is never a mystery.
         signed_in=caps.get("email", ""),
+        is_super=caps.get("role") == "super",
         # Only the brands this link may see. A switcher listing brands the key cannot
         # open would be a list of things to go looking for.
         brands=[{"key": k, "label": C.BRANDS[k]["label"]} for k in allowed],

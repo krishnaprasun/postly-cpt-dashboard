@@ -24,6 +24,7 @@ import urllib.parse
 import urllib.request
 
 import config as C
+import users as U
 
 AUTH = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN = "https://oauth2.googleapis.com/token"
@@ -92,13 +93,23 @@ def _brands(spec):
 def caps_for(email, hd=""):
     """What this address may see, or None if it may not sign in at all.
 
+    The directory decides, not the domain. The people using this are at two companies that
+    have nothing to do with each other, so "anyone at X" was never the rule -- a super
+    admin adds an address and that address gets in. GOOGLE_AUTH_DOMAIN survives as an
+    optional outer fence for the env-map path, and is normally unset.
+
     `full` -- the right to make the app SPEND, by forcing a Meta roster re-read or a
-    longevity recompute -- follows seeing every brand. A one-brand viewer is read-only for
-    the same reason a team link is.
+    longevity recompute -- belongs to super admins, for the same reason a team link is
+    read-only.
     """
     email = (email or "").strip().lower()
     if not email:
         return None
+    caps = U.caps_for(email)
+    if caps:
+        return dict(caps, via="google")
+    # The env map still works, and is checked second: it was how this shipped, and a
+    # directory that quietly stopped honouring it would lock someone out mid-week.
     doms = domains()
     dom = email.rpartition("@")[2]
     if doms and dom not in doms and (hd or "").lower() not in doms:
@@ -109,7 +120,7 @@ def caps_for(email, hd=""):
     if not brands:
         return None
     return {"brands": brands, "full": len(brands) == len(C.BRANDS),
-            "email": email, "via": "google"}
+            "email": email, "role": "member", "via": "google"}
 
 
 # ---- the flow ---------------------------------------------------------------

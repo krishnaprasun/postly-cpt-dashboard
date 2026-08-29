@@ -615,6 +615,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <!-- Who is looking. On a shared screen "whose numbers are these" is the first
            question, and a sign-out that is not on the page is a sign-out nobody uses. -->
       <span class="meta who" title="Signed in with Google">{{ signed_in }}
+        {% if is_super %}· <a href="/admin/users" title="Who can open this dashboard">Access</a>{% endif %}
         · <a href="/auth/logout">Sign out</a></span>
       {% endif %}
     </div>

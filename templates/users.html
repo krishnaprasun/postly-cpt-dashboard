@@ -1,0 +1,230 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Access · Ads Performance</title>
+<meta name="robots" content="noindex,nofollow">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--ink:#1A1C2E;--muted:#787E91;--faint:#A2A7B6;--line:#E6E3DA;--panel:#fff;
+  --bg:#FDFCF7;--panel2:#F6F4EC;--accent:#20A75D;--accent-dk:#127A42;--bad:#B3261E;
+  --badlt:#FCEEEC;--goodlt:#EAF7F0}
+*{box-sizing:border-box}
+body{font:14.5px/1.55 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:var(--bg);
+  color:var(--ink);margin:0;padding:26px 18px 60px}
+.wrap{max-width:920px;margin:0 auto}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 22px}
+.sub a{color:var(--accent-dk)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:0;
+  overflow:hidden}
+table{border-collapse:collapse;width:100%}
+th{text-align:left;font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--faint);font-weight:600;padding:11px 14px;border-bottom:1px solid var(--line);
+  background:var(--panel2)}
+td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+tr:last-child td{border-bottom:0}
+.em{font-weight:560}
+.tag{display:inline-block;font-size:11.5px;padding:2px 8px;border-radius:99px;
+  background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+.tag.super{background:var(--goodlt);color:var(--accent-dk);border-color:#BFE6D0}
+.brands{display:flex;gap:5px;flex-wrap:wrap}
+.brands label{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;
+  border:1px solid var(--line);border-radius:8px;padding:3px 8px;background:var(--panel2);
+  cursor:pointer;user-select:none}
+.brands label.on{background:var(--goodlt);border-color:#BFE6D0;color:var(--accent-dk)}
+.brands input{margin:0}
+input[type=email],input[type=text]{font:inherit;padding:7px 10px;border:1px solid var(--line);
+  border-radius:9px;background:var(--panel2);color:var(--ink);min-width:230px}
+input:focus{outline:0;border-color:var(--accent);background:#fff}
+.btn{font:inherit;font-weight:600;padding:7px 14px;border-radius:9px;cursor:pointer;
+  border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
+.btn:hover{background:#fff}
+.btn.go{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn.go:hover{background:var(--accent-dk);border-color:var(--accent-dk)}
+.btn.rm{border:0;background:none;color:var(--faint);padding:4px 6px;font-size:16px}
+.btn.rm:hover{color:var(--bad)}
+.btn:disabled{opacity:.45;cursor:default}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px}
+.bar{display:flex;gap:10px;align-items:center;margin:16px 0 0}
+.msg{padding:10px 14px;border-radius:9px;font-size:13.5px;margin:14px 0 0;display:none}
+.msg.err{background:var(--badlt);color:var(--bad);display:block}
+.msg.ok{background:var(--goodlt);color:var(--accent-dk);display:block}
+.note{color:var(--muted);font-size:13px;margin:22px 0 0}
+.note b{color:var(--ink)}
+.muted{color:var(--faint)}
+@media (prefers-color-scheme:dark){
+  :root{--ink:#EDEEF2;--muted:#9AA0B0;--faint:#6E7486;--line:#2C2F3E;--panel:#1B1D28;
+    --bg:#14151D;--panel2:#22242F;--goodlt:#12301F;--badlt:#3A1A17}
+  input[type=email],input[type=text]{color:var(--ink)}
+  input:focus{background:#12131A}
+  .btn:hover{background:#12131A}
+}
+</style>
+<div class="wrap">
+  <h1>Access</h1>
+  <p class="sub">Who can open the dashboard, and which brands they see. Signed in as
+    <b>{{ me }}</b> · <a href="/">Back to the dashboard</a> ·
+    <a href="/auth/logout">Sign out</a></p>
+
+  <div class="card">
+    <table>
+      <thead><tr><th>Email</th><th>Brands</th><th>Role</th><th>Added</th><th></th></tr></thead>
+      <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
+    </table>
+    <div class="row" style="border-top:1px solid var(--line)">
+      <input type="email" id="newEmail" placeholder="name@company.com" autocomplete="off">
+      <div class="brands" id="newBrands"></div>
+      <label style="font-size:13px;display:inline-flex;gap:5px;align-items:center">
+        <input type="checkbox" id="newSuper"> super admin</label>
+      <button class="btn" id="add">Add</button>
+    </div>
+  </div>
+
+  <div class="bar">
+    <button class="btn go" id="save" disabled>Save changes</button>
+    <span class="muted" id="dirty"></span>
+  </div>
+  <div class="msg" id="msg"></div>
+
+  <p class="note">
+    <b>A super admin</b> sees every brand, can change this list, and can use the two
+    controls that make the app spend Meta's request budget. <b>Everyone else</b> sees
+    only the brands ticked for them, and is read-only.<br>
+    Access is by address, not by domain — someone at Classplus and someone at Meta are
+    added the same way. An address that is not on this list cannot get in, whatever it is
+    signed in as. Changes take effect within a minute.
+  </p>
+</div>
+
+<script>
+const BRANDS = {{ brands|tojson }};
+let USERS = [], DIRTY = false;
+
+const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function msg(text, kind){
+  const m = document.getElementById('msg');
+  m.className = 'msg' + (kind ? ' ' + kind : '');
+  m.textContent = text || '';
+}
+
+function mark(on){
+  DIRTY = on;
+  document.getElementById('save').disabled = !on;
+  document.getElementById('dirty').textContent = on ? 'unsaved changes' : '';
+}
+
+function brandBoxes(u, i){
+  /* A super admin sees everything by definition, so the ticks would be a lie you could
+     click. Shown as text instead. */
+  if(u.role === 'super') return '<span class="muted">every brand</span>';
+  return '<div class="brands">' + BRANDS.map(b =>
+    `<label class="${u.brands.includes(b.key) ? 'on' : ''}">
+       <input type="checkbox" data-i="${i}" data-b="${b.key}"
+              ${u.brands.includes(b.key) ? 'checked' : ''}
+              ${u.bootstrap ? 'disabled' : ''}>${esc(b.label)}</label>`).join('') + '</div>';
+}
+
+function when(at){
+  if(!at) return '<span class="muted">—</span>';
+  const d = new Date(at * 1000);
+  return `<span class="muted">${d.toLocaleDateString(undefined,
+    {day:'numeric', month:'short'})}</span>`;
+}
+
+function draw(){
+  document.getElementById('rows').innerHTML = USERS.length ? USERS.map((u, i) => `
+    <tr>
+      <td class="em">${esc(u.email)}</td>
+      <td>${brandBoxes(u, i)}</td>
+      <td><span class="tag ${u.role === 'super' ? 'super' : ''}">${
+            u.role === 'super' ? 'super admin' : 'member'}</span>${
+            u.bootstrap ? ' <span class="muted" title="Set in the environment, so it '
+              + 'cannot be removed here">fixed</span>' : ''}</td>
+      <td>${when(u.at)}${u.by ? `<br><span class="muted" style="font-size:12px">by ${
+            esc(u.by)}</span>` : ''}</td>
+      <td style="text-align:right">${u.bootstrap ? ''
+        : `<button class="btn rm" data-rm="${i}" title="Remove">×</button>`}</td>
+    </tr>`).join('') : '<tr><td colspan="5" class="muted">Nobody yet.</td></tr>';
+}
+
+document.getElementById('rows').addEventListener('change', e => {
+  const cb = e.target.closest('input[type=checkbox]');
+  if(!cb) return;
+  const u = USERS[+cb.dataset.i];
+  const set = new Set(u.brands);
+  cb.checked ? set.add(cb.dataset.b) : set.delete(cb.dataset.b);
+  u.brands = BRANDS.map(b => b.key).filter(k => set.has(k));
+  cb.parentElement.classList.toggle('on', cb.checked);
+  mark(true);
+});
+
+document.getElementById('rows').addEventListener('click', e => {
+  const b = e.target.closest('button[data-rm]');
+  if(!b) return;
+  USERS.splice(+b.dataset.rm, 1);
+  draw(); mark(true);
+});
+
+document.getElementById('newBrands').innerHTML = BRANDS.map(b =>
+  `<label><input type="checkbox" data-new="${b.key}">${esc(b.label)}</label>`).join('');
+document.getElementById('newBrands').addEventListener('change', e => {
+  const cb = e.target.closest('input');
+  if(cb) cb.parentElement.classList.toggle('on', cb.checked);
+});
+
+document.getElementById('add').onclick = () => {
+  const el = document.getElementById('newEmail');
+  const email = el.value.trim().toLowerCase();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return msg('That is not an email address.', 'err');
+  if(USERS.some(u => u.email === email)) return msg(email + ' is already on the list.', 'err');
+  const sup = document.getElementById('newSuper').checked;
+  const brands = [...document.querySelectorAll('#newBrands input:checked')]
+    .map(i => i.dataset.new);
+  if(!sup && !brands.length) return msg('Tick at least one brand.', 'err');
+  USERS.push({email, brands: sup ? BRANDS.map(b => b.key) : brands,
+              role: sup ? 'super' : 'member', by: '', at: 0});
+  el.value = '';
+  document.getElementById('newSuper').checked = false;
+  document.querySelectorAll('#newBrands input:checked').forEach(i => {
+    i.checked = false; i.parentElement.classList.remove('on'); });
+  msg(''); draw(); mark(true);
+};
+document.getElementById('newEmail').addEventListener('keydown', e => {
+  if(e.key === 'Enter') document.getElementById('add').click();
+});
+
+document.getElementById('save').onclick = async () => {
+  const btn = document.getElementById('save');
+  btn.disabled = true; msg('Saving…');
+  try{
+    const r = await fetch('/api/users', {method:'PUT',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({users: USERS.filter(u => !u.bootstrap)})});
+    const j = await r.json();
+    if(!r.ok){ msg(j.error || 'Could not save.', 'err'); btn.disabled = false; return; }
+    USERS = j.users; draw(); mark(false);
+    msg('Saved. Everyone on this list can sign in; anyone removed loses access within a '
+        + 'minute.', 'ok');
+  }catch(e){
+    msg('Could not reach the server. Nothing was changed.', 'err');
+    btn.disabled = false;
+  }
+};
+
+/* A page that says "Nobody yet" because a network call failed would invite someone to
+   add themselves back and save, which is how the list gets wiped. */
+(async () => {
+  try{
+    const r = await fetch('/api/users');
+    const j = await r.json();
+    if(!r.ok) return msg(j.error || 'Could not load the list.', 'err');
+    USERS = j.users || [];
+    draw();
+    if(!j.store) msg('No history store is configured, so this list cannot be saved. '
+                     + 'Access falls back to the addresses set in the environment.', 'err');
+    else if(!j.store_ok) msg('The stored list could not be read just now. Do not save '
+                             + 'until this page loads it — saving would replace it.', 'err');
+  }catch(e){ msg('Could not load the list.', 'err'); }
+})();
+</script>
