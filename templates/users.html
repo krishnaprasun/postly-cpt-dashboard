@@ -276,9 +276,7 @@ function mailtoInvite(u){
   const body =
     `You now have ${role} to our Ads Performance dashboard (${names.join(', ')}).\n\n`
     + `${DASH_URL}/auth/login\n\n`
-    + `Sign in with this Google account: ${u.email}\nNo other account will work.\n\n`
-    + `The first time, Google may warn the app is not verified — it is our own internal `
-    + `tool. Choose Advanced, then Go to Ads Performance.\n`;
+    + `Sign in with this Google account: ${u.email}\nNo other account will work.\n`;
   window.location.href = 'mailto:' + encodeURIComponent(u.email)
     + '?subject=' + encodeURIComponent('You have access to Ads Performance')
     + '&body=' + encodeURIComponent(body);

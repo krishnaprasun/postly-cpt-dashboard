@@ -115,11 +115,6 @@ def build(email, role, brands, inviter=""):
           font-weight:600">{_esc(email)}</a><br>
        No other account will work.
      </p>
-     <p style="font:400 13px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
-               color:#8A8FA3;margin:14px 0 0">
-       The first time, Google may warn that the app is not verified — it is our own
-       internal tool. Choose <b>Advanced</b>, then <b>Go to Ads Performance</b>.
-     </p>
    </td></tr>
    <tr><td style="border-top:1px solid #EDEFF6;padding:16px 30px;
                   font:400 12px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;
@@ -135,9 +130,7 @@ def build(email, role, brands, inviter=""):
             f"({who}) — spend, trials and cost per trial across Meta and Google.\n\n"
             f"{link}\n\n"
             f"Sign in with this approved Google account: {email}\n"
-            f"No other account will work.\n\n"
-            f"The first time, Google may warn that the app is not verified — it is our "
-            f"own internal tool. Choose Advanced, then Go to Ads Performance.\n"
+            f"No other account will work.\n"
             + (f"\nInvited by {inviter}.\n" if inviter else ""))
     return subject, html, text
 
