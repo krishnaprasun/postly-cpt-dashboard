@@ -138,7 +138,11 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
   margin-bottom:-1px}
 .tabs button.on{color:var(--accent-dk);border-bottom-color:var(--accent);font-weight:680}
 .tabs button:hover:not(.on){color:var(--navy)}
-.tabs button i{font-style:normal;color:var(--faint);font-size:11px;margin-left:5px;font-weight:500}
+/* The count is part of the tab, not a thing of its own: without this a click that
+   landed on the number was a click on the <i>, which carries no data-t, and the tab
+   silently did not change. */
+.tabs button i{font-style:normal;color:var(--faint);font-size:11px;margin-left:5px;
+  font-weight:500;pointer-events:none}
 
 .ctl{display:flex;gap:11px;align-items:center;margin-bottom:11px;flex-wrap:wrap}
 input[type=search]{background:var(--white);border:1px solid var(--line);color:var(--navy);
@@ -3947,9 +3951,14 @@ document.getElementById('cGo').onclick = () => {
   err.innerHTML = ''; CUSTOM = {since:a, until:b}; load(false);
 };
 document.getElementById('tabs').onclick = e => {
-  if(!e.target.dataset.t) return;
+  /* closest(), not e.target. Every tab carries its row count in an <i> inside the
+     button, and a click that landed on that number hit an element with no data-t: the
+     handler returned, the tab did not change, and the page looked stuck until it was
+     reloaded. The badge is pointer-events:none as well, so this is belt and braces. */
+  const btn = e.target.closest ? e.target.closest('#tabs button[data-t]') : null;
+  if(!btn) return;
   [...e.currentTarget.children].forEach(b=>b.classList.remove('on'));
-  e.target.classList.add('on'); TAB = e.target.dataset.t;
+  btn.classList.add('on'); TAB = btn.dataset.t;
   SORT = {key:'spend', dir:-1};
   renderTable(); noteFor(); attrAvail();
   // Opening the tab is the request. Anything else means looking at an empty table and
