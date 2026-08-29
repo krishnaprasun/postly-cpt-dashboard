@@ -96,7 +96,8 @@ def load(force=False):
         e = _clean_email(rec.get("email"))
         if not e:
             continue
-        users[e] = {"email": e, "brands": _brands(rec.get("brands")),
+        users[e] = {"email": e, "name": str(rec.get("name") or "")[:80],
+                    "brands": _brands(rec.get("brands")),
                     "role": _role(rec.get("role")),
                     "note": str(rec.get("note") or "")[:120],
                     "by": rec.get("by", ""), "at": rec.get("at", 0)}
@@ -110,9 +111,10 @@ def listing():
     users, ok = load()
     out = dict(users)
     for e in supers():
-        # The env supers outrank whatever the store says about them, so nobody can be
-        # demoted out of their own dashboard by an edit.
-        out[e] = dict(out.get(e, {"note": "", "by": "environment", "at": 0}),
+        # The env supers outrank whatever the store says about their ROLE and BRANDS, so
+        # nobody can be demoted out of their own dashboard by an edit. Their name is not
+        # a permission, so a stored one is kept.
+        out[e] = dict(out.get(e, {"name": "", "note": "", "by": "environment", "at": 0}),
                       email=e, brands=list(C.BRANDS), role="super", bootstrap=True)
     rows = sorted(out.values(), key=lambda r: (r["role"] != "super", r["email"]))
     return rows, ok
@@ -132,12 +134,17 @@ def save(users, by):
         if not e:
             continue
         role = _role(rec.get("role"))
+        # An env super cannot be demoted by an edit to this list — their row is here so
+        # their NAME can be set, nothing more.
+        if e in supers():
+            role = "super"
         brands = list(C.BRANDS) if role == "super" else _brands(rec.get("brands"))
         if not brands:
             # An account with no brands can sign in and see nothing, which reads as a
             # broken dashboard rather than as an access decision. Refuse it here.
             return False, f"{e} has no brands. Give at least one, or remove the address."
-        clean.append({"email": e, "brands": brands, "role": role,
+        clean.append({"email": e, "name": str(rec.get("name") or "").strip()[:80],
+                      "brands": brands, "role": role,
                       "note": str(rec.get("note") or "")[:120],
                       "by": by, "at": int(time.time())})
     wrote = H.put_agg(NS, time.strftime("%Y-%m-%d"), {"users": clean, "by": by,

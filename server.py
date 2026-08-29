@@ -488,10 +488,9 @@ def api_users_save():
     rows = body.get("users")
     if not isinstance(rows, list):
         return jsonify({"error": "Expected a list of users."}), 400
-    # Bootstrap supers are not in the saved list -- they come from the environment and
-    # outrank it -- so dropping them here is not losing them.
+    # Bootstrap supers ARE kept, so their display name can be set here; U.save forces
+    # their role back to super, so the list cannot demote them however it is edited.
     boot = set(U.supers())
-    rows = [r for r in rows if (r.get("email") or "").strip().lower() not in boot]
     if not any(r.get("role") == "super" for r in rows) and not boot:
         return jsonify({"error": "That would leave nobody able to manage access."}), 400
     ok, msg = U.save(rows, me["email"])

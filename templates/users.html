@@ -37,7 +37,16 @@ td{padding:12px 16px;border-bottom:1px solid var(--line2);vertical-align:middle}
 tr:last-child td{border-bottom:0}
 tr.new td{background:var(--accent-lt)}
 .em{font-weight:600;word-break:break-all}
-.sub{font-size:11.5px;color:var(--faint);margin-top:2px}
+/* Reads as the name it is until you go near it, then admits it is a field. A row of
+   boxed inputs turns a directory into a form. */
+.nameinp{font:inherit;font-weight:600;font-size:14.5px;color:var(--ink);width:100%;
+  max-width:230px;background:none;border:1px solid transparent;border-radius:7px;
+  padding:3px 7px;margin:-3px 0 0 -7px}
+.nameinp::placeholder{color:var(--faint);font-weight:500;font-style:italic}
+.nameinp:hover{border-color:var(--line)}
+.nameinp:focus{outline:0;border-color:var(--accent);background:var(--white);
+  box-shadow:0 0 0 3px var(--accent-lt)}
+.sub{font-size:11.5px;color:var(--faint);margin-top:1px}
 
 /* Brand access as toggles, not a multi-select: three brands is a row of buttons, and a
    <select multiple> is the control everyone mis-clicks. */
@@ -66,8 +75,21 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
 .btn.rm{border:0;background:none;color:var(--faint);padding:5px 8px;font-size:17px;
   line-height:1;border-radius:7px}
 .btn.rm:hover{color:var(--bad);background:var(--badlt)}
-.addrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 16px;
+.addrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;
   background:var(--panel);border-top:1px solid var(--line)}
+
+.scrim{position:fixed;inset:0;background:rgba(26,28,46,.34);z-index:40}
+.modal{position:fixed;z-index:41;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:min(430px,calc(100vw - 32px));background:var(--white);border:1px solid var(--line);
+  border-radius:14px;padding:22px;box-shadow:0 24px 60px rgba(26,28,46,.22)}
+.modal h2{font-size:16.5px;margin:0 0 16px}
+.fld{display:block;margin:0 0 14px}
+.fld>span{display:block;font-size:11px;letter-spacing:.5px;text-transform:uppercase;
+  color:var(--faint);font-weight:700;margin:0 0 5px}
+.fld input,.fld select{width:100%}
+.hint{font-size:12px;color:var(--faint);margin-top:6px}
+.mrow{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+.modal .msg{margin:12px 0 0;flex:none}
 
 .tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px;
   background:var(--panel);color:var(--muted);border:1px solid var(--line)}
@@ -113,14 +135,34 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
       <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
     </table>
     <div class="addrow">
-      <input type="email" id="newEmail" placeholder="name@company.com" autocomplete="off"
-             spellcheck="false">
+      <button class="btn go" id="openAdd">Add user</button>
+    </div>
+  </div>
+
+  <!-- A dialog, because five fields in a table footer is a form pretending not to be
+       one: the labels go missing, the brand toggles sit next to a role select with
+       nothing saying which belongs to what, and it grows every time a field is added. -->
+  <div class="scrim" id="scrim" hidden></div>
+  <div class="modal" id="addModal" role="dialog" aria-modal="true"
+       aria-labelledby="addTitle" hidden>
+    <h2 id="addTitle">Add user</h2>
+    <label class="fld"><span>Name</span>
+      <input type="text" id="newName" placeholder="Krishna Prasun" autocomplete="off"></label>
+    <label class="fld"><span>Email</span>
+      <input type="email" id="newEmail" placeholder="krishna.prasun@classplus.co"
+             autocomplete="off" spellcheck="false"></label>
+    <label class="fld"><span>Role</span>
       <select id="newRole">
         {% for r in roles %}<option value="{{ r.key }}"{% if r.key == 'viewer' %} selected{% endif %}>{{ r.label }}</option>{% endfor %}
-      </select>
+      </select></label>
+    <div class="fld"><span>Brands</span>
       <div class="brands" id="newBrands"></div>
-      <button class="btn" id="add">Add</button>
+      <div class="hint" id="brandHint">An admin sees every brand.</div></div>
+    <div class="mrow">
+      <button class="btn" id="cancelAdd">Cancel</button>
+      <button class="btn go" id="add">Add user</button>
     </div>
+    <div class="msg" id="modalMsg"></div>
   </div>
 
   <div class="savebar">
@@ -189,8 +231,10 @@ function when(u){
 function draw(){
   document.getElementById('rows').innerHTML = USERS.length ? USERS.map((u, i) => `
     <tr class="${u.at ? '' : 'new'}">
-      <td><div class="em">${esc(u.email)}</div>${
-        u.email === ME ? '<div class="sub">that’s you</div>' : ''}</td>
+      <td><input class="nameinp" data-name="${i}" value="${esc(u.name || '')}"
+                 placeholder="Add name" aria-label="Name for ${esc(u.email)}">
+        <div class="sub">${esc(u.email)}${
+          u.email === ME ? ' · that’s you' : ''}</div></td>
       <td>${brandCell(u, i)}</td>
       <td>${roleCell(u, i)}</td>
       <td>${when(u)}</td>
@@ -201,6 +245,15 @@ function draw(){
 }
 
 const rows = document.getElementById('rows');
+/* The name is editable where it is shown. Everything else in this table already is,
+   and the three people who were here before the field existed have to get theirs
+   somehow — the Add dialog only ever sees new people. */
+rows.addEventListener('input', e => {
+  const inp = e.target.closest('input[data-name]');
+  if(!inp) return;
+  USERS[+inp.dataset.name].name = inp.value.trim();
+  mark(true);
+});
 rows.addEventListener('change', e => {
   const sel = e.target.closest('select[data-role]');
   if(sel){
@@ -232,34 +285,64 @@ nb.addEventListener('change', e => {
   if(cb) cb.parentElement.classList.toggle('on', cb.checked);
 });
 function newRoleChanged(){
+  /* An admin sees every brand by definition, so the toggles would be a lie you could
+     click. Locked, with the reason under them. */
   const sup = document.getElementById('newRole').value === 'super';
   nb.classList.toggle('off', sup);
   nb.querySelectorAll('input').forEach(i => { i.disabled = sup; });
+  document.getElementById('brandHint').textContent = sup
+    ? 'An admin sees every brand.' : 'Pick at least one.';
 }
 document.getElementById('newRole').onchange = newRoleChanged;
-newRoleChanged();
+
+const modal = document.getElementById('addModal'), scrim = document.getElementById('scrim');
+function mmsg(text, kind){
+  const m = document.getElementById('modalMsg');
+  m.className = 'msg' + (kind ? ' ' + kind : '');
+  m.textContent = text || '';
+}
+function openAdd(){
+  if(!LOADED) return msg('Wait for the list to load before adding anyone.', 'err');
+  /* Every field back to its default: a dialog that reopens holding the last person's
+     details is how the wrong brand gets ticked for someone. */
+  document.getElementById('newName').value = '';
+  document.getElementById('newEmail').value = '';
+  document.getElementById('newRole').value = 'viewer';
+  nb.querySelectorAll('input').forEach(i => {
+    i.checked = false; i.parentElement.classList.remove('on'); });
+  newRoleChanged(); mmsg('');
+  scrim.hidden = false; modal.hidden = false;
+  document.getElementById('newName').focus();
+}
+function closeAdd(){ modal.hidden = true; scrim.hidden = true; }
+document.getElementById('openAdd').onclick = openAdd;
+document.getElementById('cancelAdd').onclick = closeAdd;
+scrim.onclick = closeAdd;
+document.addEventListener('keydown', e => {
+  if(e.key === 'Escape' && !modal.hidden) closeAdd();
+});
 
 document.getElementById('add').onclick = () => {
-  if(!LOADED) return msg('Wait for the list to load before adding anyone.', 'err');
-  const el = document.getElementById('newEmail');
-  const email = el.value.trim().toLowerCase();
+  const name = document.getElementById('newName').value.trim();
+  const email = document.getElementById('newEmail').value.trim().toLowerCase();
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
-    return msg('That does not look like an email address.', 'err');
+    return mmsg('That does not look like an email address.', 'err');
   if(USERS.some(u => u.email === email))
-    return msg(email + ' is already on the list.', 'err');
+    return mmsg(email + ' is already on the list.', 'err');
   const role = document.getElementById('newRole').value;
   const brands = role === 'super' ? BRANDS.map(b => b.key)
     : [...nb.querySelectorAll('input:checked')].map(i => i.dataset.new);
-  if(!brands.length) return msg('Tick at least one brand.', 'err');
-  USERS.push({email, brands, role, by: '', at: 0});
-  el.value = '';
-  nb.querySelectorAll('input:checked').forEach(i => {
-    i.checked = false; i.parentElement.classList.remove('on'); });
-  msg(''); draw(); mark(true);
+  if(!brands.length) return mmsg('Pick at least one brand.', 'err');
+  USERS.push({name, email, brands, role, by: '', at: 0});
+  closeAdd(); draw(); mark(true);
+  msg(name || email + ' added. Save to apply.', 'info');
 };
-document.getElementById('newEmail').addEventListener('keydown', e => {
-  if(e.key === 'Enter') document.getElementById('add').click();
-});
+/* Enter submits from either text field — the dialog has one obvious action. */
+for(const id of ['newName', 'newEmail']){
+  document.getElementById(id).addEventListener('keydown', e => {
+    if(e.key === 'Enter'){ e.preventDefault(); document.getElementById('add').click(); }
+  });
+}
 
 document.getElementById('save').onclick = async () => {
   const btn = document.getElementById('save');
