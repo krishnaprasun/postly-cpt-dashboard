@@ -72,6 +72,10 @@ h1 span{color:var(--faint);font-weight:400;margin-left:5px;font-size:13px}
   box-shadow:var(--shadow)}
 .btn:hover{border-color:var(--accent);color:var(--accent-dk);background:var(--accent-lt)}
 .btn[disabled]{opacity:.45;cursor:default}
+/* Anchors styled as buttons: a <button> centres its own text and an <a> does not, and
+   half a pixel of drift between two things sitting side by side is visible. */
+a.btn{display:inline-flex;align-items:center;text-decoration:none;line-height:1.45}
+a.btn:hover{color:var(--accent-dk)}
 
 /* Sparkline. Sized to a table row and drawn without a library — the shape of daily
    spend over the window is the whole question ("did it sustain?"), and a number cannot
@@ -629,6 +633,11 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
         </div>
       </div>
       {% endif %}
+      {% if is_super %}
+      <!-- Managing who gets in is a task, not a fact about you, so it belongs with the
+           other actions rather than buried in the identity menu. -->
+      <a class="btn" href="/admin/users" title="Who can open this dashboard">Access</a>
+      {% endif %}
       {% if can_act %}<button class="btn" id="refresh">Refresh</button>{% endif %}
       {% if not can_act and not can_export %}
       <!-- View-only: the controls that would spend Meta's budget are not rendered. The
@@ -656,8 +665,6 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
         <div class="whomenu" id="whoMenu" role="menu">
           <div class="whoh"><b>{{ signed_in }}</b>
             <span>{{ role_label }}{% if brands|length == 1 %} · {{ brands[0].label }} only{% endif %}</span></div>
-          {% if is_super %}<a href="/admin/users" role="menuitem">Manage access
-            <i>who gets in</i></a>{% endif %}
           <a href="/auth/logout" role="menuitem">Sign out</a>
         </div>
       </div>
