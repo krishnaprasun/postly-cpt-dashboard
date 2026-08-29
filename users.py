@@ -10,12 +10,13 @@ two domains that have nothing to do with each other — so "anyone at company X"
 going to be the rule. A super admin adds an address; that address gets in. Nobody else
 does, whatever they are signed in as.
 
-Roles, and only two on purpose:
-  super  — sees every brand, may manage this list, and holds the rights that let the app
-           SPEND (a forced Meta roster re-read, a longevity recompute).
-  member — sees the brands they were given, and is read-only in that sense.
+Three roles, and each one earns its place by what it may DO, never by what it may see:
+  super  — every brand, manages this list, and holds the rights that make the app SPEND
+           (a forced Meta roster re-read, a longevity recompute).
+  member — the brands they were given, and may download the tables as CSV.
+  viewer — the brands they were given. Reads the page and nothing else.
 
-A third role would need a reason. "Can see two brands" is not a role, it is two brands.
+"Can see two brands" is not a fourth role, it is two brands.
 """
 
 import os
@@ -33,6 +34,15 @@ TTL = 60
 _cache = {"at": 0.0, "users": None, "ok": False}
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+ROLES = ("super", "member", "viewer")
+ROLE_LABELS = {"super": "Super admin", "member": "Member", "viewer": "View only"}
+
+
+def _role(r):
+    """Anything unrecognised reads as the LEAST privileged role, never the most. A typo
+    in a stored record should cost someone an export button, not hand them the keys."""
+    r = str(r or "").strip().lower()
+    return r if r in ROLES else "viewer"
 
 
 def _clean_email(e):
@@ -84,7 +94,7 @@ def load(force=False):
         if not e:
             continue
         users[e] = {"email": e, "brands": _brands(rec.get("brands")),
-                    "role": "super" if rec.get("role") == "super" else "member",
+                    "role": _role(rec.get("role")),
                     "note": str(rec.get("note") or "")[:120],
                     "by": rec.get("by", ""), "at": rec.get("at", 0)}
     if ok:
@@ -118,7 +128,7 @@ def save(users, by):
         e = _clean_email(rec.get("email"))
         if not e:
             continue
-        role = "super" if rec.get("role") == "super" else "member"
+        role = _role(rec.get("role"))
         brands = list(C.BRANDS) if role == "super" else _brands(rec.get("brands"))
         if not brands:
             # An account with no brands can sign in and see nothing, which reads as a
@@ -141,7 +151,7 @@ def caps_for(email):
     if not e:
         return None
     if e in supers():
-        return {"brands": list(C.BRANDS), "full": True, "email": e, "role": "super"}
+        return caps("super", list(C.BRANDS), e)
     users, ok = load()
     rec = users.get(e)
     if rec is None:
@@ -151,5 +161,18 @@ def caps_for(email):
         return None
     if not rec["brands"]:
         return None
-    return {"brands": rec["brands"], "full": rec["role"] == "super",
-            "email": e, "role": rec["role"]}
+    return caps(rec["role"], rec["brands"], e)
+
+
+def caps(role, brands, email):
+    """One place where a role becomes rights, so the page and the server cannot disagree.
+
+    `full` is the right to make the app SPEND — forcing a Meta roster re-read or a
+    longevity recompute — and it stays with super admins. Meta's hourly request-TIME limit
+    is the scarcest thing this app has, and it is shared by everyone looking at it, so a
+    button that consumes it is not a viewing preference.
+    """
+    role = _role(role)
+    return {"brands": list(brands), "email": email, "role": role,
+            "full": role == "super",
+            "export": role in ("super", "member")}

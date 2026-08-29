@@ -3,190 +3,266 @@
 <title>Access · Ads Performance</title>
 <meta name="robots" content="noindex,nofollow">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/static/postly_icon_logo.svg">
 <style>
-:root{--ink:#1A1C2E;--muted:#787E91;--faint:#A2A7B6;--line:#E6E3DA;--panel:#fff;
-  --bg:#FDFCF7;--panel2:#F6F4EC;--accent:#20A75D;--accent-dk:#127A42;--bad:#B3261E;
-  --badlt:#FCEEEC;--goodlt:#EAF7F0}
+/* Deliberately the dashboard's own palette and spacing: this is the same product, and a
+   settings page that looks like a different app makes people wonder whose it is. */
+:root{--ink:#1A1C2E;--muted:#787E91;--faint:#A2A7B6;--line:#E6E3DA;--line2:#F0EDE4;
+  --white:#fff;--bg:#FDFCF7;--panel:#F6F4EC;--accent:#20A75D;--accent-dk:#127A42;
+  --accent-lt:#EAF7F0;--bad:#B3261E;--badlt:#FCEEEC;--warn:#8A6100;--warnlt:#FBF3E2}
 *{box-sizing:border-box}
-body{font:14.5px/1.55 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:var(--bg);
-  color:var(--ink);margin:0;padding:26px 18px 60px}
-.wrap{max-width:920px;margin:0 auto}
-h1{font-size:20px;margin:0 0 4px}
-.sub{color:var(--muted);margin:0 0 22px}
-.sub a{color:var(--accent-dk)}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:0;
-  overflow:hidden}
+body{font:14.5px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:var(--bg);color:var(--ink);margin:0;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:1000px;margin:0 auto;padding:0 20px 80px}
+
+header{border-bottom:1px solid var(--line);background:var(--white);margin-bottom:26px}
+.hin{max-width:1000px;margin:0 auto;padding:15px 20px;display:flex;align-items:center;
+  gap:12px;flex-wrap:wrap}
+.hin h1{font-size:16.5px;margin:0;font-weight:700;letter-spacing:-.01em}
+.hin h1 em{font-style:normal;color:var(--faint);font-weight:500;margin-left:7px}
+.hin .sp{margin-left:auto}
+.lnk{color:var(--muted);text-decoration:none;font-size:13px;font-weight:550}
+.lnk:hover{color:var(--accent-dk)}
+.lnk+.lnk{margin-left:14px}
+
+.lead{color:var(--muted);margin:0 0 20px;max-width:62ch}
+.card{background:var(--white);border:1px solid var(--line);border-radius:14px;
+  overflow:hidden;box-shadow:0 1px 2px rgba(26,28,46,.03)}
 table{border-collapse:collapse;width:100%}
-th{text-align:left;font-size:11.5px;letter-spacing:.04em;text-transform:uppercase;
-  color:var(--faint);font-weight:600;padding:11px 14px;border-bottom:1px solid var(--line);
-  background:var(--panel2)}
-td{padding:10px 14px;border-bottom:1px solid var(--line);vertical-align:middle}
+th{text-align:left;font-size:10px;letter-spacing:.9px;text-transform:uppercase;
+  color:var(--faint);font-weight:700;padding:11px 16px;border-bottom:1px solid var(--line);
+  background:var(--panel)}
+td{padding:12px 16px;border-bottom:1px solid var(--line2);vertical-align:middle}
 tr:last-child td{border-bottom:0}
-.em{font-weight:560}
-.tag{display:inline-block;font-size:11.5px;padding:2px 8px;border-radius:99px;
-  background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
-.tag.super{background:var(--goodlt);color:var(--accent-dk);border-color:#BFE6D0}
-.brands{display:flex;gap:5px;flex-wrap:wrap}
-.brands label{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;
-  border:1px solid var(--line);border-radius:8px;padding:3px 8px;background:var(--panel2);
-  cursor:pointer;user-select:none}
-.brands label.on{background:var(--goodlt);border-color:#BFE6D0;color:var(--accent-dk)}
-.brands input{margin:0}
-input[type=email],input[type=text]{font:inherit;padding:7px 10px;border:1px solid var(--line);
-  border-radius:9px;background:var(--panel2);color:var(--ink);min-width:230px}
-input:focus{outline:0;border-color:var(--accent);background:#fff}
-.btn{font:inherit;font-weight:600;padding:7px 14px;border-radius:9px;cursor:pointer;
-  border:1px solid var(--line);background:var(--panel2);color:var(--ink)}
-.btn:hover{background:#fff}
+tr.new td{background:var(--accent-lt)}
+.em{font-weight:600;word-break:break-all}
+.sub{font-size:11.5px;color:var(--faint);margin-top:2px}
+
+/* Brand access as toggles, not a multi-select: three brands is a row of buttons, and a
+   <select multiple> is the control everyone mis-clicks. */
+.brands{display:flex;gap:6px;flex-wrap:wrap}
+.brands label{display:inline-flex;align-items:center;gap:5px;font-size:12.5px;
+  font-weight:550;border:1px solid var(--line);border-radius:99px;padding:4px 11px;
+  background:var(--white);cursor:pointer;user-select:none;transition:.12s}
+.brands label:hover{border-color:var(--faint)}
+.brands label.on{background:var(--accent-lt);border-color:#BFE6D0;color:var(--accent-dk)}
+.brands input{position:absolute;opacity:0;width:0;height:0}
+.brands.off label{opacity:.5;cursor:default;background:var(--panel)}
+
+select,input[type=email]{font:inherit;font-size:13.5px;padding:7px 10px;
+  border:1px solid var(--line);border-radius:9px;background:var(--white);color:var(--ink)}
+select{cursor:pointer;padding-right:26px}
+input[type=email]{min-width:250px}
+input:focus,select:focus{outline:0;border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-lt)}
+
+.btn{font:inherit;font-size:13.5px;font-weight:600;padding:8px 15px;border-radius:9px;
+  cursor:pointer;border:1px solid var(--line);background:var(--white);color:var(--ink)}
+.btn:hover:not(:disabled){border-color:var(--faint)}
 .btn.go{background:var(--accent);border-color:var(--accent);color:#fff}
-.btn.go:hover{background:var(--accent-dk);border-color:var(--accent-dk)}
-.btn.rm{border:0;background:none;color:var(--faint);padding:4px 6px;font-size:16px}
-.btn.rm:hover{color:var(--bad)}
-.btn:disabled{opacity:.45;cursor:default}
-.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px}
-.bar{display:flex;gap:10px;align-items:center;margin:16px 0 0}
-.msg{padding:10px 14px;border-radius:9px;font-size:13.5px;margin:14px 0 0;display:none}
+.btn.go:hover:not(:disabled){background:var(--accent-dk);border-color:var(--accent-dk)}
+.btn:disabled{opacity:.4;cursor:default}
+.btn.rm{border:0;background:none;color:var(--faint);padding:5px 8px;font-size:17px;
+  line-height:1;border-radius:7px}
+.btn.rm:hover{color:var(--bad);background:var(--badlt)}
+.addrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:14px 16px;
+  background:var(--panel);border-top:1px solid var(--line)}
+
+.tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px;
+  background:var(--panel);color:var(--muted);border:1px solid var(--line)}
+.tag.fixed{background:var(--warnlt);color:var(--warn);border-color:#EBD9AE}
+
+/* The save bar follows you down a long list: a Save button you have to scroll back up to
+   is a Save button people forget to press. */
+.savebar{position:sticky;bottom:0;margin-top:18px;padding:14px 0;
+  background:linear-gradient(to top,var(--bg) 68%,rgba(253,252,247,0));
+  display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.msg{padding:10px 14px;border-radius:10px;font-size:13.5px;display:none;flex:1 1 260px}
 .msg.err{background:var(--badlt);color:var(--bad);display:block}
-.msg.ok{background:var(--goodlt);color:var(--accent-dk);display:block}
-.note{color:var(--muted);font-size:13px;margin:22px 0 0}
-.note b{color:var(--ink)}
+.msg.ok{background:var(--accent-lt);color:var(--accent-dk);display:block}
+.msg.info{background:var(--panel);color:var(--muted);display:block}
+
+.legend{margin:26px 0 0;display:grid;gap:10px;
+  grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+.leg{background:var(--white);border:1px solid var(--line);border-radius:12px;padding:13px 15px}
+.leg b{display:block;font-size:13px;margin-bottom:3px}
+.leg span{font-size:12.5px;color:var(--muted);line-height:1.5}
+.foot{color:var(--faint);font-size:12.5px;margin:20px 0 0;line-height:1.6}
 .muted{color:var(--faint)}
-@media (prefers-color-scheme:dark){
-  :root{--ink:#EDEEF2;--muted:#9AA0B0;--faint:#6E7486;--line:#2C2F3E;--panel:#1B1D28;
-    --bg:#14151D;--panel2:#22242F;--goodlt:#12301F;--badlt:#3A1A17}
-  input[type=email],input[type=text]{color:var(--ink)}
-  input:focus{background:#12131A}
-  .btn:hover{background:#12131A}
+@media(max-width:640px){
+  th:nth-child(4),td:nth-child(4){display:none}
+  input[type=email]{min-width:100%}
 }
 </style>
+
+<header><div class="hin">
+  <h1>Access <em>Ads Performance</em></h1>
+  <span class="sp"></span>
+  <a class="lnk" href="/">Back to the dashboard</a>
+  <a class="lnk" href="/auth/logout">Sign out</a>
+</div></header>
+
 <div class="wrap">
-  <h1>Access</h1>
-  <p class="sub">Who can open the dashboard, and which brands they see. Signed in as
-    <b>{{ me }}</b> · <a href="/">Back to the dashboard</a> ·
-    <a href="/auth/logout">Sign out</a></p>
+  <p class="lead">Everyone who can open this dashboard, and what each of them may do.
+    Access is by email address — someone at Classplus and someone at Meta are added the
+    same way. An address that is not on this list cannot get in.</p>
 
   <div class="card">
     <table>
-      <thead><tr><th>Email</th><th>Brands</th><th>Role</th><th>Added</th><th></th></tr></thead>
+      <thead><tr>
+        <th style="width:31%">Person</th><th style="width:29%">Brands</th>
+        <th style="width:19%">Role</th><th style="width:15%">Added</th><th></th>
+      </tr></thead>
       <tbody id="rows"><tr><td colspan="5" class="muted">Loading…</td></tr></tbody>
     </table>
-    <div class="row" style="border-top:1px solid var(--line)">
-      <input type="email" id="newEmail" placeholder="name@company.com" autocomplete="off">
+    <div class="addrow">
+      <input type="email" id="newEmail" placeholder="name@company.com" autocomplete="off"
+             spellcheck="false">
+      <select id="newRole">
+        {% for r in roles %}<option value="{{ r.key }}"{% if r.key == 'viewer' %} selected{% endif %}>{{ r.label }}</option>{% endfor %}
+      </select>
       <div class="brands" id="newBrands"></div>
-      <label style="font-size:13px;display:inline-flex;gap:5px;align-items:center">
-        <input type="checkbox" id="newSuper"> super admin</label>
       <button class="btn" id="add">Add</button>
     </div>
   </div>
 
-  <div class="bar">
+  <div class="savebar">
     <button class="btn go" id="save" disabled>Save changes</button>
     <span class="muted" id="dirty"></span>
+    <div class="msg" id="msg"></div>
   </div>
-  <div class="msg" id="msg"></div>
 
-  <p class="note">
-    <b>A super admin</b> sees every brand, can change this list, and can use the two
-    controls that make the app spend Meta's request budget. <b>Everyone else</b> sees
-    only the brands ticked for them, and is read-only.<br>
-    Access is by address, not by domain — someone at Classplus and someone at Meta are
-    added the same way. An address that is not on this list cannot get in, whatever it is
-    signed in as. Changes take effect within a minute.
-  </p>
+  <div class="legend">
+    <div class="leg"><b>Super admin</b><span>Every brand, manages this list, and can force
+      a Meta re-read — the one action here that spends the request budget everyone
+      shares.</span></div>
+    <div class="leg"><b>Member</b><span>The brands ticked for them, and can download the
+      tables as CSV.</span></div>
+    <div class="leg"><b>View only</b><span>The brands ticked for them. Reads the page and
+      nothing else — no export, no refresh.</span></div>
+  </div>
+
+  <p class="foot">Changes take effect within a minute, including removals. A super admin
+    set in the environment is marked <b>fixed</b> and cannot be changed here — that is
+    what stops this page from locking everyone out of the dashboard.</p>
 </div>
 
 <script>
-const BRANDS = {{ brands|tojson }};
-let USERS = [], DIRTY = false;
+const BRANDS = {{ brands|tojson }}, ROLES = {{ roles|tojson }}, ME = {{ me|tojson }};
+let USERS = [], LOADED = false;
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
   c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const roleLabel = k => (ROLES.find(r => r.key === k) || {label: k}).label;
 
 function msg(text, kind){
   const m = document.getElementById('msg');
   m.className = 'msg' + (kind ? ' ' + kind : '');
   m.textContent = text || '';
 }
-
 function mark(on){
-  DIRTY = on;
   document.getElementById('save').disabled = !on;
   document.getElementById('dirty').textContent = on ? 'unsaved changes' : '';
 }
 
-function brandBoxes(u, i){
-  /* A super admin sees everything by definition, so the ticks would be a lie you could
-     click. Shown as text instead. */
-  if(u.role === 'super') return '<span class="muted">every brand</span>';
-  return '<div class="brands">' + BRANDS.map(b =>
-    `<label class="${u.brands.includes(b.key) ? 'on' : ''}">
-       <input type="checkbox" data-i="${i}" data-b="${b.key}"
-              ${u.brands.includes(b.key) ? 'checked' : ''}
-              ${u.bootstrap ? 'disabled' : ''}>${esc(b.label)}</label>`).join('') + '</div>';
+/* A super admin sees every brand by definition, so their ticks are shown but locked --
+   greyed rather than absent, because an empty cell reads as "no brands". */
+function brandCell(u, i){
+  const all = u.role === 'super';
+  return `<div class="brands ${all || u.bootstrap ? 'off' : ''}">` + BRANDS.map(b => {
+    const on = all || u.brands.includes(b.key);
+    return `<label class="${on ? 'on' : ''}"><input type="checkbox" data-i="${i}"
+      data-b="${b.key}" ${on ? 'checked' : ''}
+      ${all || u.bootstrap ? 'disabled' : ''}>${esc(b.label)}</label>`;
+  }).join('') + '</div>';
 }
 
-function when(at){
-  if(!at) return '<span class="muted">—</span>';
-  const d = new Date(at * 1000);
-  return `<span class="muted">${d.toLocaleDateString(undefined,
-    {day:'numeric', month:'short'})}</span>`;
+function roleCell(u, i){
+  if(u.bootstrap) return `<span class="tag fixed" title="Set in the environment">${
+    esc(roleLabel(u.role))} · fixed</span>`;
+  return `<select data-role="${i}">` + ROLES.map(r =>
+    `<option value="${r.key}"${r.key === u.role ? ' selected' : ''}>${esc(r.label)}</option>`
+  ).join('') + '</select>';
+}
+
+function when(u){
+  if(!u.at) return '<span class="muted">—</span>';
+  const d = new Date(u.at * 1000);
+  /* The local part only: "by krishna.prasun" says who without wrapping the column onto
+     three lines, and the full address is on the tooltip for the one time it matters. */
+  const by = (u.by || '').split('@')[0];
+  return `${d.toLocaleDateString(undefined, {day:'numeric', month:'short'})}` +
+    (by ? `<div class="sub" title="${esc(u.by)}">by ${esc(by)}</div>` : '');
 }
 
 function draw(){
   document.getElementById('rows').innerHTML = USERS.length ? USERS.map((u, i) => `
-    <tr>
-      <td class="em">${esc(u.email)}</td>
-      <td>${brandBoxes(u, i)}</td>
-      <td><span class="tag ${u.role === 'super' ? 'super' : ''}">${
-            u.role === 'super' ? 'super admin' : 'member'}</span>${
-            u.bootstrap ? ' <span class="muted" title="Set in the environment, so it '
-              + 'cannot be removed here">fixed</span>' : ''}</td>
-      <td>${when(u.at)}${u.by ? `<br><span class="muted" style="font-size:12px">by ${
-            esc(u.by)}</span>` : ''}</td>
+    <tr class="${u.at ? '' : 'new'}">
+      <td><div class="em">${esc(u.email)}</div>${
+        u.email === ME ? '<div class="sub">that’s you</div>' : ''}</td>
+      <td>${brandCell(u, i)}</td>
+      <td>${roleCell(u, i)}</td>
+      <td>${when(u)}</td>
       <td style="text-align:right">${u.bootstrap ? ''
-        : `<button class="btn rm" data-rm="${i}" title="Remove">×</button>`}</td>
+        : `<button class="btn rm" data-rm="${i}" title="Remove ${esc(u.email)}">×</button>`}</td>
     </tr>`).join('') : '<tr><td colspan="5" class="muted">Nobody yet.</td></tr>';
 }
 
-document.getElementById('rows').addEventListener('change', e => {
+const rows = document.getElementById('rows');
+rows.addEventListener('change', e => {
+  const sel = e.target.closest('select[data-role]');
+  if(sel){
+    const u = USERS[+sel.dataset.role];
+    u.role = sel.value;
+    if(u.role === 'super') u.brands = BRANDS.map(b => b.key);
+    draw(); mark(true); return;
+  }
   const cb = e.target.closest('input[type=checkbox]');
   if(!cb) return;
-  const u = USERS[+cb.dataset.i];
-  const set = new Set(u.brands);
+  const u = USERS[+cb.dataset.i], set = new Set(u.brands);
   cb.checked ? set.add(cb.dataset.b) : set.delete(cb.dataset.b);
   u.brands = BRANDS.map(b => b.key).filter(k => set.has(k));
   cb.parentElement.classList.toggle('on', cb.checked);
   mark(true);
 });
-
-document.getElementById('rows').addEventListener('click', e => {
+rows.addEventListener('click', e => {
   const b = e.target.closest('button[data-rm]');
   if(!b) return;
   USERS.splice(+b.dataset.rm, 1);
   draw(); mark(true);
 });
 
-document.getElementById('newBrands').innerHTML = BRANDS.map(b =>
+const nb = document.getElementById('newBrands');
+nb.innerHTML = BRANDS.map(b =>
   `<label><input type="checkbox" data-new="${b.key}">${esc(b.label)}</label>`).join('');
-document.getElementById('newBrands').addEventListener('change', e => {
+nb.addEventListener('change', e => {
   const cb = e.target.closest('input');
   if(cb) cb.parentElement.classList.toggle('on', cb.checked);
 });
+function newRoleChanged(){
+  const sup = document.getElementById('newRole').value === 'super';
+  nb.classList.toggle('off', sup);
+  nb.querySelectorAll('input').forEach(i => { i.disabled = sup; });
+}
+document.getElementById('newRole').onchange = newRoleChanged;
+newRoleChanged();
 
 document.getElementById('add').onclick = () => {
+  if(!LOADED) return msg('Wait for the list to load before adding anyone.', 'err');
   const el = document.getElementById('newEmail');
   const email = el.value.trim().toLowerCase();
-  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return msg('That is not an email address.', 'err');
-  if(USERS.some(u => u.email === email)) return msg(email + ' is already on the list.', 'err');
-  const sup = document.getElementById('newSuper').checked;
-  const brands = [...document.querySelectorAll('#newBrands input:checked')]
-    .map(i => i.dataset.new);
-  if(!sup && !brands.length) return msg('Tick at least one brand.', 'err');
-  USERS.push({email, brands: sup ? BRANDS.map(b => b.key) : brands,
-              role: sup ? 'super' : 'member', by: '', at: 0});
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))
+    return msg('That does not look like an email address.', 'err');
+  if(USERS.some(u => u.email === email))
+    return msg(email + ' is already on the list.', 'err');
+  const role = document.getElementById('newRole').value;
+  const brands = role === 'super' ? BRANDS.map(b => b.key)
+    : [...nb.querySelectorAll('input:checked')].map(i => i.dataset.new);
+  if(!brands.length) return msg('Tick at least one brand.', 'err');
+  USERS.push({email, brands, role, by: '', at: 0});
   el.value = '';
-  document.getElementById('newSuper').checked = false;
-  document.querySelectorAll('#newBrands input:checked').forEach(i => {
+  nb.querySelectorAll('input:checked').forEach(i => {
     i.checked = false; i.parentElement.classList.remove('on'); });
   msg(''); draw(); mark(true);
 };
@@ -196,7 +272,7 @@ document.getElementById('newEmail').addEventListener('keydown', e => {
 
 document.getElementById('save').onclick = async () => {
   const btn = document.getElementById('save');
-  btn.disabled = true; msg('Saving…');
+  btn.disabled = true; msg('Saving…', 'info');
   try{
     const r = await fetch('/api/users', {method:'PUT',
       headers:{'Content-Type':'application/json'},
@@ -204,7 +280,7 @@ document.getElementById('save').onclick = async () => {
     const j = await r.json();
     if(!r.ok){ msg(j.error || 'Could not save.', 'err'); btn.disabled = false; return; }
     USERS = j.users; draw(); mark(false);
-    msg('Saved. Everyone on this list can sign in; anyone removed loses access within a '
+    msg('Saved. Anyone added can sign in now; anyone removed loses access within a '
         + 'minute.', 'ok');
   }catch(e){
     msg('Could not reach the server. Nothing was changed.', 'err');
@@ -212,8 +288,9 @@ document.getElementById('save').onclick = async () => {
   }
 };
 
-/* A page that says "Nobody yet" because a network call failed would invite someone to
-   add themselves back and save, which is how the list gets wiped. */
+/* A page that says "Nobody yet" because a network call failed invites someone to add
+   themselves back and save, which is exactly how the list gets wiped. So the failure
+   says so, and Add refuses until the list is really loaded. */
 (async () => {
   try{
     const r = await fetch('/api/users');
@@ -221,10 +298,13 @@ document.getElementById('save').onclick = async () => {
     if(!r.ok) return msg(j.error || 'Could not load the list.', 'err');
     USERS = j.users || [];
     draw();
-    if(!j.store) msg('No history store is configured, so this list cannot be saved. '
-                     + 'Access falls back to the addresses set in the environment.', 'err');
-    else if(!j.store_ok) msg('The stored list could not be read just now. Do not save '
-                             + 'until this page loads it — saving would replace it.', 'err');
+    if(!j.store)
+      msg('No history store is configured, so this list cannot be saved. Access falls '
+          + 'back to the addresses set in the environment.', 'err');
+    else if(!j.store_ok)
+      msg('The stored list could not be read just now, so what you see may be '
+          + 'incomplete. Do not save until this page loads it.', 'err');
+    else LOADED = true;
   }catch(e){ msg('Could not load the list.', 'err'); }
 })();
 </script>

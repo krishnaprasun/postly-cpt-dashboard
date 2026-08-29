@@ -490,6 +490,7 @@ def admin_users():
                         "<p class=foot><a href='/'>Back to the dashboard</a></p></div>",
                         403, mimetype="text/html")
     return render_template("users.html", me=me["email"],
+                           roles=[{"key": k, "label": U.ROLE_LABELS[k]} for k in U.ROLES],
                            brands=[{"key": k, "label": C.BRANDS[k]["label"]}
                                    for k in C.BRANDS])
 
@@ -531,9 +532,15 @@ def index(key=None):
         app_version=APP_VERSION,
         link_key=key,
         can_act=caps["full"],
+        # Export is its own right, not a shade of `full`. Downloading a table costs
+        # nothing and answers a real need; forcing a Meta roster re-read spends the one
+        # budget everyone looking at this page shares. A link, which is nobody in
+        # particular, gets neither.
+        can_export=caps.get("export", caps["full"]),
         # Who is looking, when that is a person rather than a link. The page shows it
         # beside a sign-out, so a shared screen is never a mystery.
         signed_in=caps.get("email", ""),
+        role_label=U.ROLE_LABELS.get(caps.get("role", ""), ""),
         is_super=caps.get("role") == "super",
         # Only the brands this link may see. A switcher listing brands the key cannot
         # open would be a list of things to go looking for.

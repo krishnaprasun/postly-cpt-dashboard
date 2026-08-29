@@ -119,8 +119,8 @@ def caps_for(email, hd=""):
         brands = _brands(_env("GOOGLE_AUTH_DEFAULT"))
     if not brands:
         return None
-    return {"brands": brands, "full": len(brands) == len(C.BRANDS),
-            "email": email, "role": "member", "via": "google"}
+    return dict(U.caps("super" if len(brands) == len(C.BRANDS) else "member",
+                       brands, email), via="google")
 
 
 # ---- the flow ---------------------------------------------------------------

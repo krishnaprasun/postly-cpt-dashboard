@@ -141,9 +141,31 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* The count is part of the tab, not a thing of its own: without this a click that
    landed on the number was a click on the <i>, which carries no data-t, and the tab
    silently did not change. */
-.who{white-space:nowrap}
-.who a{color:var(--muted);text-decoration:none;border-bottom:1px dotted var(--line)}
-.who a:hover{color:var(--accent-dk)}
+/* The identity chip. Initials, not the address: the address is 27 characters that
+   change nothing about what you can do, and it was pushing Export and Refresh off the
+   line on a laptop. It is on the button's title, in the menu, and read out by the
+   aria-label -- three places, none of them the middle of the toolbar. */
+.whowrap{position:relative}
+.whobtn{display:inline-flex;align-items:center;gap:5px;background:none;border:0;padding:2px;
+  border-radius:99px;cursor:pointer;font:inherit;color:var(--muted)}
+.whobtn:hover{color:var(--ink)}
+.whobtn .ini{display:grid;place-items:center;width:28px;height:28px;border-radius:99px;
+  background:var(--accent);color:#fff;font-size:11.5px;font-weight:700;letter-spacing:.03em}
+.whobtn .cv{font-size:10px;opacity:.7}
+.whowrap.on .whobtn .cv{transform:rotate(180deg)}
+.whomenu{position:absolute;top:calc(100% + 7px);right:0;z-index:30;display:none;
+  min-width:216px;background:var(--white);border:1px solid var(--line);border-radius:12px;
+  box-shadow:0 12px 34px rgba(26,28,46,.13);padding:7px}
+.whowrap.on .whomenu{display:block}
+.whomenu .whoh{padding:7px 9px 8px;border-bottom:1px solid var(--line2);margin-bottom:5px}
+.whomenu .whoh b{display:block;font-size:12.5px;font-weight:600;color:var(--ink);
+  word-break:break-all;line-height:1.35}
+.whomenu .whoh span{display:block;font-size:11px;color:var(--faint);margin-top:2px}
+.whomenu a{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
+  padding:7px 9px;border-radius:8px;font-size:12.5px;font-weight:550;color:var(--ink);
+  text-decoration:none}
+.whomenu a:hover{background:var(--accent-lt);color:var(--accent-dk)}
+.whomenu a i{font-style:normal;font-size:11px;color:var(--faint);font-weight:500}
 .tabs button i{font-style:normal;color:var(--faint);font-size:11px;margin-left:5px;
   font-weight:500;pointer-events:none}
 
@@ -589,7 +611,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     </div>
     <div class="acts">
       <div class="meta" id="stamp"></div>
-      {% if can_act %}<div class="expwrap" id="expwrap">
+      {% if can_export %}<div class="expwrap" id="expwrap">
         <button class="btn" id="expBtn" disabled>Export ▾</button>
         <div class="expmenu" id="expMenu">
           <div class="exph">Download CSV</div>
@@ -604,19 +626,34 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
           <div class="expnote" id="expNote"></div>
         </div>
       </div>
-      <button class="btn" id="refresh">Refresh</button>
-      {% else %}
-      <!-- Read-only link: the two controls that make the app spend Meta's budget are not
-           rendered. The server refuses them regardless — see _gate — so this is about not
-           offering a button that would not work, not about security. -->
-      <span class="meta" id="viewonly" title="This link is view-only">view-only</span>
+      {% endif %}
+      {% if can_act %}<button class="btn" id="refresh">Refresh</button>{% endif %}
+      {% if not can_act and not can_export %}
+      <!-- View-only: the controls that would spend Meta's budget are not rendered. The
+           server refuses them regardless — see _gate — so this is about not offering a
+           button that would not work, not about security. -->
+      <span class="meta" id="viewonly" title="This access is view-only">view-only</span>
       {% endif %}
       {% if signed_in %}
       <!-- Who is looking. On a shared screen "whose numbers are these" is the first
-           question, and a sign-out that is not on the page is a sign-out nobody uses. -->
-      <span class="meta who" title="Signed in with Google">{{ signed_in }}
-        {% if is_super %}· <a href="/admin/users" title="Who can open this dashboard">Access</a>{% endif %}
-        · <a href="/auth/logout">Sign out</a></span>
+           question, and a sign-out nobody can find is a sign-out nobody uses. One chip
+           with a menu rather than three pieces of text in a row: the email is long, it is
+           not an action, and it was crowding the two things that are. -->
+      <div class="whowrap" id="whowrap">
+        <button class="whobtn" id="whoBtn" title="{{ signed_in }}"
+                aria-haspopup="menu" aria-expanded="false">
+          <span class="ini">{{ signed_in[0]|upper }}{{ (signed_in.split('.')[1][0]|upper)
+            if '.' in signed_in.split('@')[0] else signed_in.split('@')[0][-1]|upper }}</span>
+          <span class="cv">▾</span>
+        </button>
+        <div class="whomenu" id="whoMenu" role="menu">
+          <div class="whoh"><b>{{ signed_in }}</b>
+            <span>{{ role_label }}{% if brands|length == 1 %} · {{ brands[0].label }} only{% endif %}</span></div>
+          {% if is_super %}<a href="/admin/users" role="menuitem">Manage access
+            <i>who gets in</i></a>{% endif %}
+          <a href="/auth/logout" role="menuitem">Sign out</a>
+        </div>
+      </div>
       {% endif %}
     </div>
   </div>
@@ -764,7 +801,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
         <option value="500">500</option>
         <option value="0">All</option>
       </select></label>
-    {% if can_act %}<button class="btn" id="sCsv">Export CSV</button>{% endif %}
+    {% if can_export %}<button class="btn" id="sCsv">Export CSV</button>{% endif %}
     <span class="meta" id="scount"></span>
   </div>
 
@@ -856,6 +893,9 @@ const LINK_KEY = {{ link_key | tojson }};
    recompute. The server enforces it; the page only avoids offering buttons that would be
    ignored. */
 const CAN_ACT = {{ can_act | tojson }};
+/* Downloading a table and forcing a Meta re-read are different rights. View-only access
+   has neither; a member has the first. */
+const CAN_EXPORT = {{ can_export | tojson }};
 const K = LINK_KEY ? `&k=${encodeURIComponent(LINK_KEY)}` : '';
 const apiQuery = () => `brand=${BRAND}&` + (CUSTOM
   ? `since=${CUSTOM.since}&until=${CUSTOM.until}` : `range=${RANGE}`) + K;
@@ -3208,7 +3248,7 @@ function render(){
   document.getElementById('cpWrap').style.display =
     (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
   renderLimits(); kpis(); renderTable();
-  if(CAN_ACT){
+  if(CAN_EXPORT){
     document.getElementById('expBtn').disabled = false;
     if(expWrap.classList.contains('on')) expCounts();
   }
@@ -3998,7 +4038,7 @@ document.getElementById('sLines').onchange = () => {
   MLINES = parseInt(document.getElementById('sLines').value, 10) || 0;
   renderTable(); noteFor();
 };
-if(CAN_ACT) document.getElementById('sCsv').onclick = matrixCsv;
+if(CAN_EXPORT) document.getElementById('sCsv').onclick = matrixCsv;
 if(CAN_ACT) document.getElementById('lGo').onclick = () => loadLongevity(true);
 document.getElementById('lWin').onchange = () => loadLongevity(false);
 for(const id of ['lq','lFrom','lTo','lActive'])
@@ -4063,7 +4103,7 @@ document.getElementById('brandsw').onclick = e => {
    path across the header should not put four files in someone's Downloads folder. */
 const expWrap = document.getElementById('expwrap') || {classList:{contains:()=>false,
   toggle:()=>{}, remove:()=>{}}};
-if(CAN_ACT){
+if(CAN_EXPORT){
 document.getElementById('expBtn').onclick = e => {
   e.stopPropagation();
   const open = !expWrap.classList.contains('on');
@@ -4103,10 +4143,26 @@ document.getElementById('expMenu').onclick = e => {
 };
 document.getElementById('expFilters').onchange = expCounts;
 }
-document.addEventListener('click', () => expWrap.classList.remove('on'));
-document.addEventListener('keydown', e => {
-  if(e.key === 'Escape') expWrap.classList.remove('on');
-});
+const whoWrap = document.getElementById('whowrap');
+if(whoWrap){
+  document.getElementById('whoBtn').onclick = e => {
+    e.stopPropagation();
+    const open = !whoWrap.classList.contains('on');
+    whoWrap.classList.toggle('on', open);
+    e.currentTarget.setAttribute('aria-expanded', open ? 'true' : 'false');
+    expWrap.classList.remove('on');          // never two menus open at once
+  };
+  document.getElementById('whoMenu').onclick = e => e.stopPropagation();
+}
+function shutMenus(){
+  expWrap.classList.remove('on');
+  if(whoWrap){
+    whoWrap.classList.remove('on');
+    document.getElementById('whoBtn').setAttribute('aria-expanded', 'false');
+  }
+}
+document.addEventListener('click', shutMenus);
+document.addEventListener('keydown', e => { if(e.key === 'Escape') shutMenus(); });
 
 /* Switching segment is a pure re-render — the payload already carries both. No fetch,
    so it is instant, and it cannot go stale against the numbers beside it. */
