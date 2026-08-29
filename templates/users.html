@@ -350,7 +350,10 @@ document.getElementById('save').onclick = async () => {
   try{
     const r = await fetch('/api/users', {method:'PUT',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({users: USERS.filter(u => !u.bootstrap)})});
+      /* Bootstrap rows go too. Their role and brands are forced back on the server,
+         so nothing here can demote them — but their NAME is not a permission, and
+         filtering them out was silently discarding it. */
+      body: JSON.stringify({users: USERS})});
     const j = await r.json();
     if(!r.ok){ msg(j.error || 'Could not save.', 'err'); btn.disabled = false; return; }
     USERS = j.users; draw(); mark(false);
