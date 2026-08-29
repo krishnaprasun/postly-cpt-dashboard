@@ -24,6 +24,7 @@ from functools import wraps
 from flask import (Flask, Response, jsonify, redirect, render_template,
                    request)
 
+import chat as CH
 import config as C
 import history as H
 import postly_cpt as P
@@ -943,6 +944,63 @@ def _preview_problem(msg, ad):
         "a{color:#1877f2}</style>"
         f"<h1>Preview unavailable</h1><p>{escape(msg)}</p>{link}",
         mimetype="text/html")
+
+
+@app.route("/api/chat/hourly", methods=["POST", "GET"])
+def api_chat_hourly():
+    """Post the hourly ads update to a Google Chat space.
+
+    Token-gated like every other scheduler endpoint, and here for two reasons rather than
+    one: it reaches OUT of this app to a third party, and an open URL that posts into the
+    team's space is a megaphone anyone can pick up.
+
+    It reads the same cached payload the page serves, so the push costs Meta nothing on a
+    warm instance and warms a cold one.
+
+    ?brand=funda   just one brand (default: all of them, in config order)
+    ?dry=1         compose and return the message WITHOUT posting
+    """
+    want = H.TOKEN
+    if not want or not hmac.compare_digest(request.headers.get("Authorization", ""),
+                                           "Bearer " + want):
+        return jsonify({"error": "unauthorized"}), 401
+    brands = [request.args.get("brand")] if request.args.get("brand") else list(C.BRANDS)
+    bad = [b for b in brands if b not in C.BRANDS]
+    if bad:
+        return jsonify({"error": f"unknown brand(s): {bad}"}), 400
+    dry = request.args.get("dry") == "1"
+
+    today = P.today_ist()
+    rows, failed = [], []
+    for b in brands:
+        try:
+            rows.append(CH.figures(b, get_data(today, today, b)))
+        except Exception as e:
+            traceback.print_exc()
+            failed.append({"brand": b, "error": str(e)[:200]})
+    if not rows:
+        return jsonify({"sent": False, "error": "no brand produced figures",
+                        "failed": failed}), 502
+
+    when = datetime.now(P.IST).strftime("%d %b, %-I:%M %p")
+    text = CH.compose(rows, CH.last_point(today), when,
+                      link=os.environ.get("CHAT_LINK", "").strip() or None)
+    # A brand that failed is said out loud rather than silently missing: a shorter
+    # message that looks complete is the one way this can mislead.
+    if failed:
+        text += "\n\n⚠️ No figures for " + ", ".join(f["brand"] for f in failed)
+    if dry:
+        return jsonify({"sent": False, "dry": True, "text": text,
+                        "configured": bool(CH.webhook()), "failed": failed})
+
+    ok, detail = CH.send(text, CH.webhook())
+    # Only a delivered message becomes the baseline. Recording a failed push would make
+    # the next update's "since the last update" cover an hour nobody ever saw.
+    if ok:
+        CH.record(today, when, rows)
+    return jsonify({"sent": ok, "detail": detail, "at": when,
+                    "brands": [f["brand"] for f in rows], "failed": failed}), (
+        200 if ok else 502)
 
 
 @app.route("/robots.txt")

@@ -2085,8 +2085,18 @@ function sMetricAvail(){
   if(!o) return;
   /* Only judge once a fold has arrived. Treating "not loaded yet" as "no budget here"
      silently reset a ?metric=bud link back to Spend before the answer existed. */
-  if(!SERIES){ o.disabled = false; return; }
+  if(!SERIES){ o.disabled = false; o.textContent = 'Budget/day'; o.title = ''; return; }
   o.disabled = !SERIES.budget_dim;
+  /* A dead option with no reason on it reads as a broken feature, and the note that
+     explains it only renders once the metric is SELECTED -- which is exactly what being
+     disabled prevents. So the reason goes on the option itself, where the person looking
+     at the grey is already looking. Meta holds a budget against ad sets, campaigns and
+     accounts; an ad name and a stage are not things it budgets. */
+  o.textContent = SERIES.budget_dim ? 'Budget/day'
+                                    : 'Budget/day \u2014 ad set, campaign or account only';
+  o.title = SERIES.budget_dim ? ''
+    : 'Meta holds a budget against ad sets, campaigns and ad accounts \u2014 not against '
+      + 'an ad name or a stage. Switch Dimension to one of those to chart it.';
   if(!SERIES.budget_dim && sMetric() === 'bud'){
     document.getElementById('sMetric').value = 'spend';
   }
