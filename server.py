@@ -182,7 +182,16 @@ def _caps(key):
         caps = C.link_caps(key)
         if caps is not None:
             return caps
-    return GA.session_caps(session) or C.link_caps(key)
+    signed = GA.session_caps(session)
+    if signed:
+        return signed
+    # With sign-in configured, "no links are set" must NOT mean "open to everyone".
+    # config.link_caps says exactly that — it is how this app behaved before links
+    # existed — so retiring the last team link would silently unlock the dashboard for
+    # the whole internet. Deleting an env var should never widen access.
+    if GA.on() and not C.LINKS_ON:
+        return None
+    return C.link_caps(key)
 
 
 def _gate(key, brand):
