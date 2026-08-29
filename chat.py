@@ -13,6 +13,7 @@ warms the cache the next visitor would have paid for.
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 
@@ -257,6 +258,12 @@ def hour_strip(points, rows):
 
     out = []
     for a, b in zip(points, points[1:]):
+        # An interval is only an hour if it was one. Two pushes ten minutes apart, or a
+        # gap where a run was missed, are real gaps between real numbers -- they are just
+        # not hours, and printing them under an "hour by hour" heading would be a lie.
+        gap = (b.get("ts") or 0) - (a.get("ts") or 0)
+        if not (20 * 60 <= gap <= 100 * 60):
+            continue
         sp, tr = tot(a, "spend"), tot(b, "spend")
         ta, tb = tot(a, "trials"), tot(b, "trials")
         if sp is None or tr is None or ta is None or tb is None:
@@ -264,7 +271,7 @@ def hour_strip(points, rows):
         d_sp, d_tr = tr - sp, tb - ta
         if d_sp < 1 and d_tr < 1:
             continue
-        out.append(f"{b.get('at', '')} {rs(d_sp)}·{num(d_tr)}")
+        out.append(f"{b.get('t') or b.get('at', '')} {rs(d_sp)}·{num(d_tr)}")
     if not out:
         return ""
     # Six is a screenful on a phone; the rest of the day is on the dashboard.
@@ -327,7 +334,8 @@ def record(day, when, rows):
         got, ok = H.get_day_raw(STATE_NS, day)
         doc = got if (ok and isinstance(got, dict)) else {}
         pts = doc.get("points") or []
-        pts.append({"at": when, "brands": {f["brand"]: _point(f) for f in rows}})
+        pts.append({"at": when, "t": when.split(", ")[-1], "ts": time.time(),
+                    "brands": {f["brand"]: _point(f) for f in rows}})
         # A day is at most 24 pushes; the cap is only there so a runaway scheduler cannot
         # grow one document without bound.
         doc["points"] = pts[-64:]
