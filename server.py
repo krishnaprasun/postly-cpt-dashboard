@@ -22,10 +22,11 @@ from html import escape
 from functools import wraps
 
 from flask import (Flask, Response, jsonify, redirect, render_template,
-                   request)
+                   request, session, url_for)
 
 import chat as CH
 import config as C
+import gauth as GA
 import history as H
 import postly_cpt as P
 
@@ -60,6 +61,19 @@ CACHE_TTL = int(os.environ.get("CACHE_TTL", "780"))
 # anyone with the URL. See README "Access" for what that exposes.
 ADMIN_USER = os.environ.get("ADMIN_USER", "postly")
 ADMIN_PASS = os.environ.get("ADMIN_PASS", "")
+
+# Signs the session cookie that Google sign-in leaves behind. A generated fallback keeps
+# the app running without it, at the cost of signing everyone out whenever an instance
+# restarts -- which on the free plan is often. Set SESSION_SECRET the moment sign-in is
+# switched on.
+app.secret_key = os.environ.get("SESSION_SECRET", "") or os.urandom(32)
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    # Off only where there is no TLS to require: a local run on 127.0.0.1. Anywhere else
+    # a cookie that would travel in the clear is worse than no cookie.
+    SESSION_COOKIE_SECURE=os.environ.get("COOKIE_INSECURE", "") != "1",
+    PERMANENT_SESSION_LIFETIME=GA.MAX_AGE)
 
 _cache, _lock = {}, threading.Lock()
 _refreshing = set()
@@ -149,6 +163,16 @@ def _allowed(key):
     return C.brands_for(key)
 
 
+def _caps(key):
+    """What this request may see: the link it carries, or failing that whoever is signed
+    in. The link wins when it is valid, so a team link opened by someone signed in as the
+    owner still shows that team's brand and nothing more."""
+    caps = C.link_caps(key)
+    if caps is None:
+        caps = GA.session_caps(session)
+    return caps
+
+
 def _gate(key, brand):
     """(brand, error_response, full). Narrows the request to what the key allows.
 
@@ -156,7 +180,7 @@ def _gate(key, brand):
     longevity recompute. Hiding those buttons in the page is presentation; this is the
     part that actually holds, because a hidden button is one edited URL away.
     """
-    caps = C.link_caps(key)
+    caps = _caps(key)
     if caps is None:
         return None, (jsonify({"error": "This link is not valid. Ask for your team's "
                                "dashboard link."}), 403), False
@@ -290,6 +314,106 @@ def resolve_range(rng, since, until):
 
 
 # ----------------------------------------------------------------- routes --
+# ------------------------------------------------------------ google sign-in ---
+# A page, three routes and no user table. Google says who you are; GOOGLE_AUTH_MAP says
+# which brands that address may see. Switched on by setting the client id and secret —
+# with them unset, none of this is reachable and the app is exactly what it was.
+SIGNIN_CSS = (
+    "body{font:15px/1.6 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;"
+    "background:#FDFCF7;color:#1A1C2E;display:grid;place-items:center;min-height:100vh;"
+    "margin:0}.card{max-width:390px;padding:0 24px;text-align:center}"
+    "h1{font-size:19px;margin:0 0 6px}p{color:#787E91;margin:0 0 22px}"
+    "a.g{display:inline-flex;align-items:center;gap:10px;text-decoration:none;"
+    "background:#fff;color:#1A1C2E;border:1px solid #DADCE0;border-radius:10px;"
+    "padding:11px 18px;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.05)}"
+    "a.g:hover{background:#F7F8FA}"
+    ".err{color:#B3261E;background:#FCEEEC;border-radius:8px;padding:10px 14px;"
+    "margin:0 0 18px;font-size:13.5px;text-align:left}"
+    ".foot{color:#A2A7B6;font-size:12.5px;margin:20px 0 0}")
+# Google's mark, inline: the CSP on this app allows no external images, and a sign-in
+# button with a broken icon looks like a phishing page.
+GOOGLE_G = (
+    '<svg width="17" height="17" viewBox="0 0 48 48" aria-hidden="true">'
+    '<path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9 3.6l6.7-6.7C35.6 2.6 30.1 0 24 0'
+    ' 14.6 0 6.4 5.4 2.5 13.2l7.8 6.1C12.2 13.2 17.6 9.5 24 9.5z"/>'
+    '<path fill="#4285F4" d="M46.1 24.6c0-1.6-.1-2.8-.4-4.1H24v7.8h12.7c-.3 2.1-1.6 5.3-4.7'
+    ' 7.4l7.6 5.9c4.5-4.2 7.1-10.3 7.1-17z"/>'
+    '<path fill="#FBBC05" d="M10.3 28.7c-.5-1.5-.8-3-.8-4.7s.3-3.2.8-4.7l-7.8-6.1C.9 16.5 0'
+    ' 20.1 0 24s.9 7.5 2.5 10.8l7.8-6.1z"/>'
+    '<path fill="#34A853" d="M24 48c6.5 0 11.9-2.1 15.9-5.8l-7.6-5.9c-2 1.4-4.8 2.4-8.3 2.4'
+    '-6.4 0-11.8-3.7-13.7-9.8l-7.8 6.1C6.4 42.6 14.6 48 24 48z"/></svg>')
+
+
+def _signin_page(error="", status=200):
+    doms = GA.domains()
+    who = (f"Use your <b>{escape(doms[0])}</b> account."
+           if len(doms) == 1 else "Use your work Google account.")
+    nxt = request.args.get("next") or request.full_path.rstrip("?")
+    login = url_for("auth_login", next=nxt if nxt.startswith("/") else "/")
+    return Response(
+        "<!doctype html><meta charset=utf-8><title>Ads Performance</title>"
+        f"<style>{SIGNIN_CSS}</style><div class=card>"
+        "<h1>Ads Performance</h1>"
+        f"<p>{who}</p>"
+        + (f'<div class="err">{escape(error)}</div>' if error else "")
+        + f'<a class="g" href="{escape(login)}">{GOOGLE_G}Sign in with Google</a>'
+        + '<p class="foot">Or open your team\u2019s own dashboard link.</p></div>',
+        status, mimetype="text/html")
+
+
+@app.route("/auth/login")
+def auth_login():
+    if not GA.on():
+        return redirect("/")
+    state = GA.new_state()
+    session["g_state"] = state
+    nxt = request.args.get("next", "/")
+    # Only a path on this site. An open redirect on a sign-in route is how a phishing
+    # link borrows someone else's domain.
+    session["g_next"] = nxt if nxt.startswith("/") and not nxt.startswith("//") else "/"
+    return redirect(GA.start(request, state))
+
+
+@app.route("/auth/callback")
+def auth_callback():
+    if not GA.on():
+        return redirect("/")
+    if request.args.get("error"):
+        return _signin_page("Sign-in was cancelled.", 200)
+    want = session.pop("g_state", None)
+    if not want or request.args.get("state") != want:
+        # Either a stale tab or a forged callback, and the honest answer to both is to
+        # start again rather than to guess which.
+        return _signin_page("That sign-in link had expired. Try again.", 400)
+    caps, err = GA.finish(request, request.args.get("code", ""))
+    if err:
+        return _signin_page(err, 403)
+    session.permanent = True
+    session["g_email"] = caps["email"]
+    session["g_at"] = int(time.time())
+    return redirect(session.pop("g_next", "/") or "/")
+
+
+@app.route("/auth/logout")
+def auth_logout():
+    for k in ("g_email", "g_at", "g_state", "g_next"):
+        session.pop(k, None)
+    return _signin_page("You are signed out.")
+
+
+@app.route("/auth/whoami")
+def auth_whoami():
+    """What this browser is, as the server sees it. For checking a rollout, and for
+    anyone wondering why they can see one brand and not another."""
+    caps = _caps(request.args.get("k", ""))
+    return jsonify({"signed_in": bool(caps and caps.get("email")),
+                    "email": (caps or {}).get("email", ""),
+                    "brands": (caps or {}).get("brands", []),
+                    "full": bool(caps and caps.get("full")),
+                    "google_auth": GA.on(),
+                    "domains": GA.domains()})
+
+
 @app.route("/b/<key>")
 @protected
 def branded(key):
@@ -303,8 +427,10 @@ def index(key=None):
     # The brand list is server-rendered so the switcher and the loading veil are correct
     # on the very first paint, before any data has been fetched.
     key = key or request.args.get("k", "")
-    caps = C.link_caps(key)
+    caps = _caps(key)
     allowed = caps["brands"] if caps else None
+    if allowed is None and GA.on():
+        return _signin_page()
     if allowed is None:
         # No hint about which links exist or how many — a wrong key learns nothing.
         return Response(
@@ -325,6 +451,9 @@ def index(key=None):
         app_version=APP_VERSION,
         link_key=key,
         can_act=caps["full"],
+        # Who is looking, when that is a person rather than a link. The page shows it
+        # beside a sign-out, so a shared screen is never a mystery.
+        signed_in=caps.get("email", ""),
         # Only the brands this link may see. A switcher listing brands the key cannot
         # open would be a list of things to go looking for.
         brands=[{"key": k, "label": C.BRANDS[k]["label"]} for k in allowed],

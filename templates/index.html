@@ -141,6 +141,9 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* The count is part of the tab, not a thing of its own: without this a click that
    landed on the number was a click on the <i>, which carries no data-t, and the tab
    silently did not change. */
+.who{white-space:nowrap}
+.who a{color:var(--muted);text-decoration:none;border-bottom:1px dotted var(--line)}
+.who a:hover{color:var(--accent-dk)}
 .tabs button i{font-style:normal;color:var(--faint);font-size:11px;margin-left:5px;
   font-weight:500;pointer-events:none}
 
@@ -607,6 +610,12 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
            rendered. The server refuses them regardless — see _gate — so this is about not
            offering a button that would not work, not about security. -->
       <span class="meta" id="viewonly" title="This link is view-only">view-only</span>
+      {% endif %}
+      {% if signed_in %}
+      <!-- Who is looking. On a shared screen "whose numbers are these" is the first
+           question, and a sign-out that is not on the page is a sign-out nobody uses. -->
+      <span class="meta who" title="Signed in with Google">{{ signed_in }}
+        · <a href="/auth/logout">Sign out</a></span>
       {% endif %}
     </div>
   </div>

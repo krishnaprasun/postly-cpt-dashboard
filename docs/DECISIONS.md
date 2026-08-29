@@ -184,3 +184,28 @@ than 2% the Trials tile says so and a note explains it; below that the tile keep
 name. On a segment the off-row trials are shared out by that segment's share of the trials
 that do have rows — testing/trial is a campaign property and an off-row trial has no
 campaign — and the segments still sum to the brand exactly.
+
+### Google sign-in sits beside the team links, not instead of them
+
+Added 2026-08-29, on the owner's ask. Until now the only credential was a URL: a link per
+team, plus `ROOT_OPEN=1`, which left the bare `.onrender.com` address open to anyone
+holding it — every brand, full controls.
+
+Sign-in is OpenID Connect against Google, restricted to a Workspace domain, with an
+address→brands map in `GOOGLE_AUTH_MAP`. There is no user table, no password and nothing
+to reset: Google says who you are, the map says what that address may see, and the map is
+re-read on **every** request, so removing someone takes effect at once rather than
+whenever their cookie happens to lapse.
+
+The link wins where it is valid. A funda team link opened by the owner still shows Funda
+and nothing else — the link is a statement about the view, not about the person, and two
+credentials on one request should narrow, never widen.
+
+`full` — the right to force a Meta roster re-read or a longevity recompute, the two things
+that make the app SPEND — follows seeing every brand, exactly as it does for links. A
+one-brand viewer is read-only.
+
+It ships dark: with no `GOOGLE_AUTH_CLIENT_ID` none of it is reachable and the app is what
+it was. Switching it on is three env vars and setting `ROOT_OPEN=0`; switching it off is
+unsetting them. No deploy either way — except that on this service an env change does not
+redeploy on its own, so one has to be triggered.
