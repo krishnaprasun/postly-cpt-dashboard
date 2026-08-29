@@ -128,9 +128,11 @@ def brand_block(f, prev):
             + (f" (target {rs0(tgt)}){mark}" if tgt else ""))
 
     bits = []
-    if prev:
-        d_sp = f["spend"] - prev.get("spend", 0)
-        d_tr = f["trials"] - prev.get("trials", 0)
+    d_sp = f["spend"] - prev.get("spend", 0) if prev else 0
+    d_tr = f["trials"] - prev.get("trials", 0) if prev else 0
+    # "+₹0, +0 trials" is not a change, it is the same message twice -- which is what two
+    # pushes inside one cache window produce. Say nothing rather than say nothing happened.
+    if prev and (abs(d_sp) >= 1 or abs(d_tr) >= 1):
         hour = f"{signed(d_sp, rs)}, {signed(d_tr, num)} {f['event'].lower()}"
         # CPT of the hour just gone, which is the number that actually moves first.
         if d_tr >= 1 and d_sp > 0:
