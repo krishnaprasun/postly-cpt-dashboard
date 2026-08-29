@@ -208,6 +208,12 @@ def brand_block(f, prev):
             + f" · {'—' if t['trials'] is None else num(t['trials'])} {ev.lower()}"
             + ("" if whole else "  _(Meta only)_"))
 
+    # The blended change belongs on the headline: the two channel lines each carry their
+    # own, and reading the total's movement should not mean adding them up by eye.
+    td = delta(t, prev if whole else prev.get("meta"))
+    if td:
+        head += f" · *{td}*"
+
     lines = [head,
              chan_line("Meta", f["meta"], prev.get("meta"), ev, f["target"]),
              chan_line("Google", f["google"], prev.get("google"), ev, f["target"])]
