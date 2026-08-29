@@ -338,18 +338,47 @@ def resolve_range(rng, since, until):
 # A page, three routes and no user table. Google says who you are; GOOGLE_AUTH_MAP says
 # which brands that address may see. Switched on by setting the client id and secret —
 # with them unset, none of this is reachable and the app is exactly what it was.
-SIGNIN_CSS = (
-    "body{font:15px/1.6 -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;"
-    "background:#FDFCF7;color:#1A1C2E;display:grid;place-items:center;min-height:100vh;"
-    "margin:0}.card{max-width:390px;padding:0 24px;text-align:center}"
-    "h1{font-size:19px;margin:0 0 6px}p{color:#787E91;margin:0 0 22px}"
-    "a.g{display:inline-flex;align-items:center;gap:10px;text-decoration:none;"
-    "background:#fff;color:#1A1C2E;border:1px solid #DADCE0;border-radius:10px;"
-    "padding:11px 18px;font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.05)}"
-    "a.g:hover{background:#F7F8FA}"
-    ".err{color:#B3261E;background:#FCEEEC;border-radius:8px;padding:10px 14px;"
-    "margin:0 0 18px;font-size:13.5px;text-align:left}"
-    ".foot{color:#A2A7B6;font-size:12.5px;margin:20px 0 0}")
+# The sign-in page is the whole product for anyone who has not signed in yet — a stranger,
+# a colleague on their first day, or you on a phone. It gets a card, a mark and the
+# dashboard's own palette rather than three lines of text adrift in the viewport.
+SIGNIN_CSS = """
+:root{--ink:#1A1C2E;--muted:#787E91;--faint:#A2A7B6;--line:#E6E3DA;--white:#fff;
+  --bg:#FDFCF7;--panel:#F6F4EC;--accent:#20A75D;--accent-dk:#127A42;--accent-lt:#EAF7F0;
+  --bad:#B3261E;--badlt:#FCEEEC}
+@media(prefers-color-scheme:dark){:root{--ink:#EDEEF2;--muted:#9AA0B0;--faint:#6E7486;
+  --line:#2C2F3E;--white:#1B1D28;--bg:#14151D;--panel:#22242F;--accent-lt:#12301F;
+  --badlt:#3A1A17;--accent-dk:#5FD394}}
+*{box-sizing:border-box}
+body{font:15px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);
+  color:var(--ink);margin:0;min-height:100vh;display:grid;place-items:center;padding:24px;
+  -webkit-font-smoothing:antialiased}
+.card{width:100%;max-width:372px;background:var(--white);border:1px solid var(--line);
+  border-radius:16px;padding:34px 30px 26px;text-align:center;
+  box-shadow:0 1px 2px rgba(26,28,46,.04),0 14px 40px -18px rgba(26,28,46,.16)}
+/* colour, not a literal white: in dark mode --ink IS the light colour, so bars painted
+   #fff sat on a near-white square and vanished. currentColor makes the pair invert
+   together. */
+.mark{width:44px;height:44px;border-radius:12px;background:var(--ink);color:var(--white);
+  display:grid;place-items:center;margin:0 auto 16px}
+h1{font-size:18px;margin:0 0 5px;letter-spacing:-.01em}
+.sub{color:var(--muted);margin:0 0 22px;font-size:13.5px}
+.note{border-radius:10px;padding:9px 13px;margin:0 0 18px;font-size:13px;text-align:left;
+  line-height:1.5}
+.note.err{color:var(--bad);background:var(--badlt)}
+.note.ok{color:var(--accent-dk);background:var(--accent-lt)}
+.note.info{color:var(--muted);background:var(--panel)}
+a.g{display:flex;align-items:center;justify-content:center;gap:10px;text-decoration:none;
+  background:var(--white);color:var(--ink);border:1px solid var(--line);border-radius:11px;
+  padding:12px 18px;font-weight:600;font-size:14.5px;transition:.14s}
+a.g:hover{border-color:var(--accent);background:var(--accent-lt);color:var(--accent-dk)}
+.foot{color:var(--faint);font-size:12px;margin:20px 0 0;line-height:1.55}
+"""
+# A rising bar chart, drawn rather than picked from a brand: this tool serves three of
+# them and wearing one brand's logo on the way in would name the wrong owner.
+MARK = ('<svg width="21" height="21" viewBox="0 0 24 24" aria-hidden="true" fill="none">'
+        '<rect x="3" y="13" width="4" height="8" rx="1.4" fill="currentColor" opacity=".5"/>'
+        '<rect x="10" y="8" width="4" height="13" rx="1.4" fill="currentColor" opacity=".75"/>'
+        '<rect x="17" y="3" width="4" height="18" rx="1.4" fill="currentColor"/></svg>')
 # Google's mark, inline: the CSP on this app allows no external images, and a sign-in
 # button with a broken icon looks like a phishing page.
 GOOGLE_G = (
@@ -378,21 +407,30 @@ def _safe_next(path):
     return p
 
 
-def _signin_page(error="", status=200):
+def _signin_page(note="", status=200, kind="err"):
+    """The way in. `kind` separates a refusal from a plain statement of fact — signing
+    out is not an error, and colouring it like one tells people something went wrong."""
     doms = GA.domains()
-    who = (f"Use your <b>{escape(doms[0])}</b> account."
-           if len(doms) == 1 else "Use your work Google account.")
+    who = (f"Sign in with your <b>{escape(doms[0])}</b> account."
+           if len(doms) == 1 else "Sign in with your work Google account.")
     login = url_for("auth_login",
                     next=_safe_next(request.args.get("next")
                                     or request.full_path.rstrip("?")))
     return Response(
-        "<!doctype html><meta charset=utf-8><title>Ads Performance</title>"
+        "<!doctype html><html lang=en><meta charset=utf-8>"
+        "<title>Sign in \u00b7 Ads Performance</title>"
+        '<meta name="viewport" content="width=device-width,initial-scale=1">'
+        '<meta name="robots" content="noindex,nofollow">'
         f"<style>{SIGNIN_CSS}</style><div class=card>"
+        f'<div class="mark">{MARK}</div>'
         "<h1>Ads Performance</h1>"
-        f"<p>{who}</p>"
-        + (f'<div class="err">{escape(error)}</div>' if error else "")
+        f'<p class="sub">{who}</p>'
+        + (f'<div class="note {kind}">{escape(note)}</div>' if note else "")
         + f'<a class="g" href="{escape(login)}">{GOOGLE_G}Sign in with Google</a>'
-        + '<p class="foot">Or open your team\u2019s own dashboard link.</p></div>',
+        # Team links are retired, so offering one would send people looking for something
+        # that no longer exists. What is true now: an admin has to let you in.
+        + '<p class="foot">Access is by invitation. If you cannot get in, ask whoever '
+          'runs this dashboard to add you.</p></div>',
         status, mimetype="text/html")
 
 
@@ -413,7 +451,7 @@ def auth_callback():
     if not GA.on():
         return redirect("/")
     if request.args.get("error"):
-        return _signin_page("Sign-in was cancelled.", 200)
+        return _signin_page("Sign-in was cancelled.", 200, kind="info")
     want = session.pop("g_state", None)
     if not want or request.args.get("state") != want:
         # Either a stale tab or a forged callback, and the honest answer to both is to
@@ -432,7 +470,7 @@ def auth_callback():
 def auth_logout():
     for k in ("g_email", "g_at", "g_state", "g_next"):
         session.pop(k, None)
-    return _signin_page("You are signed out.")
+    return _signin_page("You are signed out.", kind="info")
 
 
 @app.route("/auth/whoami")
@@ -504,7 +542,8 @@ def api_users_save():
 def admin_users():
     me = _me()
     if not me:
-        return _signin_page("Sign in to manage access.") if GA.on() else redirect("/")
+        return (_signin_page("Sign in to manage access.", kind="info")
+                if GA.on() else redirect("/"))
     if me.get("role") != "super":
         return Response("<!doctype html><meta charset=utf-8><title>Access</title>"
                         f"<style>{SIGNIN_CSS}</style><div class=card><h1>Access</h1>"
