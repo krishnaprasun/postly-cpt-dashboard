@@ -165,13 +165,23 @@ def _allowed(key):
 
 
 def _caps(key):
-    """What this request may see: the link it carries, or failing that whoever is signed
-    in. The link wins when it is valid, so a team link opened by someone signed in as the
-    owner still shows that team's brand and nothing more."""
-    caps = C.link_caps(key)
-    if caps is None:
-        caps = GA.session_caps(session)
-    return caps
+    """What this request may see: the link it carries, or failing that whoever is signed in.
+
+    An EXPLICIT link wins over the session — a team link opened by someone signed in as
+    the owner still shows that team's brand and nothing more, because the link is a
+    statement about the view and two credentials on one request should narrow, never widen.
+
+    The empty key is not such a statement. Under ROOT_OPEN it is merely the door being
+    unlocked, and letting it win made a signed-in super admin read as an anonymous
+    visitor: no name in the header, and no Access link to the page they are the only
+    person allowed to open.
+    """
+    key = (key or "").strip()
+    if key:
+        caps = C.link_caps(key)
+        if caps is not None:
+            return caps
+    return GA.session_caps(session) or C.link_caps(key)
 
 
 def _gate(key, brand):
