@@ -178,20 +178,20 @@ def _caps(key):
     person allowed to open.
     """
     key = (key or "").strip()
-    if key:
+    # Where sign-in is configured, "no links are configured" means links are RETIRED —
+    # never "open to everyone", which is what config.link_caps answers and how this app
+    # behaved before links existed. It answers it for ANY key, so this check has to come
+    # BEFORE link_caps is consulted at all: guarding only the empty-key path left
+    # /b/<anything> serving the whole dashboard, which is exactly what happened.
+    links_dead = GA.on() and not C.LINKS_ON
+    if key and not links_dead:
         caps = C.link_caps(key)
         if caps is not None:
             return caps
     signed = GA.session_caps(session)
     if signed:
         return signed
-    # With sign-in configured, "no links are set" must NOT mean "open to everyone".
-    # config.link_caps says exactly that — it is how this app behaved before links
-    # existed — so retiring the last team link would silently unlock the dashboard for
-    # the whole internet. Deleting an env var should never widen access.
-    if GA.on() and not C.LINKS_ON:
-        return None
-    return C.link_caps(key)
+    return None if links_dead else C.link_caps(key)
 
 
 def _gate(key, brand):
