@@ -27,6 +27,7 @@ from flask import (Flask, Response, jsonify, redirect, render_template,
 import chat as CH
 import config as C
 import gauth as GA
+import mailer as M
 import users as U
 import history as H
 import postly_cpt as P
@@ -492,6 +493,42 @@ def api_users_save():
     return jsonify({"saved": True, "users": fresh, "store_ok": store_ok})
 
 
+@app.route("/api/users/invite", methods=["POST"])
+def api_users_invite():
+    """Email one person their invitation. A deliberate press, never a side effect.
+
+    The address must already be on the list: an invitation to a dashboard that will
+    refuse you is worse than no invitation, and this is the one check that guarantees the
+    two agree.
+    """
+    me, err = _require_super()
+    if err:
+        return err
+    email = ((request.get_json(silent=True) or {}).get("email") or "").strip().lower()
+    caps = U.caps_for(email)
+    if not caps:
+        return jsonify({"error": "Add and save that address first — as it stands, the "
+                                 "dashboard would refuse it."}), 400
+    if not M.ready():
+        return jsonify({"error": "No mail server is configured."}), 503
+    subject, html, text = M.build(email, caps["role"], caps["brands"], inviter=me["email"])
+    ok, detail = M.send(email, subject, html, text, reply_to=me["email"])
+    return (jsonify({"sent": True, "email": email}) if ok
+            else (jsonify({"error": detail}), 502))
+
+
+@app.route("/api/users/preview")
+def api_users_preview():
+    """The invitation as it will arrive, so nobody has to send one to see it."""
+    me, err = _require_super()
+    if err:
+        return err
+    email = (request.args.get("email") or me["email"]).strip().lower()
+    caps = U.caps_for(email) or {"role": "viewer", "brands": [C.DEFAULT_BRAND]}
+    _s, html, _t = M.build(email, caps["role"], caps["brands"], inviter=me["email"])
+    return Response(html, mimetype="text/html")
+
+
 @app.route("/admin/users")
 def admin_users():
     me = _me()
@@ -504,6 +541,8 @@ def admin_users():
                         "<p class=foot><a href='/'>Back to the dashboard</a></p></div>",
                         403, mimetype="text/html")
     return render_template("users.html", me=me["email"],
+                           can_mail=M.ready(),
+                           dash_url=M.dash_url(),
                            roles=[{"key": k, "label": U.ROLE_LABELS[k]} for k in U.ROLES],
                            brands=[{"key": k, "label": C.BRANDS[k]["label"]}
                                    for k in C.BRANDS])

@@ -63,6 +63,9 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
 .btn.go{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.go:hover:not(:disabled){background:var(--accent-dk);border-color:var(--accent-dk)}
 .btn:disabled{opacity:.4;cursor:default}
+.btn.inv{padding:5px 11px;font-size:12.5px;font-weight:600;color:var(--muted)}
+.btn.inv:hover:not(:disabled){color:var(--accent-dk);border-color:var(--accent);
+  background:var(--accent-lt)}
 .btn.rm{border:0;background:none;color:var(--faint);padding:5px 8px;font-size:17px;
   line-height:1;border-radius:7px}
 .btn.rm:hover{color:var(--bad);background:var(--badlt)}
@@ -143,13 +146,23 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
       nothing else — no export, no refresh.</span></div>
   </div>
 
-  <p class="foot">Changes take effect within a minute, including removals. A super admin
+  <p class="foot">
+    {% if can_mail %}<b>Invite</b> emails that person a branded note with their role, their
+    brands and the address they must sign in with —
+    <a class="lnk" href="/api/users/preview" target="_blank"
+       style="margin:0">see what it looks like</a>. It only appears once they are saved,
+    because an invitation to a dashboard that would refuse them is worse than none.
+    {% else %}<b>Invite</b> opens a draft in your own mail client — no mail server is
+    configured, so nothing is sent from here.
+    {% endif %}<br>
+    Changes take effect within a minute, including removals. A super admin
     set in the environment is marked <b>fixed</b> and cannot be changed here — that is
     what stops this page from locking everyone out of the dashboard.</p>
 </div>
 
 <script>
 const BRANDS = {{ brands|tojson }}, ROLES = {{ roles|tojson }}, ME = {{ me|tojson }};
+const CAN_MAIL = {{ can_mail|tojson }}, DASH_URL = {{ dash_url|tojson }};
 let USERS = [], LOADED = false;
 
 const esc = s => String(s == null ? '' : s).replace(/[&<>"]/g,
@@ -204,7 +217,10 @@ function draw(){
       <td>${brandCell(u, i)}</td>
       <td>${roleCell(u, i)}</td>
       <td>${when(u)}</td>
-      <td style="text-align:right">${u.bootstrap ? ''
+      <td style="text-align:right;white-space:nowrap">${
+        u.at ? `<button class="btn inv" data-inv="${i}"
+                  title="Email ${esc(u.email)} their invitation">Invite</button>` : ''}${
+        u.bootstrap ? ''
         : `<button class="btn rm" data-rm="${i}" title="Remove ${esc(u.email)}">×</button>`}</td>
     </tr>`).join('') : '<tr><td colspan="5" class="muted">Nobody yet.</td></tr>';
 }
@@ -226,12 +242,47 @@ rows.addEventListener('change', e => {
   cb.parentElement.classList.toggle('on', cb.checked);
   mark(true);
 });
-rows.addEventListener('click', e => {
-  const b = e.target.closest('button[data-rm]');
-  if(!b) return;
-  USERS.splice(+b.dataset.rm, 1);
-  draw(); mark(true);
+rows.addEventListener('click', async e => {
+  const rm = e.target.closest('button[data-rm]');
+  if(rm){ USERS.splice(+rm.dataset.rm, 1); draw(); mark(true); return; }
+  const inv = e.target.closest('button[data-inv]');
+  if(!inv) return;
+  const u = USERS[+inv.dataset.inv];
+  /* Only what is SAVED can be invited: the dashboard would refuse an address that only
+     exists in this page's memory, and an invitation to a door that will not open is
+     worse than none. */
+  if(document.getElementById('save').disabled === false)
+    return msg('Save your changes first, then send the invitation.', 'err');
+  if(!CAN_MAIL) return mailtoInvite(u);
+  inv.disabled = true; inv.textContent = 'Sending…';
+  try{
+    const r = await fetch('/api/users/invite', {method:'POST',
+      headers:{'Content-Type':'application/json'}, body: JSON.stringify({email:u.email})});
+    const j = await r.json();
+    if(r.ok){ inv.textContent = 'Sent ✓'; msg('Invitation sent to ' + u.email + '.', 'ok'); }
+    else { inv.disabled = false; inv.textContent = 'Invite'; msg(j.error || 'Could not send.', 'err'); }
+  }catch(_){
+    inv.disabled = false; inv.textContent = 'Invite';
+    msg('Could not reach the server.', 'err');
+  }
 });
+
+/* No mail server: hand the admin a draft in their own client rather than a dead button.
+   These arguably read better coming from a person anyway. */
+function mailtoInvite(u){
+  const names = u.brands.map(b => (BRANDS.find(x => x.key === b) || {}).label || b);
+  const role = u.role === 'super' ? 'full access to every brand'
+    : u.role === 'member' ? 'access, including CSV export' : 'view-only access';
+  const body =
+    `You now have ${role} to our Ads Performance dashboard (${names.join(', ')}).\n\n`
+    + `${DASH_URL}/auth/login\n\n`
+    + `Sign in with this Google account: ${u.email}\nNo other account will work.\n\n`
+    + `The first time, Google may warn the app is not verified — it is our own internal `
+    + `tool. Choose Advanced, then Go to Ads Performance.\n`;
+  window.location.href = 'mailto:' + encodeURIComponent(u.email)
+    + '?subject=' + encodeURIComponent('You have access to Ads Performance')
+    + '&body=' + encodeURIComponent(body);
+}
 
 const nb = document.getElementById('newBrands');
 nb.innerHTML = BRANDS.map(b =>
