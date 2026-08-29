@@ -974,7 +974,14 @@ def api_chat_hourly():
     rows, failed = [], []
     for b in brands:
         try:
-            rows.append(CH.figures(b, get_data(today, today, b)))
+            # Google is its own pull, as it is for the page — and its own failure. A
+            # Google outage must cost the message its Google line, never the whole push.
+            try:
+                goog = P.google_window(b, today, today)
+            except Exception:
+                traceback.print_exc()
+                goog = None
+            rows.append(CH.figures(b, get_data(today, today, b), goog))
         except Exception as e:
             traceback.print_exc()
             failed.append({"brand": b, "error": str(e)[:200]})
@@ -982,8 +989,9 @@ def api_chat_hourly():
         return jsonify({"sent": False, "error": "no brand produced figures",
                         "failed": failed}), 502
 
+    pts = CH.day_points(today)
     when = datetime.now(P.IST).strftime("%d %b, %-I:%M %p")
-    text = CH.compose(rows, CH.last_point(today), when,
+    text = CH.compose(rows, CH.last_point(pts), when, points=pts,
                       link=os.environ.get("CHAT_LINK", "").strip() or None)
     # A brand that failed is said out loud rather than silently missing: a shorter
     # message that looks complete is the one way this can mislead.

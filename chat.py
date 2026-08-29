@@ -63,12 +63,17 @@ def signed(v, fmt):
 
 
 # ---- one brand --------------------------------------------------------------
-def figures(brand, data):
-    """The numbers the message needs, pulled out of a built payload.
+def figures(brand, data, goog=None):
+    """The numbers the message needs, split by channel, out of the built payloads.
 
-    Trials are the pro-rata Meta total -- the same figure the summary tiles show, which
-    is measured Meta plus Meta's share of the trials Branch could not name. Dividing
-    spend by the row sum instead is what made Funda read three times its true CPT.
+    Meta's trials are the PRO-RATA total -- measured Meta plus Meta's share of the trials
+    Branch could not name -- because that is what the dashboard's own summary shows, and
+    dividing spend by the row sum instead is what once made Funda read three times its
+    true CPT. Google's are its window total, Branch-attributed, exactly as the Google tab
+    reads them. Adding those two is the same blend the Both-channels view does.
+
+    `goog` may be None, or may carry no usable trial count. That is UNKNOWN, never zero:
+    a blend that quietly dropped Google's side would read as a real, smaller number.
     """
     B = C.brand(brand)
     ev = (data.get("events") or ["t101"])[0]
@@ -77,14 +82,35 @@ def figures(brand, data):
     comb = data.get("combined") or {}
     inst = data.get("installs") or {}
 
-    trials = pr.get("meta")
-    if trials is None:
-        trials = ch.get("meta") or 0.0
-    installs = inst.get("meta")
-    if installs is None:
-        installs = comb.get("inst") or 0.0
-    spend = float(comb.get("spend") or 0.0)
-    budget = float(comb.get("budget") or 0.0)
+    m_tr = pr.get("meta")
+    if m_tr is None:
+        m_tr = ch.get("meta") or 0.0
+    m_in = inst.get("meta")
+    if m_in is None:
+        m_in = comb.get("inst") or 0.0
+    meta = {"spend": float(comb.get("spend") or 0.0),
+            "trials": None if data.get("trials_error") else float(m_tr or 0.0),
+            "installs": float(m_in or 0.0),
+            "budget": float(comb.get("budget") or 0.0),
+            "adsets": int(comb.get("active_adsets") or 0)}
+
+    # Same shape as the page's googTotals(): Branch refusing is not zero trials, and
+    # `trial_days` counting nought means the number never arrived.
+    g = goog or {}
+    gt = g.get("totals") or {}
+    g_known = bool(g) and not g.get("trials_error") and (g.get("trial_days") or 0) > 0
+    google = {"spend": float(gt.get("spend") or 0.0) if g.get("spend_ok") else None,
+              "trials": float(gt.get(ev) or 0.0) if g_known else None,
+              "installs": float(gt.get("inst") or 0.0) if g_known else None,
+              "why": g.get("trials_error") or g.get("spend_error") or
+                     ("" if g else "Google figures did not load")}
+
+    def add(a, b):
+        return None if (a is None or b is None) else a + b
+
+    total = {"spend": add(meta["spend"], google["spend"]),
+             "trials": add(meta["trials"], google["trials"]),
+             "installs": add(meta["installs"], google["installs"])}
 
     # An account holding real budget and spending essentially nothing is the failure this
     # update exists to catch: on 28 Aug three Funda accounts went to near zero against
@@ -97,11 +123,7 @@ def figures(brand, data):
         "brand": brand,
         "label": data.get("brand_label") or brand,
         "event": (data.get("event_labels") or {}).get(ev, "Trials"),
-        "spend": spend,
-        "trials": float(trials or 0.0),
-        "installs": float(installs or 0.0),
-        "budget": budget,
-        "adsets": int(comb.get("active_adsets") or 0),
+        "meta": meta, "google": google, "total": total,
         "target": B.get("cpt_target"),
         "trials_error": data.get("trials_error"),
         "degraded": data.get("degraded") or [],
@@ -109,46 +131,93 @@ def figures(brand, data):
         "budgets_known": data.get("budgets_known", True),
         "stalled": [{"name": a.get("name"), "spend": float(a.get("spend") or 0),
                      "budget": float(a.get("budget") or 0)} for a in stalled],
-        "as_of": data.get("meta_as_of") or "",
     }
 
 
-def brand_block(f, prev):
-    """One brand's two lines, plus its own warnings."""
-    cpt = f["spend"] / f["trials"] if f["trials"] else 0
-    cpi = f["spend"] / f["installs"] if f["installs"] else 0
-    tgt = f["target"]
-    # Green under target, amber up to half again, red beyond. Colour is a nudge, not a
-    # verdict -- early in the day a thin trial count moves CPT around on its own.
-    mark = "" if not tgt or not cpt else (
-        " \U0001f7e2" if cpt <= tgt else " \U0001f7e1" if cpt <= 1.5 * tgt
-        else " \U0001f534")
-    head = (f"*{f['label']}* — {rs(f['spend'])} · "
-            f"{num(f['trials'])} {f['event'].lower()} · CPT *{rs0(cpt)}*"
-            + (f" (target {rs0(tgt)}){mark}" if tgt else ""))
+def cpt(spend, trials):
+    """Cost per trial, or None when either side is unknown or there is nothing to divide."""
+    if spend is None or not trials:
+        return None
+    return spend / trials
 
-    bits = []
-    d_sp = f["spend"] - prev.get("spend", 0) if prev else 0
-    d_tr = f["trials"] - prev.get("trials", 0) if prev else 0
-    # "+₹0, +0 trials" is not a change, it is the same message twice -- which is what two
-    # pushes inside one cache window produce. Say nothing rather than say nothing happened.
-    if prev and (abs(d_sp) >= 1 or abs(d_tr) >= 1):
-        hour = f"{signed(d_sp, rs)}, {signed(d_tr, num)} {f['event'].lower()}"
-        # CPT of the hour just gone, which is the number that actually moves first.
-        if d_tr >= 1 and d_sp > 0:
-            hour += f" — CPT {rs0(d_sp/d_tr)} this hour"
-        bits.append(hour)
-    bits.append(f"{num(f['installs'])} installs, CPI {rs0(cpi)}")
-    if f["budget"] and f["budgets_known"]:
-        bits.append(f"{100*f['spend']/f['budget']:.0f}% of {rs(f['budget'])} budget")
-    bits.append(f"{f['adsets']:,} live ad sets")
-    lines = [head, "   " + " · ".join(bits)]
+
+def mark(v, target):
+    """Green under target, amber to half again, red beyond. A nudge, not a verdict --
+    early in the day a thin trial count moves CPT around on its own."""
+    if not target or not v:
+        return ""
+    return (" \U0001f7e2" if v <= target
+            else " \U0001f7e1" if v <= 1.5 * target else " \U0001f534")
+
+
+def delta(now, was):
+    """"+₹48.0k, +131 trials" for the hour just gone, or "" when there is no hour to
+    compare or nothing moved in it. Two pushes inside one cache window produce identical
+    numbers, and printing that anyway reads as an hour in which nothing happened rather
+    than an hour that was not measured."""
+    if not was or now.get("spend") is None or now.get("trials") is None:
+        return ""
+    d_sp = now["spend"] - (was.get("spend") or 0)
+    d_tr = now["trials"] - (was.get("trials") or 0)
+    if abs(d_sp) < 1 and abs(d_tr) < 1:
+        return ""
+    out = f"{signed(d_sp, rs)}, {signed(d_tr, num)} this hour"
+    if d_tr >= 1 and d_sp > 0:
+        out += f" at {rs0(d_sp/d_tr)}"
+    return out
+
+
+def chan_line(name, cur, was, event, target=None):
+    """One channel's line. Unknown prints as a dash and says why -- never as a zero."""
+    c = cpt(cur["spend"], cur["trials"])
+    sp = "—" if cur["spend"] is None else rs(cur["spend"])
+    tr = "—" if cur["trials"] is None else num(cur["trials"])
+    bits = [f"*{name}* {sp} · {tr} {event.lower()}",
+            f"CPT {rs0(c) if c else '—'}{mark(c, target)}"]
+    d = delta(cur, was)
+    if d:
+        bits.append(d)
+    return "   " + " · ".join(bits)
+
+
+def brand_block(f, prev):
+    """One brand: the blended headline, then Meta and Google under it."""
+    prev = prev or {}
+    ev = f["event"]
+    t = f["total"]
+    # A channel that did not answer makes the BLEND unknown, not smaller. Rather than
+    # print a headline of dashes, fall back to the channel that did answer and say so --
+    # a Google outage should cost the message its Google line, not its headline.
+    whole = t["spend"] is not None and t["trials"] is not None
+    t = t if whole else f["meta"]
+    tc = cpt(t["spend"], t["trials"])
+    head = (f"*{f['label']}* — CPT *{rs0(tc) if tc else '—'}*"
+            + (f" vs {rs0(f['target'])}{mark(tc, f['target'])}" if f["target"] else "")
+            + f" · {'—' if t['spend'] is None else rs(t['spend'])}"
+            + f" · {'—' if t['trials'] is None else num(t['trials'])} {ev.lower()}"
+            + ("" if whole else "  _(Meta only)_"))
+
+    lines = [head,
+             chan_line("Meta", f["meta"], prev.get("meta"), ev, f["target"]),
+             chan_line("Google", f["google"], prev.get("google"), ev, f["target"])]
+
+    tail = []
+    if f["meta"]["budget"] and f["budgets_known"]:
+        tail.append(f"{100*f['meta']['spend']/f['meta']['budget']:.0f}%"
+                    f" of {rs(f['meta']['budget'])} Meta budget")
+    tail.append(f"{f['meta']['adsets']:,} live ad sets")
+    ins = t["installs"]
+    tail.append(f"{'—' if ins is None else num(ins)} installs"
+                + ("" if whole else ", Meta"))
+    lines.append("   _" + " · ".join(tail) + "_")
 
     for a in f["stalled"]:
         lines.append(f"   ⚠️ *{a['name']}* has spent {rs(a['spend'])} against "
                      f"{rs(a['budget'])} of live budget")
     if f["trials_error"]:
-        lines.append(f"   ⚠️ trial counts unavailable — {f['trials_error']}")
+        lines.append(f"   ⚠️ Meta trial counts unavailable — {f['trials_error']}")
+    if f["google"]["trials"] is None and f["google"]["why"]:
+        lines.append(f"   ⚠️ Google not counted — {f['google']['why']}")
     if f["degraded"]:
         lines.append("   ⚠️ partial data: " + ", ".join(str(d) for d in f["degraded"]))
     if f["throttled"]:
@@ -156,31 +225,88 @@ def brand_block(f, prev):
     return "\n".join(lines)
 
 
-def compose(rows, prev_by_brand, when, link=None):
+def hour_strip(points, rows):
+    """The day so far, hour by hour, as the gap between consecutive pushes.
+
+    Stored points are cumulative today-so-far, so an hour is a subtraction. The first
+    point of the day has nothing before it -- it covers everything since midnight, which
+    is not an hour and is not shown as one.
+    """
+    if len(points) < 2:
+        return ""
+    want = [f["brand"] for f in rows]
+
+    def tot(p, k):
+        s = 0.0
+        for b in want:
+            v = ((p.get("brands") or {}).get(b) or {}).get(k)
+            if v is None:
+                return None
+            s += v
+        return s
+
+    out = []
+    for a, b in zip(points, points[1:]):
+        sp, tr = tot(a, "spend"), tot(b, "spend")
+        ta, tb = tot(a, "trials"), tot(b, "trials")
+        if sp is None or tr is None or ta is None or tb is None:
+            continue
+        d_sp, d_tr = tr - sp, tb - ta
+        if d_sp < 1 and d_tr < 1:
+            continue
+        out.append(f"{b.get('at', '')} {rs(d_sp)}·{num(d_tr)}")
+    if not out:
+        return ""
+    # Six is a screenful on a phone; the rest of the day is on the dashboard.
+    return ("_Hour by hour, all brands, at the hour it ended (spend · trials):_ "
+            + "  ".join(out[-6:]))
+
+
+def compose(rows, prev_by_brand, when, points=None, link=None):
     """The whole message. `rows` are figures() dicts, in the order they should read."""
     head = f"*Ads — today so far* · {when} IST"
-    if prev_by_brand:
-        head += "  _(change is since the last update)_"
-    # A blank line between brands: on a phone these blocks are three or four wrapped
-    # lines each, and run together they read as one paragraph about nothing.
+    # A blank line between brands: on a phone these blocks are five or six wrapped lines
+    # each, and run together they read as one paragraph about nothing.
     body = "\n\n".join(brand_block(f, prev_by_brand.get(f["brand"])) for f in rows)
     out = [head, "", body]
+    strip = hour_strip(points or [], rows)
+    if strip:
+        out += ["", strip]
     if link:
         out += ["", f"<{link}|Open the dashboard>"]
     return "\n".join(out)
 
 
-# ---- state ------------------------------------------------------------------
-def last_point(day):
-    """The most recent push's numbers, {brand: {...}}, or {} if there is none today."""
+# ---- state ----------------------------------------------------------------
+def day_points(day):
+    """Today's pushes, oldest first. Each is cumulative today-so-far, not an hour."""
     if not H.available():
-        return {}
+        return []
     try:
         got, ok = H.get_day_raw(STATE_NS, day)
     except Exception:
-        return {}
-    pts = (got or {}).get("points") or [] if ok else []
-    return (pts[-1] or {}).get("brands") or {} if pts else {}
+        return []
+    return ((got or {}).get("points") or []) if ok else []
+
+
+def last_point(pts):
+    """The most recent push's numbers, {brand: {meta:{...}, google:{...}}}, or {}."""
+    return ((pts[-1] or {}).get("brands") or {}) if pts else {}
+
+
+def _point(f):
+    """What one brand contributes to a stored point. None stays None -- a channel that
+    did not answer must not be recorded as a zero and then subtracted from the next
+    hour as if it had."""
+    def side(d):
+        return {k: (None if d.get(k) is None else round(d[k], 2))
+                for k in ("spend", "trials", "installs")}
+    return {"meta": side(f["meta"]), "google": side(f["google"]),
+            # Kept flat as well so the hour strip can sum a brand without knowing which
+            # channels were readable at the time.
+            "spend": None if f["total"]["spend"] is None else round(f["total"]["spend"], 2),
+            "trials": None if f["total"]["trials"] is None
+                      else round(f["total"]["trials"], 1)}
 
 
 def record(day, when, rows):
@@ -191,13 +317,9 @@ def record(day, when, rows):
         got, ok = H.get_day_raw(STATE_NS, day)
         doc = got if (ok and isinstance(got, dict)) else {}
         pts = doc.get("points") or []
-        pts.append({"at": when,
-                    "brands": {f["brand"]: {"spend": round(f["spend"], 2),
-                                            "trials": round(f["trials"], 1),
-                                            "installs": round(f["installs"], 1)}
-                               for f in rows}})
-        # A day is 24 pushes; the cap is only there so a runaway scheduler cannot grow
-        # one document without bound.
+        pts.append({"at": when, "brands": {f["brand"]: _point(f) for f in rows}})
+        # A day is at most 24 pushes; the cap is only there so a runaway scheduler cannot
+        # grow one document without bound.
         doc["points"] = pts[-64:]
         return bool(H.put_agg(STATE_NS, day, doc))
     except Exception:
