@@ -355,12 +355,27 @@ GOOGLE_G = (
     '-6.4 0-11.8-3.7-13.7-9.8l-7.8 6.1C6.4 42.6 14.6 48 24 48z"/></svg>')
 
 
+def _safe_next(path):
+    """Where to land after signing in. A path on this site, and never an /auth/ one.
+
+    The sign-in page remembers where you were so it can send you back — and after a
+    logout that was /auth/logout, so signing in redirected straight back into logging
+    out. It looked like sign-in was broken; it was sign-in working perfectly and being
+    aimed at the door.
+    """
+    p = (path or "/").strip()
+    if not p.startswith("/") or p.startswith("//") or p.startswith("/auth/"):
+        return "/"
+    return p
+
+
 def _signin_page(error="", status=200):
     doms = GA.domains()
     who = (f"Use your <b>{escape(doms[0])}</b> account."
            if len(doms) == 1 else "Use your work Google account.")
-    nxt = request.args.get("next") or request.full_path.rstrip("?")
-    login = url_for("auth_login", next=nxt if nxt.startswith("/") else "/")
+    login = url_for("auth_login",
+                    next=_safe_next(request.args.get("next")
+                                    or request.full_path.rstrip("?")))
     return Response(
         "<!doctype html><meta charset=utf-8><title>Ads Performance</title>"
         f"<style>{SIGNIN_CSS}</style><div class=card>"
@@ -378,10 +393,9 @@ def auth_login():
         return redirect("/")
     state = GA.new_state()
     session["g_state"] = state
-    nxt = request.args.get("next", "/")
-    # Only a path on this site. An open redirect on a sign-in route is how a phishing
-    # link borrows someone else's domain.
-    session["g_next"] = nxt if nxt.startswith("/") and not nxt.startswith("//") else "/"
+    # Only a path on this site, and never an /auth/ one. An open redirect on a sign-in
+    # route is how a phishing link borrows someone else's domain.
+    session["g_next"] = _safe_next(request.args.get("next"))
     return redirect(GA.start(request, state))
 
 
@@ -402,7 +416,7 @@ def auth_callback():
     session.permanent = True
     session["g_email"] = caps["email"]
     session["g_at"] = int(time.time())
-    return redirect(session.pop("g_next", "/") or "/")
+    return redirect(_safe_next(session.pop("g_next", "/")))
 
 
 @app.route("/auth/logout")
