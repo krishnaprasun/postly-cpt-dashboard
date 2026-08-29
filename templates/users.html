@@ -137,7 +137,7 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
   </div>
 
   <div class="legend">
-    <div class="leg"><b>Super admin</b><span>Every brand, manages this list, and can force
+    <div class="leg"><b>Admin</b><span>Every brand, manages this list, and can force
       a Meta re-read — the one action here that spends the request budget everyone
       shares.</span></div>
     <div class="leg"><b>Member</b><span>The brands ticked for them, and can download the
@@ -155,7 +155,7 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
     {% else %}<b>Invite</b> opens a draft in your own mail client — no mail server is
     configured, so nothing is sent from here.
     {% endif %}<br>
-    Changes take effect within a minute, including removals. A super admin
+    Changes take effect within a minute, including removals. An admin
     set in the environment is marked <b>fixed</b> and cannot be changed here — that is
     what stops this page from locking everyone out of the dashboard.</p>
 </div>
@@ -179,7 +179,7 @@ function mark(on){
   document.getElementById('dirty').textContent = on ? 'unsaved changes' : '';
 }
 
-/* A super admin sees every brand by definition, so their ticks are shown but locked --
+/* An admin sees every brand by definition, so their ticks are shown but locked --
    greyed rather than absent, because an empty cell reads as "no brands". */
 function brandCell(u, i){
   const all = u.role === 'super';

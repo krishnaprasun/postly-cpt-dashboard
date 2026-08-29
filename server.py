@@ -173,7 +173,7 @@ def _caps(key):
     statement about the view and two credentials on one request should narrow, never widen.
 
     The empty key is not such a statement. Under ROOT_OPEN it is merely the door being
-    unlocked, and letting it win made a signed-in super admin read as an anonymous
+    unlocked, and letting it win made a signed-in admin read as an anonymous
     visitor: no name in the header, and no Access link to the page they are the only
     person allowed to open.
     """
@@ -452,7 +452,7 @@ def auth_whoami():
 # ---------------------------------------------------------------- user admin ---
 # Managing who gets in is a thing the person running this does at 9pm from a phone, so it
 # is a page in the app rather than an environment variable and a redeploy. Only a super
-# admin can open it, and only a super admin can save.
+# admin can open it, and only an admin can save.
 def _me():
     """The signed-in caps for this request, or None. Sessions only -- a link is not a
     person and must never be able to edit who the people are."""
@@ -464,7 +464,7 @@ def _require_super():
     if not me:
         return None, (jsonify({"error": "Sign in first."}), 401)
     if me.get("role") != "super":
-        return None, (jsonify({"error": "Only a super admin can manage access."}), 403)
+        return None, (jsonify({"error": "Only an admin can manage access."}), 403)
     return me, None
 
 
@@ -546,7 +546,7 @@ def admin_users():
     if me.get("role") != "super":
         return Response("<!doctype html><meta charset=utf-8><title>Access</title>"
                         f"<style>{SIGNIN_CSS}</style><div class=card><h1>Access</h1>"
-                        "<p>Only a super admin can manage who gets in.</p>"
+                        "<p>Only an admin can manage who gets in.</p>"
                         "<p class=foot><a href='/'>Back to the dashboard</a></p></div>",
                         403, mimetype="text/html")
     return render_template("users.html", me=me["email"],

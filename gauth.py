@@ -99,7 +99,7 @@ def caps_for(email, hd=""):
     optional outer fence for the env-map path, and is normally unset.
 
     `full` -- the right to make the app SPEND, by forcing a Meta roster re-read or a
-    longevity recompute -- belongs to super admins, for the same reason a team link is
+    longevity recompute -- belongs to admins, for the same reason a team link is
     read-only.
     """
     email = (email or "").strip().lower()

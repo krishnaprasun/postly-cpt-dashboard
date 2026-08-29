@@ -1,6 +1,6 @@
 """The access invitation, and the one place email leaves this app.
 
-Sent only when a super admin presses the button on the Access page. Nothing here fires on
+Sent only when an admin presses the button on the Access page. Nothing here fires on
 a save, on a schedule or on a sign-in: an invitation is a message from a person to a
 person, and an app that mails people as a side effect of an edit will eventually mail the
 wrong person.
@@ -72,7 +72,9 @@ def build(email, role, brands, inviter=""):
     names = [BRAND_LABELS[b] for b in brands]
     who = (", ".join(names[:-1]) + " and " + names[-1]) if len(names) > 1 else \
           (names[0] if names else "the dashboard")
-    role_label = {"super": "a super admin", "member": "a member",
+    # No article: the sentence is "given ___ access", and "given an admin access" is not
+    # a sentence.
+    role_label = {"super": "admin", "member": "member",
                   "viewer": "view-only"}.get(role, role)
     link = dash_url() + "/auth/login"
     dark, light = _accent(brands)

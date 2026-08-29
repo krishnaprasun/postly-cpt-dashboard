@@ -2,16 +2,16 @@
 
 The list lives in the history store, not in the environment: adding a colleague should be
 something the person running this does at 9pm from a phone, not a Render env edit and a
-redeploy. Env still carries the BOOTSTRAP super admins, because a directory you can lock
+redeploy. Env still carries the BOOTSTRAP admins, because a directory you can lock
 yourself out of is a directory you will eventually lock yourself out of.
 
 Access is by ADDRESS, not by domain. The people using this are at Classplus and at Meta —
 two domains that have nothing to do with each other — so "anyone at company X" was never
-going to be the rule. A super admin adds an address; that address gets in. Nobody else
+going to be the rule. An admin adds an address; that address gets in. Nobody else
 does, whatever they are signed in as.
 
 Three roles, and each one earns its place by what it may DO, never by what it may see:
-  super  — every brand, manages this list, and holds the rights that make the app SPEND
+  admin  — every brand, manages this list, and holds the rights that make the app SPEND
            (a forced Meta roster re-read, a longevity recompute).
   member — the brands they were given, and may download the tables as CSV.
   viewer — the brands they were given. Reads the page and nothing else.
@@ -35,7 +35,9 @@ _cache = {"at": 0.0, "users": None, "ok": False}
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 ROLES = ("super", "member", "viewer")
-ROLE_LABELS = {"super": "Super admin", "member": "Member", "viewer": "View only"}
+# The stored key stays "super" — it is in every saved record, and renaming a stored
+# value to change a word on screen is how a directory quietly loses its admins.
+ROLE_LABELS = {"super": "Admin", "member": "Member", "viewer": "View only"}
 
 
 def _role(r):
@@ -51,7 +53,7 @@ def _clean_email(e):
 
 
 def supers():
-    """Bootstrap super admins, from the environment. Always present, never removable."""
+    """Bootstrap admins, from the environment. Always present, never removable."""
     raw = os.environ.get("GOOGLE_AUTH_SUPERS", "")
     return [e for e in (_clean_email(x) for x in raw.replace(",", " ").split()) if e]
 
@@ -168,7 +170,7 @@ def caps(role, brands, email):
     """One place where a role becomes rights, so the page and the server cannot disagree.
 
     `full` is the right to make the app SPEND — forcing a Meta roster re-read or a
-    longevity recompute — and it stays with super admins. Meta's hourly request-TIME limit
+    longevity recompute — and it stays with admins. Meta's hourly request-TIME limit
     is the scarcest thing this app has, and it is shared by everyone looking at it, so a
     button that consumes it is not a viewing preference.
     """
