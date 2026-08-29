@@ -102,6 +102,12 @@ def figures(brand, data, goog=None):
     google = {"spend": float(gt.get("spend") or 0.0) if g.get("spend_ok") else None,
               "trials": float(gt.get(ev) or 0.0) if g_known else None,
               "installs": float(gt.get("inst") or 0.0) if g_known else None,
+              # Google's own count of the same event, under Google's own attribution --
+              # from the click it saw, where Branch counts from the install it saw. On
+              # Postly the two differ three-fold, and a single number in that gap reads
+              # as a CPT crisis rather than as two ways of counting. Neither is the
+              # other's error, so both are shown and neither is averaged away.
+              "gconv": float(gt.get("gconv") or 0.0) if g.get("conv_ok") else None,
               "why": g.get("trials_error") or g.get("spend_error") or
                      ("" if g else "Google figures did not load")}
 
@@ -177,7 +183,11 @@ def chan_line(name, cur, was, event, target=None):
     d = delta(cur, was)
     if d:
         bits.append(d)
-    return "   " + " · ".join(bits)
+    line = "   " + " · ".join(bits)
+    gc = cur.get("gconv")
+    if gc and cur["spend"]:
+        line += f"\n      _Google's own count: {num(gc)} → {rs0(cur['spend']/gc)}_"
+    return line
 
 
 def brand_block(f, prev):
