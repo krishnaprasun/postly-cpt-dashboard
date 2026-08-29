@@ -5,10 +5,11 @@ something the person running this does at 9pm from a phone, not a Render env edi
 redeploy. Env still carries the BOOTSTRAP admins, because a directory you can lock
 yourself out of is a directory you will eventually lock yourself out of.
 
-Access is by ADDRESS, not by domain. The people using this are at Classplus and at Meta —
-two domains that have nothing to do with each other — so "anyone at company X" was never
-going to be the rule. An admin adds an address; that address gets in. Nobody else
-does, whatever they are signed in as.
+Access is by ADDRESS, not by domain. The people using this are at Classplus and at
+Testbook -- two domains that have nothing to do with each other -- so "anyone at company X"
+was never going to be the rule. An admin adds an address; that address gets in. Nobody else
+does, whatever they are signed in as. (Not to be confused with Meta, which throughout this
+codebase means the ad platform.)
 
 Three roles, and each one earns its place by what it may DO, never by what it may see:
   admin  — every brand, manages this list, and holds the rights that make the app SPEND

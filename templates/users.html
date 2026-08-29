@@ -107,10 +107,6 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
 </div></header>
 
 <div class="wrap">
-  <p class="lead">Everyone who can open this dashboard, and what each of them may do.
-    Access is by email address — someone at Classplus and someone at Meta are added the
-    same way. An address that is not on this list cannot get in.</p>
-
   <div class="card">
     <table>
       <thead><tr>
@@ -137,27 +133,15 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
   </div>
 
   <div class="legend">
-    <div class="leg"><b>Admin</b><span>Every brand, manages this list, and can force
-      a Meta re-read — the one action here that spends the request budget everyone
-      shares.</span></div>
-    <div class="leg"><b>Member</b><span>The brands ticked for them, and can download the
-      tables as CSV.</span></div>
-    <div class="leg"><b>View only</b><span>The brands ticked for them. Reads the page and
-      nothing else — no export, no refresh.</span></div>
+    <div class="leg"><b>Admin</b><span>Every brand, plus this page and Refresh.</span></div>
+    <div class="leg"><b>Member</b><span>Their brands, and CSV export.</span></div>
+    <div class="leg"><b>View only</b><span>Their brands. Nothing else.</span></div>
   </div>
 
-  <p class="foot">
-    {% if can_mail %}<b>Invite</b> emails that person a branded note with their role, their
-    brands and the address they must sign in with —
-    <a class="lnk" href="/api/users/preview" target="_blank"
-       style="margin:0">see what it looks like</a>. It only appears once they are saved,
-    because an invitation to a dashboard that would refuse them is worse than none.
-    {% else %}<b>Invite</b> opens a draft in your own mail client — no mail server is
-    configured, so nothing is sent from here.
-    {% endif %}<br>
-    Changes take effect within a minute, including removals. An admin
-    set in the environment is marked <b>fixed</b> and cannot be changed here — that is
-    what stops this page from locking everyone out of the dashboard.</p>
+  <p class="foot">Changes take effect within a minute. <b>Invite</b> emails that person
+    their access{% if can_mail %} —
+    <a class="lnk" href="/api/users/preview" target="_blank" style="margin:0">preview</a>{%
+    else %}, as a draft in your own mail client{% endif %}.</p>
 </div>
 
 <script>
