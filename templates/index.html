@@ -2170,6 +2170,17 @@ function sMetricAvail(){
   }
 }
 
+/* Which of these controls apply depends on the fold that is CURRENTLY loaded — the
+   dimension it was folded on, and whether that dimension has budgets or statuses. So it
+   has to run when a fold lands, not only when the page re-renders around one.
+
+   Without that: change Dimension to Ad set, the fetch returns, the grid redraws with ad
+   sets in it, and Budget/day stays greyed out because the last thing to judge it was the
+   Script fold. It looked like the feature was broken. */
+function seriesControls(){
+  sDimAvail(); sActiveAvail(); sMetricAvail();
+}
+
 function sActiveAvail(){
   const b = document.getElementById('sActive');
   const ok = !!(SERIES && SERIES.active_dim && SERIES.active_known);
@@ -2239,7 +2250,7 @@ async function loadSeries(force, quiet){
   if(hit){
     /* Straight onto the screen, no spinner and no round trip. */
     SERIES = hit.v; SERIESKEY = key; SERIESBUSY = false;
-    if(TAB === 'trends' || TAB === 'matrix'){ renderTable(); noteFor(); }
+    if(TAB === 'trends' || TAB === 'matrix'){ seriesControls(); renderTable(); noteFor(); }
     if(hit.held < CACHE_SOFT) return;
     return loadSeries(true, true);          // refresh behind the numbers on screen
   }
@@ -2269,7 +2280,7 @@ async function loadSeries(force, quiet){
   }finally{
     SERIESBUSY = false;
   }
-  if(TAB === 'trends' || TAB === 'matrix'){ renderTable(); noteFor(); }
+  if(TAB === 'trends' || TAB === 'matrix'){ seriesControls(); renderTable(); noteFor(); }
 }
 
 function renderTrends(){
@@ -3121,7 +3132,7 @@ function renderTable(){
       TAB === 'matrix' ? 'inline-flex' : 'none';
     document.getElementById('sLinesWrap').style.display =
       TAB === 'trends' ? 'inline-flex' : 'none';
-    sDimAvail(); sActiveAvail(); sMetricAvail();
+    seriesControls();
     if(TAB==='trends') renderTrends(); else renderMatrix();
     return;
   }
