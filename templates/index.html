@@ -1028,9 +1028,12 @@ function stampNow(){
   const stale = [t !== null && t > 2100 ? `trials ${ago(t).replace(' ago','')}` : '',
                  b !== null && b > 2400 ? `budgets ${ago(b).replace(' ago','')}` : '']
                 .filter(Boolean);
+  /* Say what the clock is measuring. A bare "4 min ago" answers a question nobody
+     asked -- since the page opened? since the last refresh? -- when the fact that
+     matters is the age of the SPEND figures every decision here is made on. */
   el.innerHTML = (m === null
       ? `Last refreshed <b>${DATA.generated_at.replace(' IST','')}</b> IST`
-      : `<b class="${m > 2100 ? 'warn' : ''}">${ago(m)}</b>`)
+      : `Meta spend <b class="${m > 2100 ? 'warn' : ''}">${ago(m)}</b>`)
     + (stale.length ? ` · <span class="warn">${stale.join(' · ')}</span>` : '');
   /* The assembly time is not useless -- it is what the server cache and the browser
      cache are keyed on -- it just is not the headline. */
