@@ -2158,7 +2158,37 @@ def chan_index_build(brand, dates=None, log=None, rebuild=False):
     return len(todo), len(stored)
 
 
-def window_data(since, until, B, today=None):
+# The live half of a window, kept so ONE source can be refreshed without re-pulling the
+# other. A person watching spend wants Meta re-read; a person watching trials wants
+# Branch. Making either wait for both spends quota nobody asked to spend, and on a long
+# window it is the difference between ten seconds and two minutes.
+#
+# Only ever a fallback for a targeted refresh: a normal build ignores it and fetches
+# both, so nothing here can make the page show a stale figure it did not ask for.
+_live_cache, _live_lock = {}, threading.Lock()
+LIVE_TTL = int(os.environ.get("LIVE_TTL", "3600"))
+
+
+def _live_get(key, part):
+    with _live_lock:
+        hit = _live_cache.get(key)
+    if not hit or time.time() - hit["at"] > LIVE_TTL:
+        return None
+    return hit.get(part)
+
+
+def _live_put(key, part, value):
+    with _live_lock:
+        cur = _live_cache.get(key) or {}
+        cur[part] = value
+        cur["at"] = time.time()
+        _live_cache[key] = cur
+        if len(_live_cache) > 24:
+            for k in sorted(_live_cache, key=lambda k: _live_cache[k]["at"])[:8]:
+                _live_cache.pop(k, None)
+
+
+def window_data(since, until, B, today=None, only=None):
     """(insights_by_account, {event: {ad_name: n}}, {date: {event: {channel: n}}}, prov).
 
     Settled days come from the store, the rest from Meta and Branch live.
@@ -2211,9 +2241,25 @@ def window_data(since, until, B, today=None):
     # None means no pull happened: every day in the window was settled history.
     prov["meta_at"] = prov["branch_at"] = None
     if live_since:
-        for a in B["accounts"]:
-            meta[a["id"]] += meta_insights_daily(a["id"], live_since, live_until)
-        prov["meta_at"] = time.time()
+        lk = (brand, live_since, live_until)
+        # `only` names the ONE source this build is refreshing. The other is reused from
+        # the last live pull when there is one, and fetched normally when there is not —
+        # a targeted refresh must never be able to produce a page with a hole in it.
+        reuse = _live_get(lk, "meta") if only and only != "meta" else None
+        if reuse is not None:
+            for acct, rows in reuse.items():
+                meta[acct] += rows
+            prov["meta_at"] = _live_cache.get(lk, {}).get("meta_at")
+            prov["meta_reused"] = True
+        else:
+            fresh = {}
+            for a in B["accounts"]:
+                fresh[a["id"]] = meta_insights_daily(a["id"], live_since, live_until)
+                meta[a["id"]] += fresh[a["id"]]
+            prov["meta_at"] = time.time()
+            _live_put(lk, "meta", fresh)
+            with _live_lock:
+                _live_cache[lk]["meta_at"] = prov["meta_at"]
         # Branch failing must not take the page down with it. Spend, budgets, statuses and
         # the whole testing/trial split come from Meta and are perfectly good without it —
         # a Branch throttle used to 500 the entire dashboard, which is how a backfill
@@ -2221,12 +2267,22 @@ def window_data(since, until, B, today=None):
         # trial-less. Reported as an explicit failure, never as zero: a zero here would
         # read as "no trials happened", which is a different and much worse claim.
         try:
-            for day, per_ev in branch_trials_daily(live_since, live_until, B).items():
+            reuse_b = _live_get(lk, "branch") if only and only != "trials" else None
+            if reuse_b is not None:
+                daily = reuse_b
+                prov["branch_at"] = _live_cache.get(lk, {}).get("branch_at")
+                prov["trials_reused"] = True
+            else:
+                daily = branch_trials_daily(live_since, live_until, B)
+                prov["branch_at"] = time.time()
+                _live_put(lk, "branch", daily)
+                with _live_lock:
+                    _live_cache[lk]["branch_at"] = prov["branch_at"]
+            for day, per_ev in daily.items():
                 for ev, by_name in per_ev.items():
                     for name, n in by_name.items():
                         trials[ev][name] += n
                 chan_days[day] = {ev: chan_of_day(bn) for ev, bn in per_ev.items()}
-            prov["branch_at"] = time.time()
         except Exception as ex:
             kind = ("Branch is rate-limiting this app"
                     if isinstance(ex, BranchThrottled) else str(ex)[:160])
@@ -3272,7 +3328,7 @@ def longevity_fast(brand, days, force=False):
     return out
 
 
-def build(since, until, brand=C.DEFAULT_BRAND, force=False):
+def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
     started = time.time()
     B = C.brand(brand)
     EVENTS = B["events"]
@@ -3281,7 +3337,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False):
     budgets_known = True
     # Settled days out of the store, the rest live. The shapes are identical to what the
     # two direct fetches used to return, which is why nothing below this line changed.
-    insights_by_acct, trials, chan_days, prov = window_data(since, until, B)
+    insights_by_acct, trials, chan_days, prov = window_data(since, until, B, only=only)
 
     ads, adsets, campaigns, accounts = {}, {}, {}, {}
 

@@ -682,6 +682,45 @@ def api_data():
         return jsonify({"error": str(e)[:500]}), 500
 
 
+@app.route("/api/refresh")
+@protected
+def api_refresh():
+    """Re-read ONE source and hand back the whole payload rebuilt around it.
+
+    A person watching spend wants Meta re-read; a person watching trials wants Branch.
+    Making either wait for both spends quota nobody asked to spend — and on a wide window
+    it is the difference between ten seconds and two minutes.
+
+    The response is a full payload, not a patch: trials are allocated across ads by that
+    window's spend, so a fresher Branch count and a staler spend figure have to be folded
+    together by the same code that folds them normally. Patching tiles individually in the
+    browser is how the tiles start disagreeing with the tables under them.
+    """
+    part = (request.args.get("part") or "").strip().lower()
+    if part not in ("meta", "trials"):
+        return jsonify({"error": "part must be meta or trials"}), 400
+    since, until = resolve_range(request.args.get("range", "today"),
+                                 request.args.get("since"), request.args.get("until"))
+    brand, err, _full = _gate(request.args.get("k", ""),
+                              request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    key = (since, until, brand)
+    try:
+        data = P.build(since, until, brand, only=part)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": _friendly(e)["text"]}), 502
+    # Straight into the cache everyone else is served from. A refresh one person paid for
+    # should not be a refresh only that person sees.
+    with _lock:
+        _cache[key] = {"at": time.time(), "data": data}
+        _last_error.pop(key, None)
+    _persist(key, data)
+    return jsonify(_with_live_limits(dict(data, cached=False, age=0, stale=False,
+                                          refreshed=part)))
+
+
 # ---- daily series -----------------------------------------------------------
 # Same stale-while-revalidate shape as /api/data, for the same reason: a fourteen-day
 # fold over a wide dimension is a real Meta and Branch cost, and nobody should watch a

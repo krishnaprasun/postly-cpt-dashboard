@@ -169,6 +169,21 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* Names the question the grid is answering while it is still being built: the two
    things that were just changed, so a switch is acknowledged before any data arrives. */
 .kpi .s em{font-style:normal;color:var(--faint)}
+/* Sits in the card's own heading row, right-aligned: the clock belongs to that number,
+   and so does the button that fixes it. */
+.kpi .k{display:flex;align-items:center;gap:6px}
+.rfr{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font:inherit;
+  font-size:10.5px;font-weight:600;letter-spacing:0;text-transform:none;
+  color:var(--faint);background:none;border:1px solid transparent;border-radius:99px;
+  padding:2px 7px;cursor:pointer;white-space:nowrap;transition:.13s}
+.rfr:hover:not(:disabled){color:var(--accent-dk);border-color:var(--accent);
+  background:var(--accent-lt)}
+.rfr:disabled{opacity:.55;cursor:default}
+.rfr.warn{color:var(--bad)}
+.rfr.busy{color:var(--accent-dk);border-color:var(--line)}
+@keyframes rfrspin{to{transform:rotate(360deg)}}
+.rfr.busy{animation:rfrspin 1s linear infinite}
+@media(prefers-reduced-motion:reduce){.rfr.busy{animation:none}}
 .mcap{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:12.5px;
   color:var(--muted);padding:0 2px 9px}
 .mcap b{color:var(--ink);font-weight:650}
@@ -979,6 +994,9 @@ const cpOn = () => !!(DATA && DATA.classplus && DATA.classplus.available
 
 /* ---------- fetch ---------- */
 let staleTimer=null, BUSY=false, lastFetchAt=0, ticker=null;
+/* One targeted refresh at a time. Two in flight would race to write RAW, and the loser
+   would put its own source's older number back. */
+let RFRBUSY = false;
 
 /* How old the numbers on screen actually are: the server-side cache age when they were
    sent, plus the wall time since. Shown live so stale figures can never look current —
@@ -1002,6 +1020,50 @@ function ago(sec){
   if(sec < 5400) return Math.round(sec/60) + ' min ago';
   return (sec/3600).toFixed(1) + ' h ago';
 }
+/* A per-source refresh, on the card whose number it belongs to. Spend is Meta's,
+   trials are Branch's, and someone watching one of them should not have to re-read the
+   other to see it move. The label is that source's own age, so the button says how old
+   the number under it is as well as offering to fix that. */
+function srcBtn(part){
+  const secs = pullAge(part === 'meta' ? 'meta_age_sec' : 'trials_age_sec');
+  if(secs === null) return '';
+  const lab = ago(secs).replace(' ago', '');
+  const what = part === 'meta' ? 'Meta spend' : 'Branch trials';
+  return `<button class="rfr${secs > 2100 ? ' warn' : ''}" data-rfr="${part}"
+      title="${what} last read ${ago(secs)} — click to re-read ${
+        part === 'meta' ? 'Meta only' : 'Branch only'}"
+      aria-label="Refresh ${what}, last read ${ago(secs)}">↻ ${lab}</button>`;
+}
+
+async function refreshPart(part, btn){
+  if(BUSY || RFRBUSY) return;
+  RFRBUSY = true;
+  const was = btn.innerHTML;
+  btn.classList.add('busy'); btn.innerHTML = '↻ …'; btn.disabled = true;
+  try{
+    const r = await fetch(`/api/refresh?part=${part}&${apiQuery()}`);
+    const j = await r.json();
+    if(j.error){
+      document.getElementById('err').innerHTML =
+        `<div class="err"><b>Could not refresh.</b> ${j.error}</div>`;
+      btn.innerHTML = was; btn.disabled = false; return;
+    }
+    lastFetchAt = Date.now();
+    cachePut('data|' + apiQuery(), j);
+    RAW = j; DATA = applyAttr(RAW);
+    /* Everything repaints, including the other card's clock: one source moved, and the
+       page has to agree with itself about what it is showing. */
+    render(); stampNow();
+    document.getElementById('err').innerHTML = '';
+  }catch(e){
+    btn.innerHTML = was; btn.disabled = false;
+    document.getElementById('err').innerHTML =
+      `<div class="err"><b>Could not refresh.</b> ${e}</div>`;
+  }finally{
+    RFRBUSY = false;
+  }
+}
+
 function stampNow(){
   const el = document.getElementById('stamp');
   if(BUSY){ el.innerHTML = '<span class="spin"></span>refreshing…'; return; }
@@ -1478,10 +1540,10 @@ function kpis(){
            : gk===null ? (gt && gt.gwhy ? `unavailable — ${gt.gwhy}` : 'no conversions reported')
            : gap===null ? "Google's own attribution"
            : `${gap>0?'+':''}${gap.toFixed(0)}% vs Branch · same spend, its own count`}</div></div>
-       <div class="kpi"><div class="k">Spend</div>
+       <div class="kpi"><div class="k">Spend${srcBtn('meta')}</div>
          <div class="v">${sp ? rs(sp) : dash}</div>
          <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
-       <div class="kpi"><div class="k">Trials<span class="src branch">Branch</span></div>
+       <div class="kpi"><div class="k">Trials<span class="src branch">Branch</span>${srcBtn('trials')}</div>
          <div class="v">${(waiting || tr === null) ? dash : num(tr)}</div>
          <div class="s">${waiting ? '<span class="spin"></span>loading Google'
            : tr === null ? `unavailable — ${(gt && gt.why) || 'Branch did not answer'}`
@@ -1504,10 +1566,10 @@ function kpis(){
        <div class="s">${waiting ? '<span class="spin"></span>loading Google'
          : T===null ? `no target set · ${num(tr)} trials`
          : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`}</div></div>
-     <div class="kpi"><div class="k">Spend</div>
+     <div class="kpi"><div class="k">Spend${srcBtn('meta')}</div>
        <div class="v">${sp ? rs(sp) : dash}</div>
        <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
-     <div class="kpi"><div class="k">Trials</div>
+     <div class="kpi"><div class="k">Trials${srcBtn('trials')}</div>
        <div class="v">${(waiting || tr === null) ? dash : num(tr)}</div>
        <div class="s">${waiting ? '<span class="spin"></span>loading Google'
          : tr === null ? `unavailable — ${(gt && gt.why) || 'Branch did not answer'}`
@@ -4096,6 +4158,13 @@ document.getElementById('cGo').onclick = () => {
   }
   err.innerHTML = ''; CUSTOM = {since:a, until:b}; load(false);
 };
+/* Delegated: the tiles are rebuilt from scratch on every render, so a handler bound to
+   the button itself would be gone a second later. */
+document.getElementById('kpis').addEventListener('click', e => {
+  const b = e.target.closest('button[data-rfr]');
+  if(!b || b.disabled) return;
+  refreshPart(b.dataset.rfr, b);
+});
 document.getElementById('tabs').onclick = e => {
   /* closest(), not e.target. Every tab carries its row count in an <i> inside the
      button, and a click that landed on that number hit an element with no data-t: the
