@@ -616,6 +616,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <span id="win"></span>
     </div>
     <div class="acts">
+      <div id="toolBtns" class="toolbtns"></div><!-- tools: Competitor Intel + Meta Control (static/*.js) -->
       <div class="meta" id="stamp"></div>
       {% if can_export %}<div class="expwrap" id="expwrap">
         <button class="btn" id="expBtn" disabled>Export ▾</button>
@@ -744,7 +745,6 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
             title="How long each ad set has kept spending: when it went live, days spent, whether it stopped">Lifespan <i id="n-longevity"></i></button>
     <button data-t="trends" title="One line per row, day by day">Daily trend</button>
     <button data-t="matrix" title="Rows down, days across — sort by any single day">Day grid</button>
-    <button data-ctrl="1" title="Pause, budgets, scaling and builds for this brand">Control</button>
   </div>
 
   <div class="ctl" id="gctl" style="display:none">
@@ -841,7 +841,6 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   <div id="trendsWrap" style="display:none"></div>
   <div id="matrixWrap" style="display:none"></div>
   <div class="wrap" id="tblWrap"><table id="tbl"><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
-  <div id="ctrlPanel" style="display:none"></div><!-- control layer (static/control.js) -->
   <div class="notebar">
     <button class="ibtn" id="noteBtn" aria-expanded="false" aria-controls="noteDrawer">
       <span class="ii">i</span> How these numbers work
