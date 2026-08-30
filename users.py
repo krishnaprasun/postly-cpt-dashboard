@@ -32,7 +32,13 @@ NS = "dashusers"
 # buys not paying for that on each one; the cost is that removing someone takes up to a
 # minute to bite. Saving clears it, so the person doing the removing sees it at once.
 TTL = 60
-_cache = {"at": 0.0, "users": None, "ok": False}
+# The last directory that was read SUCCESSFULLY, kept far longer than the cache. When the
+# store goes down, refusing everyone is the safe answer for a WRITE and the wrong one for
+# a READ: on 30 Aug the project's billing lapsed, the store began answering 503, and every
+# person except the env-set admin was locked out of a dashboard whose list had not changed.
+# Reads now degrade to the last known list; writes still refuse outright.
+GOOD_FOR = 24 * 3600
+_cache = {"at": 0.0, "users": None, "ok": False, "good": None, "good_at": 0.0}
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 ROLES = ("super", "member", "viewer")
@@ -102,8 +108,15 @@ def load(force=False):
                     "note": str(rec.get("note") or "")[:120],
                     "by": rec.get("by", ""), "at": rec.get("at", 0)}
     if ok:
-        _cache.update({"at": now, "users": users, "ok": True})
-    return users, ok
+        _cache.update({"at": now, "users": users, "ok": True,
+                       "good": users, "good_at": now})
+        return users, True
+    # Unreadable. Hand back the last good list so people keep the access they were
+    # given, and say `ok=False` so nothing writes over a list it could not read.
+    good = _cache.get("good")
+    if good is not None and now - _cache.get("good_at", 0) < GOOD_FOR:
+        return good, False
+    return users, False
 
 
 def listing():
@@ -124,6 +137,8 @@ def save(users, by):
     """Replace the directory. Returns (ok, error). Never writes on a failed read."""
     if not H.available():
         return False, "The history store is not configured, so there is nowhere to save."
+    # force=True so this is a fresh read, never the degraded copy: saving on top of a
+    # list we could not verify is how a directory gets silently truncated.
     _, ok = load(force=True)
     if not ok:
         return False, ("Could not read the current list, so saving would risk deleting "
@@ -162,12 +177,12 @@ def caps_for(email):
         return None
     if e in supers():
         return caps("super", list(C.BRANDS), e)
-    users, ok = load()
+    users, _ok = load()
     rec = users.get(e)
     if rec is None:
-        # Store unreadable: only the bootstrap supers get in. Better a dashboard the
-        # owner can still open than one that lets everyone in because a network call
-        # timed out.
+        # Either not on the list, or the store is down and this process never held a
+        # copy — a cold instance during an outage. Both refuse: an unknown address must
+        # never be admitted because a network call failed.
         return None
     if not rec["brands"]:
         return None
