@@ -1629,6 +1629,11 @@ def google_spend_only(brand, since, until):
     return out
 
 
+# How much run-up the tiles show. Two weeks: long enough for a weekly rhythm to be
+# visible, short enough that one bad day still reads as one bad day.
+SPARK_DAYS = int(os.environ.get("SPARK_DAYS", "14"))
+
+
 def prior_window(brand, since, until):
     """{spend, trials, days, days_covered, complete} for the window before this one.
 
@@ -1668,6 +1673,35 @@ def prior_window(brand, since, until):
     else:
         out["trials"] = None
         out["note"] = "channel index unreadable — no prior trial count"
+    # ---- the run-up, for the sparklines ------------------------------------
+    # The tiles say where things stand; without a shape beside them nobody can tell a
+    # good day from a bad week. Store-only and cheap: the channel index is one read and
+    # already open above, and the per-day spend is the same days this function is holding.
+    # Never Meta, never Branch — a sparkline is not worth a request-budget.
+    try:
+        end = H.settled_through(today_ist())
+        sdates = date_range((datetime.strptime(end, "%Y-%m-%d").date()
+                             - timedelta(days=SPARK_DAYS - 1)).strftime("%Y-%m-%d"), end)
+        raw = H.fetch_raw(brand, sdates)
+        series = []
+        for d in sdates:
+            day = raw.get(d) or {}
+            sp = sum(float(r.get("spend") or 0)
+                     for rows in (day.get("meta") or {}).values() for r in rows)
+            tr = None
+            if ok:
+                ev0 = next(iter(B["events"]), None)
+                tr = ((idx.get(d) or {}).get(ev0) or {}).get("meta") if ev0 else None
+            # A day the store does not hold is a GAP, not a zero: drawing it as zero
+            # invents a cliff on a chart people read for cliffs.
+            series.append({"d": d,
+                           "spend": round(sp, 2) if d in raw else None,
+                           "trials": round(tr, 1) if tr is not None else None})
+        # NOT "days" — that key already means how many days the window is, and the hero
+        # subtitle prints it. Overwriting it rendered "[object Object],[object Object]".
+        out["series"] = series
+    except Exception:
+        out["series"] = []
     out["generated_at"] = now_ist_str()
     return out
 

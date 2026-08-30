@@ -131,6 +131,43 @@ td.sparkcell{padding:4px 13px;width:126px}
 
 main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:13px;margin-bottom:20px}
+/* The hero takes two columns. CPT is the number every decision on this page is made
+   against; as one of seven identical boxes it had to be hunted for. */
+.kpis .kpi.hero{grid-column:span 2}
+@media(max-width:900px){.kpis .kpi.hero{grid-column:span 1}}
+/* Two bands: what performance is, then what the funnel did. Seven equal cards have to be
+   read; two groups of three and four can be scanned. */
+.kband{grid-column:1/-1;display:flex;align-items:center;gap:9px;margin:4px 0 -4px;
+  font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--faint)}
+.kband::after{content:"";flex:1;height:1px;background:var(--line)}
+.kband:first-child{margin-top:0}
+
+/* The run-up, behind the number rather than beside it. */
+.kspark{display:block;width:100%;height:22px;margin:7px 0 0;overflow:visible}
+.kspark path{fill:none;stroke:var(--accent);stroke-width:1.6;stroke-linejoin:round;
+  stroke-linecap:round;opacity:.55;vector-effect:non-scaling-stroke}
+.kpi.hero .kspark path{opacity:.7}
+.dlt{font-weight:700;font-size:11.5px;margin:0 5px 0 8px;font-variant-numeric:tabular-nums;
+  white-space:nowrap;letter-spacing:0}
+/* The value is 28px; without this the delta inherits its line box and the number breaks
+   across two lines around the arrow. */
+.kpi .v{display:flex;align-items:baseline;flex-wrap:wrap}
+/* Neither direction is coloured good or bad. More spend is not worse and more trials is
+   not better on their own — the tile that judges is CPT, and it judges against target. */
+.dlt.up,.dlt.down{color:var(--muted)}
+.dvs{font-size:11px;color:var(--faint);white-space:nowrap;letter-spacing:0;font-weight:400}
+/* How far to target, as a bar. Full and green at target, and it keeps filling past it in
+   amber rather than stopping — a bar that caps at 100% hides how far over you are. */
+.tbar{height:5px;border-radius:99px;background:var(--line2);margin:9px 0 0;
+  position:relative}
+/* The notch IS the target. Without it the bar is a proportion of nothing. */
+.tbar::after{content:"";position:absolute;left:70%;top:-2px;bottom:-2px;width:1.5px;
+  background:var(--muted);opacity:.45;border-radius:2px}
+.tbar i{display:block;height:100%;border-radius:99px;background:var(--green);
+  transition:width .35s ease;max-width:100%}
+.tbar.over i{background:var(--gold)}
+.tbar.bad i{background:var(--red)}
 .kpi{background:var(--white);border:1px solid var(--line);border-radius:14px;
   padding:14px 16px 30px;box-shadow:var(--shadow);position:relative}
 .kpi .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);
@@ -184,7 +221,7 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* The hero card carries a left accent bar; nudge clear of it. */
 .kpi.hero .rfr{left:18px}
 .rfr:disabled{opacity:.55;cursor:default}
-.rfr.warn{color:var(--bad)}
+.rfr.warn{color:var(--red)}
 .rfr.busy{color:var(--accent-dk);border-color:var(--line)}
 @keyframes rfrspin{to{transform:rotate(360deg)}}
 .rfr.busy{animation:rfrspin 1s linear infinite}
@@ -1658,25 +1695,49 @@ function kpis(){
      is the whole caveat: the size of the lift and the measured figure under it belong in
      the note, not in a tile somebody is trying to read a number off. */
   const modLbl = proOn() ? ' · <span class="modelled">pro rata</span>' : '';
+  /* How far CPT is against target, as a fraction. Past target it keeps filling rather
+     than capping: a bar stuck at 100% cannot tell 5% over from 80% over, and those are
+     different decisions. */
+  const tpc = (T && k) ? k / T : null;
+  /* Target sits at 70% of the bar, not at the end. A bar that ends at target can only
+     say "over" — it cannot tell 5% over from 80% over, and those are different
+     decisions. With the notch at 70%, the fill runs past it and stops at 143% of
+     target, which is the range worth seeing. */
+  const tbar = tpc === null ? '' : `<div class="tbar${
+      tpc <= 1 ? '' : tpc <= 1.5 ? ' over' : ' bad'}"
+      title="₹${Math.round(k)} against a ₹${Math.round(T)} target"
+    ><i style="width:${Math.min(100, tpc * 70).toFixed(0)}%"></i></div>`;
+  const cptDay = r => (r.spend !== null && r.trials) ? r.spend / r.trials : null;
   document.getElementById('kpis').innerHTML =
+   `<div class="kband">Performance</div>` +
    (trials ? `
    <div class="kpi hero"><div class="k">Current CPT · ${segLbl}${chanIsMeta()?modLbl:''}</div>
-     <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
-     <div class="s">${waiting ? '<span class="spin"></span>loading Google' : heroSub}</div></div>` : '') + `
-   <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend${srcBtn('meta')}</div><div class="v">${rs(sp)}</div>
+     <div class="v ${cls(k)}">${k===null?'—':rs(k)}${
+       /* The subtitle already carries the comparison when the matching prior window is
+          complete. Saying it twice, in two different phrasings, invites the reader to
+          look for the difference between them. */
+       (chanIsMeta() && !priorDelta()) ? deltaVs(k, cptDay, rs) : ''}</div>
+     <div class="s">${waiting ? '<span class="spin"></span>loading Google' : heroSub}</div>
+     ${chanIsMeta() ? tbar + kpiSpark(cptDay) : ''}</div>` : '') + `
+   <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend${srcBtn('meta')}</div>
+     <div class="v">${rs(sp)}${chanIsMeta() ? deltaVs(sp, r => r.spend, rs) : ''}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
-             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
+             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div>
+     ${chanIsMeta() ? kpiSpark(r => r.spend) : ''}</div>` +
    (trials ? `
-   <div class="kpi"><div class="k">Trials${modLbl}${srcBtn('trials')}</div><div class="v">${num(tr)}</div>
+   <div class="kpi"><div class="k">Trials${modLbl}${srcBtn('trials')}</div>
+     <div class="v">${num(tr)}${chanIsMeta() ? deltaVs(tr, r => r.trials, num) : ''}</div>
      <div class="s">${offMatters(MT)
        ? `${num(MT.rows)} sit on the ad rows below · <span class="warn">${num(MT.off)}</span>
           name an ad with no spend in this window`
        : (DATA.event_note[EV]||EV)}${SEG==='blended' ? ''
-       : ` · ${segLbl} campaigns only`}</div></div>`
+       : ` · ${segLbl} campaigns only`}</div>
+     ${chanIsMeta() ? kpiSpark(r => r.trials) : ''}</div>`
    : `
    <div class="kpi"><div class="k">Budget/day${srcBtn('meta')}</div><div class="v">${rs(c.budget)}</div>
-     <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) + `
+     <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) +
+   `<div class="kband">Funnel</div>` + `
    <div class="kpi"><div class="k">${deg ? 'Ad sets' : 'Live'}</div>
      <div class="v">${num(c.active_adsets)}</div>
      <div class="s">${deg ? `with spend · ${num(c.active_ads)} ads (status unknown)`
@@ -1860,6 +1921,64 @@ function cacheAge(v, held){
 
 const longKey = () => `${BRAND}|${document.getElementById('lWin').value}`;
 const longFresh = () => !!(LONG && LONGKEY === longKey());
+
+/* The run-up behind a tile: fourteen settled days of one metric, drawn small.
+   Gaps stay gaps — a day the store does not hold is skipped, not plotted as zero, because
+   a chart people read for cliffs must not invent one. */
+function kpiSpark(pick){
+  const days = (PRIOR && PRIOR.series) || [];
+  const pts = days.map(pick).map(v => (v === null || v === undefined || !isFinite(v))
+                                      ? null : v);
+  const have = pts.filter(v => v !== null);
+  if(have.length < 3) return '';
+  const max = Math.max(...have), min = Math.min(...have);
+  const W = 96, H = 22, span = (max - min) || 1;
+  const x = i => (pts.length === 1 ? W/2 : (i * W) / (pts.length - 1));
+  const y = v => H - 2 - ((v - min) / span) * (H - 4);
+  let d = '', open = false;
+  pts.forEach((v, i) => {
+    if(v === null){ open = false; return; }
+    d += (open ? ' L' : ' M') + x(i).toFixed(1) + ',' + y(v).toFixed(1);
+    open = true;
+  });
+  if(!d) return '';
+  return `<svg class="kspark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
+    aria-hidden="true"><path d="${d.trim()}"/></svg>`;
+}
+
+/* The change against the most recent SETTLED day, for the windows where the matching
+   prior window is not in the store yet — which is every "Today", the view people live
+   in. Labelled with the date it is comparing against, because "vs yesterday" when it
+   means "vs the 28th" is the kind of small lie that costs trust in every other number. */
+function lastSettled(pick){
+  const days = ((PRIOR && PRIOR.series) || []).filter(r => pick(r) !== null
+                                                      && pick(r) !== undefined);
+  return days.length ? days[days.length - 1] : null;
+}
+
+/* A window that includes today is still growing. Comparing three hours of it against a
+   whole settled day produces "▼ 96%" at 2am — arithmetically true, and a lie about what
+   is happening. No comparison is better than a false one; the sparkline still shows the
+   shape either way. */
+function windowGrowing(){
+  const today = (DATA && DATA.generated_at || '').slice(0, 10);
+  return !!(today && DATA.until >= today);
+}
+
+function deltaVs(now, pick, fmt){
+  if(windowGrowing()) return '';
+  const ref = lastSettled(pick);
+  if(ref === null || !now) return '';
+  const was = pick(ref);
+  if(!was) return '';
+  const pct = 100 * (now - was) / was;
+  if(!isFinite(pct)) return '';
+  const d = new Date(ref.d + 'T00:00:00');
+  const when = d.toLocaleDateString(undefined, {day:'numeric', month:'short'});
+  const dir = pct >= 0 ? '▲' : '▼';
+  return `<span class="dlt ${pct >= 0 ? 'up' : 'down'}" title="${fmt(was)} on ${when}"
+    >${dir} ${Math.abs(pct).toFixed(0)}%</span><span class="dvs">vs ${when}</span>`;
+}
 
 function sparkline(daily){
   if(!daily || !daily.length) return '';
