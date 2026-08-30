@@ -1029,15 +1029,43 @@ function ago(sec){
    trials are Branch's, and someone watching one of them should not have to re-read the
    other to see it move. The label is that source's own age, so the button says how old
    the number under it is as well as offering to fix that. */
+function googAge(){
+  if(!GOOG || !GOOGAT) return null;
+  return (GOOG.age_min || 0) * 60 + Math.max(0, (Date.now() - GOOGAT) / 1000);
+}
+
+/* Which clock belongs to a tile depends on which channel is on screen: the Spend tile
+   shows Meta's money on Meta, Google's on Google, and both added together on Blended.
+   A button that re-read Meta while the tile showed Google's spend would leave the number
+   under it untouched and look broken -- which is exactly what the first version did. */
+const SRCS = {
+  meta:   {age: () => pullAge('meta_age_sec'),   what: 'Meta spend'},
+  trials: {age: () => pullAge('trials_age_sec'), what: 'Branch trials'},
+  google: {age: googAge,                          what: 'Google Ads'},
+  both:   {age: () => { const a = pullAge('meta_age_sec'), b = googAge();
+                        return (a === null || b === null) ? (a === null ? b : a)
+                                                          : Math.max(a, b); },
+           what: 'Meta and Google'},
+};
+
 function srcBtn(part){
-  const secs = pullAge(part === 'meta' ? 'meta_age_sec' : 'trials_age_sec');
-  if(secs === null) return '';
-  const lab = ago(secs).replace(' ago', '');
-  const what = part === 'meta' ? 'Meta spend' : 'Branch trials';
+  const src = SRCS[part];
+  const secs = src && src.age();
+  if(secs === null || secs === undefined) return '';
   return `<button class="rfr${secs > 2100 ? ' warn' : ''}" data-rfr="${part}"
-      title="${what} last read ${ago(secs)} — click to re-read ${
-        part === 'meta' ? 'Meta only' : 'Branch only'}"
-      aria-label="Refresh ${what}, last read ${ago(secs)}">↻ ${lab}</button>`;
+      title="${src.what} last read ${ago(secs)} — click to re-read ${
+        part === 'both' ? 'both' : src.what} only"
+      aria-label="Refresh ${src.what}, last read ${ago(secs)}">↻ ${
+        ago(secs).replace(' ago', '')}</button>`;
+}
+
+async function refreshMeta(){
+  const r = await fetch(`/api/refresh?part=meta&${apiQuery()}`);
+  const j = await r.json();
+  if(j.error) throw new Error(j.error);
+  lastFetchAt = Date.now();
+  cachePut('data|' + apiQuery(), j);
+  RAW = j; DATA = applyAttr(RAW);
 }
 
 async function refreshPart(part, btn){
@@ -1046,6 +1074,16 @@ async function refreshPart(part, btn){
   const was = btn.innerHTML;
   btn.classList.add('busy'); btn.innerHTML = '↻ …'; btn.disabled = true;
   try{
+    /* Google is its own endpoint and its own cache, so re-reading it is loadGoogle, not
+       a rebuild of the Meta payload. `both` does the two in turn — a blended tile is the
+       sum of two sources and is only as fresh as the staler one. */
+    if(part === 'google' || part === 'both'){
+      if(part === 'both') await refreshMeta();
+      await loadGoogle(true);
+      render(); stampNow();
+      document.getElementById('err').innerHTML = '';
+      return;
+    }
     const r = await fetch(`/api/refresh?part=${part}&${apiQuery()}`);
     const j = await r.json();
     if(j.error){
@@ -1545,10 +1583,10 @@ function kpis(){
            : gk===null ? (gt && gt.gwhy ? `unavailable — ${gt.gwhy}` : 'no conversions reported')
            : gap===null ? "Google's own attribution"
            : `${gap>0?'+':''}${gap.toFixed(0)}% vs Branch · same spend, its own count`}</div></div>
-       <div class="kpi"><div class="k">Spend${srcBtn('meta')}</div>
+       <div class="kpi"><div class="k">Spend${srcBtn('google')}</div>
          <div class="v">${sp ? rs(sp) : dash}</div>
          <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
-       <div class="kpi"><div class="k">Trials<span class="src branch">Branch</span>${srcBtn('trials')}</div>
+       <div class="kpi"><div class="k">Trials<span class="src branch">Branch</span>${srcBtn('google')}</div>
          <div class="v">${(waiting || tr === null) ? dash : num(tr)}</div>
          <div class="s">${waiting ? '<span class="spin"></span>loading Google'
            : tr === null ? `unavailable — ${(gt && gt.why) || 'Branch did not answer'}`
@@ -1558,7 +1596,7 @@ function kpis(){
          <div class="s">${gc===null ? 'unavailable, not zero'
            : cGap===null ? (gt.convEvent || 'the trial event')
            : `${cGap>0?'+':''}${cGap.toFixed(0)}% vs Branch's count`}</div></div>
-       <div class="kpi"><div class="k">Installs<span class="src branch">Branch</span></div>
+       <div class="kpi"><div class="k">Installs<span class="src branch">Branch</span>${srcBtn('google')}</div>
          <div class="v">${(waiting || ins === null) ? dash : num(ins)}</div>
          <div class="s">${ins && sp ? `${rs(sp/ins)} each`
            : ins === null ? 'unavailable, not zero' : 'no CPI yet'}</div></div>`;
@@ -1571,10 +1609,10 @@ function kpis(){
        <div class="s">${waiting ? '<span class="spin"></span>loading Google'
          : T===null ? `no target set · ${num(tr)} trials`
          : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`}</div></div>
-     <div class="kpi"><div class="k">Spend${srcBtn('meta')}</div>
+     <div class="kpi"><div class="k">Spend${srcBtn('both')}</div>
        <div class="v">${sp ? rs(sp) : dash}</div>
        <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
-     <div class="kpi"><div class="k">Trials${srcBtn('trials')}</div>
+     <div class="kpi"><div class="k">Trials${srcBtn('both')}</div>
        <div class="v">${(waiting || tr === null) ? dash : num(tr)}</div>
        <div class="s">${waiting ? '<span class="spin"></span>loading Google'
          : tr === null ? `unavailable — ${(gt && gt.why) || 'Branch did not answer'}`
@@ -1842,6 +1880,10 @@ let SERIES = null, SERIESKEY = null, SERIESBUSY = false;
 /* Google is its own payload for the same reason Longevity is: a different question with
    a different cost, fetched when the tab is opened and never before. */
 let GOOG = null, GOOGKEY = null, GOOGBUSY = false;
+/* When the Google payload arrived here. Its own `age_min` is how long it had sat in the
+   server's cache before that, and both are needed for the same reason the Meta clock
+   needs three: a figure is as old as the sum of every place it waited. */
+let GOOGAT = 0;
 /* Which channel's money the page is about. Meta is everything that was here before;
    Google is its own buying with its own campaigns; Blended is the only view where the
    two are added, and the only one that answers "what is a trial actually costing us". */
@@ -1994,7 +2036,7 @@ async function loadGoogle(force){
   GOOGBUSY = true;                         // before the first await; see loadSeries
   const hit = force ? null : await cacheGet('goog|' + key);
   if(hit){
-    GOOG = hit.v; GOOGKEY = key; GOOGBUSY = false;
+    GOOG = hit.v; GOOGKEY = key; GOOGBUSY = false; GOOGAT = Date.now();
     googPaint();
     if(hit.held < CACHE_SOFT) return;
     return loadGoogle(true);
@@ -2007,7 +2049,7 @@ async function loadGoogle(force){
     if(j.error){ document.getElementById('gcount').textContent = 'failed: ' + j.error; return; }
     cachePut('goog|' + key, j);
     if(googKey() !== key) return;
-    GOOG = j; GOOGKEY = key;
+    GOOG = j; GOOGKEY = key; GOOGAT = Date.now();
   }catch(e){
     document.getElementById('gcount').textContent = 'failed: ' + e;
   }finally{
