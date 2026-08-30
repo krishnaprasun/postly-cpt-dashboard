@@ -233,67 +233,19 @@ def brand_block(f, prev):
     return "\n".join(lines)
 
 
-def hour_strip(points, rows):
-    """The day so far, hour by hour, as the gap between consecutive pushes.
-
-    Stored points are cumulative today-so-far, so an hour is a subtraction. The first
-    point of the day has nothing before it -- it covers everything since midnight, which
-    is not an hour and is not shown as one.
-    """
-    if len(points) < 2:
-        return ""
-    want = [f["brand"] for f in rows]
-
-    def tot(p, k):
-        s = 0.0
-        for b in want:
-            v = ((p.get("brands") or {}).get(b) or {}).get(k)
-            if v is None:
-                return None
-            s += v
-        return s
-
-    out = []
-    for a, b in zip(points, points[1:]):
-        # An interval is only an hour if it was one. Two pushes ten minutes apart, or a
-        # gap where a run was missed, are real gaps between real numbers -- they are just
-        # not hours, and printing them under an "hour by hour" heading would be a lie.
-        gap = (b.get("ts") or 0) - (a.get("ts") or 0)
-        if not (20 * 60 <= gap <= 100 * 60):
-            continue
-        sp, tr = tot(a, "spend"), tot(b, "spend")
-        ta, tb = tot(a, "trials"), tot(b, "trials")
-        if sp is None or tr is None or ta is None or tb is None:
-            continue
-        d_sp, d_tr = tr - sp, tb - ta
-        if d_sp < 1 and d_tr < 1:
-            continue
-        # "10 PM", not "10:00 PM" — the minutes are always :00 and never the point.
-        label = (b.get("t") or b.get("at", "")).replace(":00", "")
-        out.append(f"{label} {rs(d_sp)}·{num(d_tr)}")
-    if not out:
-        return ""
-    # Say "all brands". Without it this reads as a fourth brand's numbers, or as the
-    # brand whose block it happens to sit under.
-    return "_Each hour, all brands together (spend · trials):_ " + " · ".join(out[-5:])
-
-
 def compose(rows, prev_by_brand, when, points=None, link=None):
-    """The whole message. Biggest spender first — that is the order they get read in."""
+    """The whole message. Biggest spender first — that is the order they get read in.
+
+    Nothing here adds the brands together. A blended CPT across Postly, Speakeasy and
+    Funda is a number nobody owns and nobody can act on: three different targets, three
+    different teams, and a total that moves because the mix moved. `points` is still
+    taken and still stored — the per-brand "last hour" figures are read from it.
+    """
     rows = sorted(rows, key=lambda f: -((f["total"]["spend"] if f["total"]["spend"]
                                          is not None else f["meta"]["spend"]) or 0))
-    sp = sum((f["total"]["spend"] if f["total"]["spend"] is not None
-              else f["meta"]["spend"]) or 0 for f in rows)
-    trs = [f["total"]["trials"] for f in rows]
-    tr = None if any(t is None for t in trs) else sum(trs)
-    c = cpt(sp, tr)
-    head = (f"*Ads · {when} IST* — spend {rs(sp)}"
-            + (f" · {num(tr)} trials · CPT {rs0(c)}" if c else " · trials pending"))
+    head = f"*Ads · today so far · {when} IST*"
     body = "\n".join(brand_block(f, prev_by_brand.get(f["brand"])) for f in rows)
     out = [head, "", body]
-    strip = hour_strip(points or [], rows)
-    if strip:
-        out += ["", strip]
     if link:
         out += ["", f"<{link}|Open the dashboard>"]
     return "\n".join(out)
