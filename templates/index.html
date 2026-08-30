@@ -143,11 +143,6 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 .kband::after{content:"";flex:1;height:1px;background:var(--line)}
 .kband:first-child{margin-top:0}
 
-/* The run-up, behind the number rather than beside it. */
-.kspark{display:block;width:100%;height:22px;margin:7px 0 0;overflow:visible}
-.kspark path{fill:none;stroke:var(--accent);stroke-width:1.6;stroke-linejoin:round;
-  stroke-linecap:round;opacity:.55;vector-effect:non-scaling-stroke}
-.kpi.hero .kspark path{opacity:.7}
 .dlt{font-weight:700;font-size:11.5px;margin:0 5px 0 8px;font-variant-numeric:tabular-nums;
   white-space:nowrap;letter-spacing:0}
 /* The value is 28px; without this the delta inherits its line box and the number breaks
@@ -1717,11 +1712,12 @@ function kpis(){
      say "over" — it cannot tell 5% over from 80% over, and those are different
      decisions. With the notch at 70%, the fill runs past it and stops at 143% of
      target, which is the range worth seeing. */
+  /* CPT for one stored day, for the comparison against the last settled day. */
+  const cptDay = r => (r.spend !== null && r.trials) ? r.spend / r.trials : null;
   const tbar = tpc === null ? '' : `<div class="tbar${
       tpc <= 1 ? '' : tpc <= 1.5 ? ' over' : ' bad'}"
       title="₹${Math.round(k)} against a ₹${Math.round(T)} target"
     ><i style="width:${Math.min(100, tpc * 70).toFixed(0)}%"></i></div>`;
-  const cptDay = r => (r.spend !== null && r.trials) ? r.spend / r.trials : null;
   document.getElementById('kpis').innerHTML =
    `<div class="kband">Performance</div>` +
    (trials ? `
@@ -1732,13 +1728,12 @@ function kpis(){
           look for the difference between them. */
        (chanIsMeta() && !priorDelta()) ? deltaVs(k, cptDay, rs) : ''}</div>
      <div class="s">${waiting ? '<span class="spin"></span>loading Google' : heroSub}</div>
-     ${chanIsMeta() ? tbar + kpiSpark(cptDay) : ''}</div>` : '') + `
+     ${chanIsMeta() ? tbar : ''}</div>` : '') + `
    <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend${srcBtn('meta')}</div>
      <div class="v">${rs(sp)}${chanIsMeta() ? deltaVs(sp, r => r.spend, rs) : ''}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
-             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div>
-     ${chanIsMeta() ? kpiSpark(r => r.spend) : ''}</div>` +
+             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
    (trials ? `
    <div class="kpi"><div class="k">Trials${modLbl}${srcBtn('trials')}</div>
      <div class="v">${num(tr)}${chanIsMeta() ? deltaVs(tr, r => r.trials, num) : ''}</div>
@@ -1746,8 +1741,7 @@ function kpis(){
        ? `${num(MT.rows)} sit on the ad rows below · <span class="warn">${num(MT.off)}</span>
           name an ad with no spend in this window`
        : (DATA.event_note[EV]||EV)}${SEG==='blended' ? ''
-       : ` · ${segLbl} campaigns only`}</div>
-     ${chanIsMeta() ? kpiSpark(r => r.trials) : ''}</div>`
+       : ` · ${segLbl} campaigns only`}</div></div>`
    : `
    <div class="kpi"><div class="k">Budget/day${srcBtn('meta')}</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) +
@@ -1935,30 +1929,6 @@ function cacheAge(v, held){
 
 const longKey = () => `${BRAND}|${document.getElementById('lWin').value}`;
 const longFresh = () => !!(LONG && LONGKEY === longKey());
-
-/* The run-up behind a tile: fourteen settled days of one metric, drawn small.
-   Gaps stay gaps — a day the store does not hold is skipped, not plotted as zero, because
-   a chart people read for cliffs must not invent one. */
-function kpiSpark(pick){
-  const days = (PRIOR && PRIOR.series) || [];
-  const pts = days.map(pick).map(v => (v === null || v === undefined || !isFinite(v))
-                                      ? null : v);
-  const have = pts.filter(v => v !== null);
-  if(have.length < 3) return '';
-  const max = Math.max(...have), min = Math.min(...have);
-  const W = 96, H = 22, span = (max - min) || 1;
-  const x = i => (pts.length === 1 ? W/2 : (i * W) / (pts.length - 1));
-  const y = v => H - 2 - ((v - min) / span) * (H - 4);
-  let d = '', open = false;
-  pts.forEach((v, i) => {
-    if(v === null){ open = false; return; }
-    d += (open ? ' L' : ' M') + x(i).toFixed(1) + ',' + y(v).toFixed(1);
-    open = true;
-  });
-  if(!d) return '';
-  return `<svg class="kspark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none"
-    aria-hidden="true"><path d="${d.trim()}"/></svg>`;
-}
 
 /* The change against the most recent SETTLED day, for the windows where the matching
    prior window is not in the store yet — which is every "Today", the view people live
