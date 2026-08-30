@@ -138,7 +138,9 @@ def load(force=False):
                     "brands": _brands(rec.get("brands")),
                     "role": _role(rec.get("role")),
                     "note": str(rec.get("note") or "")[:120],
-                    "by": rec.get("by", ""), "at": rec.get("at", 0)}
+                    "by": rec.get("by", ""), "at": rec.get("at", 0),
+                    "edited_by": rec.get("edited_by", ""),
+                    "edited_at": rec.get("edited_at", 0)}
     if ok:
         _cache.update({"at": now, "users": users, "ok": True,
                        "good": users, "good_at": now})
@@ -170,8 +172,9 @@ def save(users, by):
     if not (KV.available() or H.available()):
         return False, "No store is configured, so there is nowhere to save."
     # force=True so this is a fresh read, never the degraded copy: saving on top of a
-    # list we could not verify is how a directory gets silently truncated.
-    _, ok = load(force=True)
+    # list we could not verify is how a directory gets silently truncated. The records
+    # themselves are needed too — see the attribution below.
+    prev, ok = load(force=True)
     if not ok:
         return False, ("Could not read the current list, so saving would risk deleting "
                        "it. Try again in a moment.")
@@ -190,10 +193,20 @@ def save(users, by):
             # An account with no brands can sign in and see nothing, which reads as a
             # broken dashboard rather than as an access decision. Refuse it here.
             return False, f"{e} has no brands. Give at least one, or remove the address."
+        # "Added" means added — so it is stamped once, when the address first appears,
+        # and carried forward untouched afterwards. Re-stamping every record on every
+        # save made the last person to press Save the author of the whole list: eleven
+        # people all credited to whoever edited most recently, which is both wrong and
+        # unfalsifiable, since the real attribution had already been overwritten.
+        was = prev.get(e)
         clean.append({"email": e, "name": str(rec.get("name") or "").strip()[:80],
                       "brands": brands, "role": role,
                       "note": str(rec.get("note") or "")[:120],
-                      "by": by, "at": int(time.time())})
+                      "by": (was or {}).get("by") or by,
+                      "at": (was or {}).get("at") or int(time.time()),
+                      # Who touched it last, kept separately so neither question has to
+                      # be answered with the other's data.
+                      "edited_by": by, "edited_at": int(time.time())})
     doc = {"users": clean, "by": by, "at": int(time.time())}
     # Both stores, and one is enough. A directory that saved to the KV and not to the
     # mirror is saved; refusing there would make the app less available, not safer.
