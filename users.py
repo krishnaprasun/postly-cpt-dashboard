@@ -55,10 +55,19 @@ ROLES = ("super", "member", "viewer")
 ROLE_LABELS = {"super": "Admin", "member": "Member", "viewer": "View only"}
 
 
+# The role is called Admin everywhere a person reads it and stored as "super" everywhere
+# a machine does. Anyone writing one by hand -- in GOOGLE_AUTH_MAP, say -- will write the
+# word they were shown, so accept it.
+ALIASES = {"admin": "super", "superadmin": "super", "super_admin": "super",
+           "view": "viewer", "view only": "viewer", "view_only": "viewer",
+           "readonly": "viewer", "read only": "viewer"}
+
+
 def _role(r):
     """Anything unrecognised reads as the LEAST privileged role, never the most. A typo
     in a stored record should cost someone an export button, not hand them the keys."""
     r = str(r or "").strip().lower()
+    r = ALIASES.get(r, r)
     return r if r in ROLES else "viewer"
 
 

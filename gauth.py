@@ -56,10 +56,16 @@ def domains():
 
 
 def _map():
-    """{email: [brands]} from GOOGLE_AUTH_MAP.
+    """{email: (role, [brands])} from GOOGLE_AUTH_MAP.
 
-    Accepts JSON ({"a@b.com": "all"}) or the flatter `a@b.com=funda,postly; c@b.com=all`,
-    because one of those is going to be typed into a Render field by hand.
+    Accepts JSON ({"a@b.com": "viewer:all"}) or the flatter
+    `a@b.com=viewer:funda,postly; c@b.com=admin:all`, because one of those is going to be
+    typed into a Render field by hand.
+
+    The role is explicit and optional. Inferring it from the brand count -- which this did
+    -- makes anyone with access to all three an ADMIN, and the directory has view-only
+    people who can see all three. That is a promotion by accident, in the fallback that
+    only runs when the real directory is unreachable and nobody is watching.
     """
     raw = _env("GOOGLE_AUTH_MAP")
     if not raw:
@@ -71,8 +77,11 @@ def _map():
         else:
             pairs = (p.split("=", 1) for p in raw.replace("\n", ";").split(";")
                      if "=" in p)
-        for email, brands in pairs:
-            out[email.strip().lower()] = _brands(brands)
+        for email, spec in pairs:
+            spec = str(spec)
+            role, _, brands = spec.partition(":") if ":" in spec else ("", "", spec)
+            out[email.strip().lower()] = (U._role(role) if role.strip() else None,
+                                          _brands(brands))
     except Exception:
         # A malformed map must not lock everyone out AND must not let everyone in. It
         # grants nothing, which the sign-in page reports as "no brands".
@@ -114,13 +123,15 @@ def caps_for(email, hd=""):
     dom = email.rpartition("@")[2]
     if doms and dom not in doms and (hd or "").lower() not in doms:
         return None
-    brands = _map().get(email)
-    if brands is None:
-        brands = _brands(_env("GOOGLE_AUTH_DEFAULT"))
+    got = _map().get(email)
+    if got is None:
+        role, brands = None, _brands(_env("GOOGLE_AUTH_DEFAULT"))
+    else:
+        role, brands = got
     if not brands:
         return None
-    return dict(U.caps("super" if len(brands) == len(C.BRANDS) else "member",
-                       brands, email), via="google")
+    # No role given falls to the LEAST privileged, never the most.
+    return dict(U.caps(role or "viewer", brands, email), via="google")
 
 
 # ---- the flow ---------------------------------------------------------------
