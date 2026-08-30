@@ -273,7 +273,9 @@ def hour_strip(points, rows):
         out.append(f"{label} {rs(d_sp)}·{num(d_tr)}")
     if not out:
         return ""
-    return "_Each hour (spend · trials):_ " + " · ".join(out[-5:])
+    # Say "all brands". Without it this reads as a fourth brand's numbers, or as the
+    # brand whose block it happens to sit under.
+    return "_Each hour, all brands together (spend · trials):_ " + " · ".join(out[-5:])
 
 
 def compose(rows, prev_by_brand, when, points=None, link=None):
