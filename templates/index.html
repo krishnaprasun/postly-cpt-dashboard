@@ -1620,19 +1620,19 @@ function kpis(){
    <div class="kpi hero"><div class="k">Current CPT · ${segLbl}${chanIsMeta()?modLbl:''}</div>
      <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
      <div class="s">${waiting ? '<span class="spin"></span>loading Google' : heroSub}</div></div>` : '') + `
-   <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend</div><div class="v">${rs(sp)}</div>
+   <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend${srcBtn('meta')}</div><div class="v">${rs(sp)}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
              : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
    (trials ? `
-   <div class="kpi"><div class="k">Trials${modLbl}</div><div class="v">${num(tr)}</div>
+   <div class="kpi"><div class="k">Trials${modLbl}${srcBtn('trials')}</div><div class="v">${num(tr)}</div>
      <div class="s">${offMatters(MT)
        ? `${num(MT.rows)} sit on the ad rows below · <span class="warn">${num(MT.off)}</span>
           name an ad with no spend in this window`
        : (DATA.event_note[EV]||EV)}${SEG==='blended' ? ''
        : ` · ${segLbl} campaigns only`}</div></div>`
    : `
-   <div class="kpi"><div class="k">Budget/day</div><div class="v">${rs(c.budget)}</div>
+   <div class="kpi"><div class="k">Budget/day${srcBtn('meta')}</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) + `
    <div class="kpi"><div class="k">${deg ? 'Ad sets' : 'Live'}</div>
      <div class="v">${num(c.active_adsets)}</div>
