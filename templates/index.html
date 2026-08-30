@@ -36,14 +36,29 @@ header{position:sticky;top:0;z-index:20;background:rgba(253,252,247,.93);
    items after a spacer, so on a narrow window the spacer ate row one and they wrapped
    onto row two individually, left-aligned under the logo. As one group with margin-left
    auto they stay right-aligned whether they wrap or not. */
-.acts{display:flex;gap:13px;align-items:center;margin-left:auto}
+.acts{display:flex;gap:8px;align-items:center;margin-left:auto}
+/* One button height across the bar. The tool buttons are injected by another module with
+   their own look, which is theirs to keep — but a row where every control is a different
+   height reads as five unrelated things rather than one toolbar. */
+.acts .btn,.acts #toolBtns > *{height:32px}
+.acts .btn{display:inline-flex;align-items:center}
+#toolBtns{display:flex;gap:8px;align-items:center}
+.hsep.tall{height:20px;margin:0 3px}
 /* Only the genuinely redundant part is dropped when space is tight: the window dates are
    already stated by the range picker sitting beside them. The scope pill stays at every
    width — it is the one label that changes how every number on the page should be read,
    and hiding it on a narrow window would hide it from exactly the people most likely to
    misread the page. */
 @media (max-width:1180px){ h1 span#win{display:none} }
-.brand{display:flex;align-items:center;gap:10px;margin-right:4px}
+.brand{display:flex;align-items:center;gap:11px;margin-right:4px}
+/* Name over role, the way a masthead works. They were side by side separated by a dot,
+   which made the tool's name read as part of the brand's and gave neither any weight. */
+.lockup{display:flex;flex-direction:column;justify-content:center;gap:0;line-height:1.1}
+.eyebrow{font-size:9.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--faint);margin-top:2px}
+.winwrap{display:flex;flex-direction:column;justify-content:center;gap:1px;line-height:1.25}
+.winwrap #win{font-size:12.5px;font-weight:600;color:var(--muted)}
+.winwrap .meta{font-size:11px;color:var(--faint)}
 /* The logo carries the brand, so it is sized to be recognised rather than decorative.
    A fixed square box with object-fit keeps a 512px app icon and a wordmark SVG on the
    same baseline without either being stretched. */
@@ -387,7 +402,7 @@ header{padding-bottom:0}
 /* The brand leads and the tool's name follows it, quieter — you are looking at
    SpeakEasy, in the Ads Performance dashboard, in that order of importance. Postly is
    one of the BRANDS, so it cannot also be the product's first name. */
-h1 em{color:var(--faint);font-style:normal;font-weight:600;font-size:.82em;
+h1 em{color:var(--faint);font-style:normal;font-weight:600;font-size:.82em;display:none;
   letter-spacing:.01em}
 h1 em::before{content:"·";margin:0 7px 0 5px;color:var(--line)}
 
@@ -624,14 +639,22 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
            what this tool is. The brand was the whole title before and the tool had no
            name; naming the tool should not have cost the brand its place, because the
            brand is the one that changes under you. -->
-      <h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span>
-        <em>Ads Performance</em></h1>
+      <div class="lockup">
+        <h1><span id="bname">{{ brands|selectattr("key","equalto",default_brand)|map(attribute="label")|first }}</span></h1>
+        <div class="eyebrow">Ads Performance</div>
+      </div>
       <span class="hsep"></span>
-      <span id="win"></span>
+      <!-- Which window, and how fresh it is: two facts about the same thing, so they
+           stack as one block instead of sitting at opposite ends of the bar with five
+           buttons between them. -->
+      <div class="winwrap">
+        <span id="win"></span>
+        <div class="meta" id="stamp"></div>
+      </div>
     </div>
     <div class="acts">
       <div id="toolBtns" class="toolbtns"></div><!-- tools: Competitor Intel + Meta Control (static/*.js) -->
-      <div class="meta" id="stamp"></div>
+      <span class="hsep tall"></span>
       {% if can_export %}<div class="expwrap" id="expwrap">
         <button class="btn" id="expBtn" disabled>Export ▾</button>
         <div class="expmenu" id="expMenu">
