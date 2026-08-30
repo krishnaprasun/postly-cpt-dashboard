@@ -1051,13 +1051,17 @@ def api_precompute():
     wins = ([int(request.args["days"])] if request.args.get("days")
             else list(P.LONG_WINDOWS))
     out = []
-    for b in brands:
-        for w in wins:
-            try:
-                out.append(P.precompute_longevity(b, w))
-            except Exception as e:
-                traceback.print_exc()
-                out.append({"ok": False, "brand": b, "days": w, "error": str(e)[:200]})
+    # `?longevity=0` warms a fold and nothing else. Both halves of this endpoint are
+    # minutes of work; asked for together they run past the worker timeout and neither
+    # finishes, so a caller that wants one says so.
+    if request.args.get("longevity", "1") != "0":
+        for b in brands:
+            for w in wins:
+                try:
+                    out.append(P.precompute_longevity(b, w))
+                except Exception as e:
+                    traceback.print_exc()
+                    out.append({"ok": False, "brand": b, "days": w, "error": str(e)[:200]})
     # Warm the daily series so nobody waits for a fold. A 30-day ad-set fold measures
     # ~116s — long past the point where someone decides the tab is broken — and only the
     # `script` dimension was ever warmed, so every other one was paid for by whoever
