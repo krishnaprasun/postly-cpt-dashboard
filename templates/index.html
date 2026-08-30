@@ -131,8 +131,8 @@ td.sparkcell{padding:4px 13px;width:126px}
 
 main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:13px;margin-bottom:20px}
-.kpi{background:var(--white);border:1px solid var(--line);border-radius:14px;padding:14px 16px;
-  box-shadow:var(--shadow)}
+.kpi{background:var(--white);border:1px solid var(--line);border-radius:14px;
+  padding:14px 16px 30px;box-shadow:var(--shadow);position:relative}
 .kpi .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);
   font-weight:650}
 .kpi .v{font-size:28px;font-weight:680;margin-top:6px;letter-spacing:-.9px;
@@ -169,15 +169,20 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* Names the question the grid is answering while it is still being built: the two
    things that were just changed, so a switch is acknowledged before any data arrives. */
 .kpi .s em{font-style:normal;color:var(--faint)}
-/* Sits in the card's own heading row, right-aligned: the clock belongs to that number,
-   and so does the button that fixes it. */
-.kpi .k{display:flex;align-items:center;gap:6px}
-.rfr{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font:inherit;
+/* At the FOOT of the card, not in its heading. In the heading it pushed titles onto a
+   second line — "CURRENT CPT · TRIAL ·" over "PRO RATA" — and landed at a different
+   height on every tile, because every subtitle is a different length. Pinned to the
+   bottom, every card reserves the same strip and every control sits on one line across
+   the row, whether or not that card has one. */
+.rfr{position:absolute;left:15px;bottom:9px;display:inline-flex;align-items:center;
+  gap:4px;font:inherit;
   font-size:10.5px;font-weight:600;letter-spacing:0;text-transform:none;
   color:var(--faint);background:none;border:1px solid transparent;border-radius:99px;
   padding:2px 7px;cursor:pointer;white-space:nowrap;transition:.13s}
 .rfr:hover:not(:disabled){color:var(--accent-dk);border-color:var(--accent);
   background:var(--accent-lt)}
+/* The hero card carries a left accent bar; nudge clear of it. */
+.kpi.hero .rfr{left:18px}
 .rfr:disabled{opacity:.55;cursor:default}
 .rfr.warn{color:var(--bad)}
 .rfr.busy{color:var(--accent-dk);border-color:var(--line)}
