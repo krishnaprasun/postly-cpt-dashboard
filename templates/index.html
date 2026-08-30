@@ -151,6 +151,19 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    aria-label -- three places, none of them the middle of the toolbar. */
 .btn.signin{border-color:var(--accent);color:var(--accent-dk);font-weight:650}
 .btn.signin:hover{background:var(--accent-lt)}
+/* Names the question the grid is answering while it is still being built: the two
+   things that were just changed, so a switch is acknowledged before any data arrives. */
+.mcap{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:12.5px;
+  color:var(--muted);padding:0 2px 9px}
+.mcap b{color:var(--ink);font-weight:650}
+.mcap span{display:inline-flex;align-items:center;gap:6px;color:var(--faint)}
+/* A metric switch lands in a tenth of a second, which is a switch nobody sees. The
+   heading names the dimension and the metric; flashing it draws the eye to the one line
+   that changed. */
+@keyframes mxflash{from{background:var(--accent-lt)}to{background:transparent}}
+h3.flash{animation:mxflash 1s ease-out;border-radius:6px;
+  box-shadow:0 0 0 5px var(--accent-lt)}
+@media(prefers-reduced-motion:reduce){h3.flash{animation:none;box-shadow:none}}
 .whowrap{position:relative}
 .whobtn{display:inline-flex;align-items:center;gap:5px;background:none;border:0;padding:2px;
   border-radius:99px;cursor:pointer;font:inherit;color:var(--muted)}
@@ -2028,6 +2041,8 @@ const THIN_AT = 12, TIP_MAX = 12, LEGEND_MAX = 24;
    of the spend and rank 61 had still spent Rs24,000, so "top N" was not a summary of the
    spend, it was a slice of it. `MPER = 0` means one page with everything on it. */
 let MPER = 100, MPAGE = 0;
+/* The dimension+metric the grid last drew, so a change to either can be pointed out. */
+let MXSIG = '';
 /* Sorted by period total, descending, to open the way it always did. `key` is 'name',
    'platform', 'stage', 'total', or a date string -- clicking a day column sorts by that
    day, which is the question the grid exists to answer. */
@@ -2259,6 +2274,11 @@ async function loadSeries(force, quiet){
   SERIESBUSY = !quiet;
   document.getElementById('scount').innerHTML = quiet
     ? '<span class="spin"></span>updating' : CNT;
+  /* Repaint NOW. Without this the old dimension's grid sat on screen, unchanged and
+     unlabelled, for the thirty to sixty seconds the new fold takes -- so changing
+     Dimension looked like it had done nothing, and the numbers being read were the
+     previous dimension's. */
+  if(!quiet && (TAB === 'trends' || TAB === 'matrix')) renderTable();
   try{
     /* Google's series is a different endpoint returning the SAME shape, so everything
        below this line -- the chart, the grid, paging, sorting, the hover read-out, the
@@ -2455,8 +2475,11 @@ function bindTrendHover(){
 function renderMatrix(){
   const box = document.getElementById('matrixWrap');
   if(!SERIES){
+    const want = document.querySelector('#sDim option[value="' + sDim() + '"]');
     box.innerHTML = SERIESBUSY
-      ? `<div class="panel" style="padding-bottom:10px">
+      ? `<div class="mcap"><b>${want ? want.textContent.trim() : ''}</b> · ${
+             metricOf().label}<span><span class="spin"></span>building this view…</span></div>
+         <div class="panel" style="padding-bottom:10px">
            <h3><span class="skl" style="width:230px;display:inline-block"></span></h3>
            <p class="sub"><span class="skl" style="width:55%;display:inline-block"></span></p>
          </div>
@@ -2558,7 +2581,7 @@ function renderMatrix(){
     </div>` : '';
 
   box.innerHTML = `<div class="panel" style="padding-bottom:10px">
-      <h3>${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}-by-date matrix · ${m.label}</h3>
+      <h3 id="mxh">${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}-by-date matrix · ${m.label}</h3>
       <p class="sub">${num(all.length)} row(s)${SERIES.truncated
         ? ` (capped — the fold hit its ceiling)` : ''}, ${SERIES.since} to ${SERIES.until}.
         Click any column heading to sort by it, a day column included. Scroll sideways for
@@ -2584,6 +2607,19 @@ function renderMatrix(){
     renderMatrix();
     document.getElementById('matrixWrap').scrollIntoView({block:'start'});
   });
+
+  /* Flash the heading only when the QUESTION changed — not on paging, sorting or
+     filtering, which repaint constantly. A heading that flashes at everything stops
+     meaning anything. */
+  const sig = SERIES.dim + '|' + sMetric();
+  if(MXSIG && MXSIG !== sig){
+    const h = document.getElementById('mxh');
+    if(h){
+      h.classList.add('flash');
+      setTimeout(() => h.classList.remove('flash'), 1000);
+    }
+  }
+  MXSIG = sig;
 }
 
 function matrixCsv(){
