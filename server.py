@@ -1058,18 +1058,23 @@ def api_precompute():
             except Exception as e:
                 traceback.print_exc()
                 out.append({"ok": False, "brand": b, "days": w, "error": str(e)[:200]})
-    # Warm the daily series for the combination the Trends and Matrix tabs open on.
-    # The fold is 15-25s cold, which on a woken free instance is long enough that someone
-    # concludes the tab is broken. Warming it here costs the nightly job a few seconds and
-    # nobody else anything. Only the default window and dimension: warming every
-    # combination would be spending Meta quota on views that may never be opened.
+    # Warm the daily series so nobody waits for a fold. A 30-day ad-set fold measures
+    # ~116s — long past the point where someone decides the tab is broken — and only the
+    # `script` dimension was ever warmed, so every other one was paid for by whoever
+    # opened it first.
+    #
+    # `?series=adset` warms that dimension instead. One dimension per call on purpose:
+    # warming three brands x three dimensions in a single request would run past the
+    # worker timeout and warm nothing at all.
     warmed = []
-    if request.args.get("series", "1") != "0":
+    want_dim = request.args.get("series", "1")
+    if want_dim != "0":
+        dim = want_dim if want_dim in P.DIM_LABELS else "script"
         since, until = P.series_window()
         for b in brands:
             try:
-                r = P.series(b, since, until, dim="script", force=True)
-                warmed.append({"brand": b, "rows": r.get("total_rows"),
+                r = P.series(b, since, until, dim=dim, force=True)
+                warmed.append({"brand": b, "dim": dim, "rows": r.get("total_rows"),
                                "days": len(r.get("dates") or []),
                                "window": f"{since}..{until}"})
             except Exception as e:
