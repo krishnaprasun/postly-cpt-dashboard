@@ -37,6 +37,30 @@ td{padding:12px 16px;border-bottom:1px solid var(--line2);vertical-align:middle}
 tr:last-child td{border-bottom:0}
 tr.new td{background:var(--accent-lt)}
 .em{font-weight:600;word-break:break-all}
+/* The summary answers "who has access" before the table is read at all, and the filter
+   is what keeps this page usable at forty people rather than eleven. */
+.bar{display:flex;align-items:center;gap:14px;margin:0 0 12px;flex-wrap:wrap}
+.tally{font-size:13px;color:var(--muted)}
+.tally .going{color:var(--bad);font-weight:600}
+#q{margin-left:auto;min-width:250px;font:inherit;font-size:13.5px;padding:7px 11px;
+  border:1px solid var(--line);border-radius:9px;background:var(--white);color:var(--ink)}
+#q:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-lt)}
+
+/* A person, not a row: the same initials mark the dashboard header uses, so someone
+   looks like the same someone in both places. */
+.who{display:flex;align-items:center;gap:10px}
+.idy{min-width:0;flex:1}
+.ini{flex:none;width:30px;height:30px;border-radius:99px;display:grid;place-items:center;
+  background:var(--panel);color:var(--muted);font-size:11px;font-weight:700;
+  letter-spacing:.02em}
+.ini.adm{background:var(--accent-lt);color:var(--accent-dk)}
+
+/* Marked for removal, not gone. Struck through and reversible until Save. */
+tr.drop td{background:var(--badlt)}
+tr.drop .nameinp,tr.drop .sub{text-decoration:line-through;opacity:.65}
+tr.drop .ini{background:var(--badlt);color:var(--bad)}
+.btn.undo{padding:4px 11px;font-size:12.5px;color:var(--bad);border-color:#EBC7C2}
+.btn.rm{padding:4px 11px;font-size:12.5px}
 /* Reads as the name it is until you go near it, then admits it is a field. A row of
    boxed inputs turns a directory into a form. */
 .nameinp{font:inherit;font-weight:600;font-size:14.5px;color:var(--ink);width:100%;
@@ -72,9 +96,8 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
 .btn.go{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.go:hover:not(:disabled){background:var(--accent-dk);border-color:var(--accent-dk)}
 .btn:disabled{opacity:.4;cursor:default}
-.btn.rm{border:0;background:none;color:var(--faint);padding:5px 8px;font-size:17px;
-  line-height:1;border-radius:7px}
-.btn.rm:hover{color:var(--bad);background:var(--badlt)}
+.btn.rm{color:var(--muted)}
+.btn.rm:hover{color:var(--bad);background:var(--badlt);border-color:#EBC7C2}
 .addrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:12px 16px;
   background:var(--panel);border-top:1px solid var(--line)}
 
@@ -126,6 +149,12 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
 </div></header>
 
 <div class="wrap">
+  <div class="bar">
+    <div class="tally" id="tally"></div>
+    <input type="search" id="q" placeholder="Filter by name, email or brand…"
+           autocomplete="off" spellcheck="false">
+  </div>
+
   <div class="card">
     <table>
       <thead><tr>
@@ -228,20 +257,59 @@ function when(u){
     (by ? `<div class="sub" title="${esc(u.by)}">by ${esc(by)}</div>` : '');
 }
 
+/* Initials from the name where there is one, from the address where there is not — the
+   same mark the dashboard header uses, so a person looks like the same person in both
+   places. */
+function initials(u){
+  const src = (u.name || u.email.split('@')[0]).replace(/[._-]+/g, ' ').trim();
+  const parts = src.split(/\s+/).filter(Boolean);
+  return ((parts[0] || '?')[0] + (parts.length > 1 ? parts[parts.length-1][0] : ''))
+         .toUpperCase();
+}
+
+function tally(){
+  const n = USERS.length;
+  const by = r => USERS.filter(u => u.role === r).length;
+  const bits = [`${n} ${n === 1 ? 'person' : 'people'}`];
+  for(const r of ROLES){ const c = by(r.key); if(c) bits.push(`${c} ${r.label.toLowerCase()}`); }
+  const gone = USERS.filter(u => u.drop).length;
+  document.getElementById('tally').innerHTML = bits.join(' · ')
+    + (gone ? ` · <span class="going">${gone} to remove</span>` : '');
+}
+
+function match(u){
+  const q = (document.getElementById('q').value || '').trim().toLowerCase();
+  if(!q) return true;
+  return (u.name || '').toLowerCase().includes(q)
+      || u.email.toLowerCase().includes(q)
+      || u.brands.some(b => ((BRANDS.find(x => x.key === b) || {}).label || b)
+                              .toLowerCase().includes(q));
+}
+
 function draw(){
-  document.getElementById('rows').innerHTML = USERS.length ? USERS.map((u, i) => `
-    <tr class="${u.at ? '' : 'new'}">
-      <td><input class="nameinp" data-name="${i}" value="${esc(u.name || '')}"
+  const shown = USERS.map((u, i) => [u, i]).filter(([u]) => match(u));
+  document.getElementById('rows').innerHTML = shown.length ? shown.map(([u, i]) => `
+    <tr class="${u.drop ? 'drop' : u.at ? '' : 'new'}">
+      <td><div class="who">
+        <span class="ini ${u.role === 'super' ? 'adm' : ''}">${esc(initials(u))}</span>
+        <div class="idy">
+          <input class="nameinp" data-name="${i}" value="${esc(u.name || '')}"
                  placeholder="Add name" aria-label="Name for ${esc(u.email)}">
-        <div class="sub">${esc(u.email)}${
-          u.email === ME ? ' · that’s you' : ''}</div></td>
+          <div class="sub">${esc(u.email)}${
+            u.email === ME ? ' · <b>you</b>' : ''}</div>
+        </div></div></td>
       <td>${brandCell(u, i)}</td>
       <td>${roleCell(u, i)}</td>
       <td>${when(u)}</td>
       <td style="text-align:right">${
         u.bootstrap ? ''
-        : `<button class="btn rm" data-rm="${i}" title="Remove ${esc(u.email)}">×</button>`}</td>
-    </tr>`).join('') : '<tr><td colspan="5" class="muted">Nobody yet.</td></tr>';
+        : u.drop ? `<button class="btn undo" data-undo="${i}">Undo</button>`
+        : `<button class="btn rm" data-rm="${i}"
+             title="Remove ${esc(u.email)}">Remove</button>`}</td>
+    </tr>`).join('')
+    : `<tr><td colspan="5" class="muted">${USERS.length ? 'Nobody matches that.'
+                                                       : 'Nobody yet.'}</td></tr>`;
+  tally();
 }
 
 const rows = document.getElementById('rows');
@@ -270,12 +338,16 @@ rows.addEventListener('change', e => {
   cb.parentElement.classList.toggle('on', cb.checked);
   mark(true);
 });
+/* Removal marks the row rather than deleting it, until Save. A row that vanishes on a
+   click gives you nothing to check before committing and no way back if it was the wrong
+   one — and this list is the difference between a colleague having access and not. */
 rows.addEventListener('click', e => {
   const rm = e.target.closest('button[data-rm]');
-  if(!rm) return;
-  USERS.splice(+rm.dataset.rm, 1);
-  draw(); mark(true);
+  if(rm){ USERS[+rm.dataset.rm].drop = true; draw(); mark(true); return; }
+  const un = e.target.closest('button[data-undo]');
+  if(un){ delete USERS[+un.dataset.undo].drop; draw(); mark(true); }
 });
+document.getElementById('q').addEventListener('input', draw);
 
 const nb = document.getElementById('newBrands');
 nb.innerHTML = BRANDS.map(b =>
@@ -353,7 +425,7 @@ document.getElementById('save').onclick = async () => {
       /* Bootstrap rows go too. Their role and brands are forced back on the server,
          so nothing here can demote them — but their NAME is not a permission, and
          filtering them out was silently discarding it. */
-      body: JSON.stringify({users: USERS})});
+      body: JSON.stringify({users: USERS.filter(u => !u.drop)})});
     const j = await r.json();
     if(!r.ok){ msg(j.error || 'Could not save.', 'err'); btn.disabled = false; return; }
     USERS = j.users; draw(); mark(false);
