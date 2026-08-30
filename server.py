@@ -1204,6 +1204,14 @@ def api_snapshot():
 def _noindex(resp):
     """Nothing here should ever turn up in a search result."""
     resp.headers["X-Robots-Tag"] = "noindex, nofollow, noarchive"
+    # And the page itself is never cached. Flask sends no Cache-Control on a rendered
+    # template, so browsers fall back to heuristic caching and can serve the HTML from
+    # disk without asking — which pins that tab to an OLD app version, and the version
+    # stamp is what retires the browser's cached payloads. A config change then looks
+    # ignored: the server had the new CPT target within seconds, and the tab kept
+    # drawing the old one out of its own cache with no way to know.
+    if (resp.headers.get("Content-Type") or "").startswith("text/html"):
+        resp.headers["Cache-Control"] = "no-store, must-revalidate"
     return resp
 
 
