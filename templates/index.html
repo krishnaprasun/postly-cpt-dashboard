@@ -297,6 +297,20 @@ td{padding:6px 13px;border-bottom:1px solid var(--line2);text-align:right;white-
    identical grey hide the shape of the spend: Funda's three accounts are 55/40/5 and read
    the same. A bar costs no width and no reading. */
 td.name{position:relative}
+/* Cost columns carry a wash of their verdict. Kept very light: it has to survive being
+   read next to a white row without turning the table into a heat map of itself. */
+td.heat.good{background:var(--green-lt)}
+td.heat.warn{background:var(--gold-lt)}
+td.heat.bad{background:var(--red-lt)}
+tbody tr.idle td{color:var(--faint)}
+tbody tr.idle td.name{color:var(--muted)}
+tbody tr.idle td.heat{background:none}
+/* The row under the cursor, whole. Following one row across fifteen columns of numbers
+   was an act of concentration; now it is not. */
+tbody tr:hover td{background:var(--panel2)}
+tbody tr:hover td.heat.good{background:var(--green-lt)}
+tbody tr:hover td.heat.warn{background:var(--gold-lt)}
+tbody tr:hover td.heat.bad{background:var(--red-lt)}
 /* Low and short: it is a hint at the shape of the spend, read out of the corner of the
    eye, not a chart. At full height and .09 it drew as a block behind the name and
    competed with the text it was meant to be under. */
@@ -3268,8 +3282,12 @@ function cell(o, c){
   if(c.kind==='sub') return `<td class="sub" title="${o[c.k]||''}">${o[c.k]||'—'}</td>`;
   if(c.kind==='rs')  return `<td>${o[c.k] ? rs(o[c.k]) : '—'}</td>`;
   if(c.kind==='num') return `<td>${o[c.k] ? num(o[c.k]) : '<span class="dimtxt">0</span>'}</td>`;
-  if(c.kind==='cpt') return `<td class="${cls(o.cpt)}">${cptTxt(o.spend, o.trials)}</td>`;
-  if(c.kind==='cpm') return `<td class="${cls(o.cpm)}">${cptTxt(o.spend, o.cp_mandates)}</td>`;
+  /* `heat` tints the cell, not just the figure. A column of green and amber NUMBERS is
+     read one row at a time; a column of tinted cells is read at a glance, which is the
+     question this table exists to answer — which of these is expensive. Only the cost
+     columns get it: tinting everything would be wallpaper. */
+  if(c.kind==='cpt') return `<td class="heat ${cls(o.cpt)}">${cptTxt(o.spend, o.trials)}</td>`;
+  if(c.kind==='cpm') return `<td class="heat ${cls(o.cpm)}">${cptTxt(o.spend, o.cp_mandates)}</td>`;
   if(c.kind==='pct') return `<td>${o[c.k]===null ? '<span class="dimtxt">—</span>'
                                                  : o[c.k].toFixed(0)+'%'}</td>`;
   /* A dash, never 0.00%. No impressions recorded is not a click-through rate of nothing;
@@ -3504,7 +3522,11 @@ function renderTable(){
     renderTable();
   });
   tbl.querySelector('tbody').innerHTML = r.map(o =>
-    '<tr>' + cols.map(c => cell(o,c)).join('') + '</tr>').join('');
+    /* A row that spent nothing in this window is a row of em-dashes with a name on it.
+       It still belongs in the table — it is a real ad set, and hiding it silently would
+       be worse — but it should not compete with the rows that did something. */
+    `<tr class="${o.spend ? '' : 'idle'}">` + cols.map(c => cell(o,c)).join('') + '</tr>'
+  ).join('');
   // Footer totals are recomputed from the visible rows, never averaged: a rate is
   // derived from the summed numerator and denominator so filtering the table cannot
   // produce a cost-per that no row actually implies.
