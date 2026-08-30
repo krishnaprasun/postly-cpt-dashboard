@@ -103,13 +103,15 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
 .modal{position:fixed;z-index:41;top:50%;left:50%;transform:translate(-50%,-50%);
   width:min(430px,calc(100vw - 32px));background:var(--white);border:1px solid var(--line);
   border-radius:14px;padding:22px;box-shadow:0 24px 60px rgba(26,28,46,.22)}
-.modal h2{font-size:16.5px;margin:0 0 16px}
-.fld{display:block;margin:0 0 14px}
-.fld>span{display:block;font-size:11px;letter-spacing:.5px;text-transform:uppercase;
+.modal h2{font-size:17px;margin:0 0 4px;letter-spacing:-.01em}
+.msub{color:var(--muted);font-size:12.5px;margin:0 0 18px;line-height:1.5}
+.fld{display:block;margin:0 0 13px}
+.fld>span{display:block;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;
   color:var(--faint);font-weight:700;margin:0 0 5px}
-.fld input,.fld select{width:100%}
-.hint{font-size:12px;color:var(--faint);margin-top:6px}
-.mrow{display:flex;gap:10px;justify-content:flex-end;margin-top:18px}
+.fld input,.fld select{width:100%;font-size:14px;padding:9px 11px}
+.hint{font-size:12px;color:var(--faint);margin-top:5px;line-height:1.45}
+.mrow{display:flex;gap:9px;justify-content:flex-end;margin-top:20px;
+  border-top:1px solid var(--line2);padding-top:16px}
 .modal .msg{margin:12px 0 0;flex:none}
 
 .tag{display:inline-block;font-size:11px;font-weight:600;padding:2px 9px;border-radius:99px;
@@ -171,18 +173,20 @@ input:focus,select:focus{outline:0;border-color:var(--accent);
   <div class="modal" id="addModal" role="dialog" aria-modal="true"
        aria-labelledby="addTitle" hidden>
     <h2 id="addTitle">Add user</h2>
+    <p class="msub">They sign in with Google using this address. No other account works.</p>
     <label class="fld"><span>Name</span>
-      <input type="text" id="newName" placeholder="Krishna Prasun" autocomplete="off"></label>
+      <input type="text" id="newName" placeholder="Full name" autocomplete="off"></label>
     <label class="fld"><span>Email</span>
-      <input type="email" id="newEmail" placeholder="krishna.prasun@classplus.co"
+      <input type="email" id="newEmail" placeholder="name@company.com"
              autocomplete="off" spellcheck="false"></label>
     <label class="fld"><span>Role</span>
       <select id="newRole">
         {% for r in roles %}<option value="{{ r.key }}"{% if r.key == 'viewer' %} selected{% endif %}>{{ r.label }}</option>{% endfor %}
-      </select></label>
+      </select>
+      <div class="hint" id="roleHint"></div></label>
     <div class="fld"><span>Brands</span>
       <div class="brands" id="newBrands"></div>
-      <div class="hint" id="brandHint">An admin sees every brand.</div></div>
+      <div class="hint" id="brandHint">Pick at least one.</div></div>
     <div class="mrow">
       <button class="btn" id="cancelAdd">Cancel</button>
       <button class="btn go" id="add">Add user</button>
@@ -246,8 +250,8 @@ function roleCell(u, i){
 function when(u){
   if(!u.at) return '<span class="muted">—</span>';
   const d = new Date(u.at * 1000);
-  /* The local part only: "by krishna.prasun" says who without wrapping the column onto
-     three lines, and the full address is on the tooltip for the one time it matters. */
+  /* The local part only: it says who without wrapping the column onto three lines,
+     and the full address is on the tooltip for the one time it matters. */
   const by = (u.by || '').split('@')[0];
   return `${d.toLocaleDateString(undefined, {day:'numeric', month:'short'})}` +
     (by ? `<div class="sub" title="${esc(u.by)}">by ${esc(by)}</div>` : '');
@@ -352,6 +356,14 @@ nb.addEventListener('change', e => {
   const cb = e.target.closest('input');
   if(cb) cb.parentElement.classList.toggle('on', cb.checked);
 });
+/* What each role actually grants, said where the choice is made. The cards at the foot
+   of the page say the same thing, but nobody reads a legend while filling in a form. */
+const ROLE_HINT = {
+  super:  'Every brand, plus Manage access and Refresh.',
+  member: 'Only the brands ticked below, and can export CSV.',
+  viewer: 'Only the brands ticked below. Nothing else.',
+};
+
 function newRoleChanged(){
   /* An admin sees every brand by definition, so the toggles would be a lie you could
      click. Locked, with the reason under them. */
@@ -360,6 +372,8 @@ function newRoleChanged(){
   nb.querySelectorAll('input').forEach(i => { i.disabled = sup; });
   document.getElementById('brandHint').textContent = sup
     ? 'An admin sees every brand.' : 'Pick at least one.';
+  document.getElementById('roleHint').textContent =
+    ROLE_HINT[document.getElementById('newRole').value] || '';
 }
 document.getElementById('newRole').onchange = newRoleChanged;
 
