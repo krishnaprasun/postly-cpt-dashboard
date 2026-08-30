@@ -29,6 +29,7 @@ import config as C
 import gauth as GA
 import users as U
 import history as H
+import kv as KV
 import postly_cpt as P
 
 app = Flask(__name__)
@@ -545,7 +546,11 @@ def api_users():
     if err:
         return err
     rows, ok = U.listing()
+    kv_ok, kv_why = KV.ping()
     return jsonify({"users": rows, "store_ok": ok, "brands": list(C.BRANDS),
+                    # Which store answered, so an outage is diagnosable from the page
+                    # rather than from a log nobody is looking at.
+                    "stores": {"kv": kv_ok, "kv_detail": kv_why, "history": H.available()},
                     "brand_labels": {k: v["label"] for k, v in C.BRANDS.items()},
                     "me": me["email"],
                     "store": bool(H.available())})

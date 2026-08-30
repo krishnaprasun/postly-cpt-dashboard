@@ -1,5 +1,12 @@
 """Who may open this dashboard, and which brands they see.
 
+Stored in TWO places and read from whichever answers: a small key-value store (`kv`)
+first, the history store as a mirror. On 30 Aug the GCS-backed history service went down
+with its project's billing and took the whole team's access with it — a list of a dozen
+addresses should not depend on the same account as a year of ad history, nor on any single
+provider. Writes go to both; a write that lands in only one is still a write, and the two
+reconcile on the next save.
+
 The list lives in the history store, not in the environment: adding a colleague should be
 something the person running this does at 9pm from a phone, not a Render env edit and a
 redeploy. Env still carries the BOOTSTRAP admins, because a directory you can lock
@@ -26,6 +33,7 @@ import time
 
 import config as C
 import history as H
+import kv as KV
 
 NS = "dashusers"
 # The store is a network call, and the gate runs on every request. A minute of staleness
@@ -80,6 +88,26 @@ def _brands(spec):
     return out
 
 
+def _read_any():
+    """(document, ok) from whichever store answers. The KV holds the directory; the
+    history store is the mirror, and is used when the KV is unset or unreachable."""
+    if KV.available():
+        doc, ok = KV.get_json(NS)
+        if ok:
+            # A KV that answers "no such key" is a real answer, but only an empty one:
+            # before this store existed the list lived in the mirror, so fall through
+            # and let the next save copy it across.
+            if doc is not None:
+                return doc, True
+    if H.available():
+        try:
+            return H.get_agg_raw(NS)
+        except Exception:
+            return None, False
+    # No mirror configured: an empty KV really is an empty directory.
+    return (None, True) if KV.available() else (None, False)
+
+
 def load(force=False):
     """({email: record}, ok). `ok` is False only when the store could not be READ.
 
@@ -91,12 +119,7 @@ def load(force=False):
     now = time.time()
     if not force and _cache["users"] is not None and now - _cache["at"] < TTL:
         return _cache["users"], _cache["ok"]
-    got, ok = (None, False)
-    if H.available():
-        try:
-            got, ok = H.get_agg_raw(NS)
-        except Exception:
-            got, ok = None, False
+    got, ok = _read_any()
     users = {}
     for rec in ((got or {}).get("users") or []):
         e = _clean_email(rec.get("email"))
@@ -135,8 +158,8 @@ def listing():
 
 def save(users, by):
     """Replace the directory. Returns (ok, error). Never writes on a failed read."""
-    if not H.available():
-        return False, "The history store is not configured, so there is nowhere to save."
+    if not (KV.available() or H.available()):
+        return False, "No store is configured, so there is nowhere to save."
     # force=True so this is a fresh read, never the degraded copy: saving on top of a
     # list we could not verify is how a directory gets silently truncated.
     _, ok = load(force=True)
@@ -162,10 +185,13 @@ def save(users, by):
                       "brands": brands, "role": role,
                       "note": str(rec.get("note") or "")[:120],
                       "by": by, "at": int(time.time())})
-    wrote = H.put_agg(NS, time.strftime("%Y-%m-%d"), {"users": clean, "by": by,
-                                                      "at": int(time.time())})
-    if not wrote:
-        return False, "The store refused the write. Nothing was changed."
+    doc = {"users": clean, "by": by, "at": int(time.time())}
+    # Both stores, and one is enough. A directory that saved to the KV and not to the
+    # mirror is saved; refusing there would make the app less available, not safer.
+    hit_kv = KV.put_json(NS, doc) if KV.available() else False
+    hit_h = H.put_agg(NS, time.strftime("%Y-%m-%d"), doc) if H.available() else False
+    if not (hit_kv or hit_h):
+        return False, "No store accepted the write. Nothing was changed."
     _cache.update({"at": 0.0, "users": None, "ok": False})   # next read is fresh
     return True, ""
 
