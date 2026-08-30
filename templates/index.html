@@ -153,6 +153,7 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 .btn.signin:hover{background:var(--accent-lt)}
 /* Names the question the grid is answering while it is still being built: the two
    things that were just changed, so a switch is acknowledged before any data arrives. */
+.kpi .s em{font-style:normal;color:var(--faint)}
 .mcap{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:12.5px;
   color:var(--muted);padding:0 2px 9px}
 .mcap b{color:var(--ink);font-weight:650}
@@ -1567,15 +1568,24 @@ function budgetAge(){
    how many put a mandate in place. Cost/mandate is the same rupees-per-trial unit as
    CPT and is coloured against the same target, deliberately — it is the second opinion
    on the number every decision here is made on. */
+/* Said in one place and shown on every tile and column that carries one of these, because
+   "cost per mandate" sitting beside CPT looks like another number Meta or Branch reported,
+   and it is not: it is the product database's own count of who actually put a mandate in
+   place. Which of the two you trust decides what gets killed. */
+const CP_SRC = 'From the Classplus product database (Redash), not from Meta or Branch — '
+             + 'the product\u2019s own count of signups and mandates, joined to ads by ad name.';
+
 function cpKpis(c, sp){
   const p = DATA.classplus, m = c.cp_mandates, su = c.cp_signups;
   return `
-   <div class="kpi"><div class="k">Cost / mandate</div>
+   <div class="kpi" title="${CP_SRC}"><div class="k">Cost / mandate</div>
      <div class="v ${cls(cpt(sp,m))}">${cptTxt(sp,m)}</div>
-     <div class="s">${num(m)} mandates · Branch says ${num(c[EV])} trials</div></div>
-   <div class="kpi"><div class="k">Signups</div><div class="v">${num(su)}</div>
-     <div class="s">${cptTxt(sp,su)} each · ${pct(m,su)} take a mandate</div></div>
-   <div class="kpi"><div class="k">Day-0</div><div class="v">${pct(c.cp_d0a,m)}</div>
+     <div class="s">${num(m)} mandates <em>from the product DB</em> ·
+       Branch says ${num(c[EV])} trials</div></div>
+   <div class="kpi" title="${CP_SRC}"><div class="k">Signups</div><div class="v">${num(su)}</div>
+     <div class="s">${cptTxt(sp,su)} each · ${pct(m,su)} take a mandate ·
+       <em>product DB</em></div></div>
+   <div class="kpi" title="${CP_SRC}"><div class="k">Day-0</div><div class="v">${pct(c.cp_d0a,m)}</div>
      <div class="s">active on day 0 · ${pct(c.cp_d0c,m)} cancelled ·
        Classplus ${p.age_min===null?'':p.age_min+' min old'}</div></div>`;
 }
@@ -2797,7 +2807,7 @@ function renderLongevity(){
     const cl = [c.kind==='name'||c.kind==='sub'||c.kind==='live'||c.kind==='date' ? 'l' : '',
                 c.kind==='sub' ? 'grow' : '', SORT.key===c.k ? 'sorted' : ''
                ].filter(Boolean).join(' ');
-    return `<th data-k="${c.k}" class="${cl}">${c.t}${
+    return `<th data-k="${c.k}" class="${cl}"${c.src ? ` title="${CP_SRC}"` : ''}>${c.t}${
       SORT.key===c.k?(SORT.dir<0?' ↓':' ↑'):''}</th>`; }).join('') + '</tr>';
   tbl.querySelector('thead').querySelectorAll('th').forEach(th => th.onclick = () => {
     const k = th.dataset.k;
@@ -2883,12 +2893,12 @@ const COLS = {
 /* Appended to whichever tab is showing, so signups and mandates sit on the same row as
    the spend that bought them at every level. */
 const CP_COLS = [
-  {k:'cp_signups', t:'Signups', kind:'num'},
-  {k:'cps', t:'Cost/signup', kind:'rs'},
-  {k:'cp_mandates', t:'Mandates', kind:'num'},
-  {k:'cpm', t:'Cost/mandate', kind:'cpm'},
-  {k:'d0a', t:'D0 active', kind:'pct'},
-  {k:'d0c', t:'D0 cancel', kind:'pct'},
+  {k:'cp_signups', t:'Signups', kind:'num', src:1},
+  {k:'cps', t:'Cost/signup', kind:'rs', src:1},
+  {k:'cp_mandates', t:'Mandates', kind:'num', src:1},
+  {k:'cpm', t:'Cost/mandate', kind:'cpm', src:1},
+  {k:'d0a', t:'D0 active', kind:'pct', src:1},
+  {k:'d0c', t:'D0 cancel', kind:'pct', src:1},
 ];
 
 /* The trial and CPT columns exist only for a brand that has a Branch feed. Dropping
@@ -3232,7 +3242,7 @@ function renderTable(){
     const cls = [c.kind==='name'||c.kind==='sub' ? 'l' : '',
                  c.kind==='sub' ? 'grow' : '',
                  SORT.key===c.k ? 'sorted' : ''].filter(Boolean).join(' ');
-    return `<th data-k="${c.k}" class="${cls}">${c.t}${
+    return `<th data-k="${c.k}" class="${cls}"${c.src ? ` title="${CP_SRC}"` : ''}>${c.t}${
       SORT.key===c.k?(SORT.dir<0?' ↓':' ↑'):''}</th>`; }).join('') + '</tr>';
   tbl.querySelector('thead').querySelectorAll('th').forEach(th => th.onclick = () => {
     const k = th.dataset.k;
