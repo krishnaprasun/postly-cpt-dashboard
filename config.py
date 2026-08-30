@@ -193,7 +193,8 @@ BRANDS = {
         "labels": {"t101": "Trials", "t10m": "NC 10m"},
         "event_note": {"t101": "postly_trial_started_backend",
                        "t10m": "postly_trial_nc_after10min_backend"},
-        "cpt_target": 150,
+        # Raised from 150 on 2026-08-31 at the owner's instruction.
+        "cpt_target": 180,
         "classplus": True,
         "logo": "brand/postly.svg",
         # Chrome only — active tab, hover, focus ring, hero wash, spinner. The
