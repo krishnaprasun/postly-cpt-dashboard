@@ -189,6 +189,9 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 @keyframes rfrspin{to{transform:rotate(360deg)}}
 .rfr.busy{animation:rfrspin 1s linear infinite}
 @media(prefers-reduced-motion:reduce){.rfr.busy{animation:none}}
+.lnk{background:none;border:0;padding:0;margin-left:6px;font:inherit;color:var(--accent);
+     font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.lnk:hover{opacity:.8}
 .sub2{display:block;font-size:10.5px;color:var(--faint);font-weight:500;margin-top:1px}
 .mcap{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:12.5px;
   color:var(--muted);padding:0 2px 9px}
@@ -1977,18 +1980,27 @@ function renderCohorts(){
      is a different thing from a brand that tested and failed. Say which one it is. */
   if(!t.live){
     document.getElementById('ccount').textContent = '';
-    box.innerHTML = `<div class="panel"><h3>Graduation by cohort · ${
-        (BRANDS[COH.brand]||{}).label || COH.brand}</h3>
+    const lbl = (BRANDS[COH.brand]||{}).label || COH.brand;
+    box.innerHTML = `<div class="panel"><h3>Graduation by cohort · ${lbl}</h3>
       <p class="sub">No creative first ran in a testing campaign between ${COH.since}
-        and ${COH.until}. ${(BRANDS[COH.brand]||{}).label || COH.brand} is running its
-        ad sets straight in trial campaigns over this window, so there is no testing
-        cohort to follow.</p></div>`;
+        and ${COH.until}${COH.last_test_day
+          ? `. ${lbl} last spent on a testing campaign on <b>${COH.last_test_day}</b> —
+             since then every ad set has been launched straight into a trial campaign,
+             so there is no testing cohort to follow`
+          : `, so there is no testing cohort to follow`}.
+        ${COH.last_test_day && COH.last_test_day < COH.since
+          ? `<button class="lnk" onclick="widenCohorts('${COH.last_test_day}')">Widen the
+             window to reach ${COH.last_test_day}</button>` : ''}</p></div>`;
     return;
   }
   document.getElementById('ccount').textContent =
     `${COH.rows.length} days · ${num(t.live)} creatives`;
   const pct = (a, b) => b ? `${(100*a/b).toFixed(0)}%` : '—';
-  const row = r => `<tr>
+  const row = r => !r.live ? `<tr class="idle">
+    <td class="l">${r.date}</td>
+    <td colspan="8" class="l dimtxt">${r.day_test_spend
+        ? `no new creative — ${rs(r.day_test_spend)} spent testing the ones already running`
+        : 'no testing spend'}</td></tr>` : `<tr>
     <td class="l">${r.date}</td>
     <td>${num(r.live)}</td>
     <td>${num(r.grad)}<span class="sub2">${pct(r.grad, r.live)}</span></td>
@@ -2009,8 +2021,13 @@ function renderCohorts(){
         The newest rows are thin because a cohort needs days to graduate and more to
         spend.</p></div>
     <div class="wrap"><table id="cohtbl">
-      <thead><tr><th class="l">Went live</th><th>In testing</th><th>Graduated</th>
-        <th>Winners</th><th>Super</th><th>Testing spend</th><th>Trial spend</th>
+      <thead><tr><th class="l">Went live</th><th title="Creatives whose first testing day
+          this was">In testing</th><th title="Of those, how many later ran in a trial
+          campaign">Graduated</th><th title="Graduates that have since spent over ${
+          rs(COH.winner_spend)} in trial">Winners</th><th title="Graduates past ${
+          rs(COH.super_spend)} in trial">Super</th>
+        <th title="What this cohort has spent in testing, all days">Spent testing</th>
+        <th title="What this cohort has spent in trial, all days">Spent in trial</th>
         <th>${COH.event_label || 'Trials'}</th><th>CPT</th></tr></thead>
       <tbody>${COH.rows.slice().reverse().map(row).join('')}</tbody>
       <tfoot><tr><td class="l">${COH.rows.length} days</td>
@@ -4613,6 +4630,15 @@ document.getElementById('sDim').onchange = () => {
 };
 document.getElementById('sHourMetric').onchange = () => renderTrends();
 document.getElementById('cWin').onchange = () => { loadCohorts(false); renderCohorts(); };
+/* Pick the shortest offered window that still reaches the day testing last ran, rather
+   than making the reader try 60 and then 90. */
+function widenCohorts(day){
+  const need = Math.ceil((Date.parse(COH.until) - Date.parse(day)) / 86400000) + 1;
+  const sel = document.getElementById('cWin');
+  const opt = [...sel.options].map(o => +o.value).find(v => v >= need);
+  sel.value = String(opt || sel.options[sel.options.length - 1].value);
+  loadCohorts(false); renderCohorts();
+}
 document.getElementById('sGrain').onchange = () => {
   const hourly = grain() === 'hour';
   document.getElementById('sLinesWrap').style.display = hourly ? 'none' : 'inline-flex';

@@ -312,6 +312,12 @@ def cohorts(brand, since, until, force=False):
     first_test, first_trial = {}, {}
     trial_spend, trial_trials, test_spend = (defaultdict(float), defaultdict(float),
                                              defaultdict(float))
+    # What the testing campaigns spent ON each day, as opposed to what a cohort went on
+    # to spend. A day with testing spend and no new name means the pipeline shipped
+    # nothing that day; a day with neither means the brand was not testing at all.
+    # Postly stopped testing outright on 2026-08-15, and the two read identically
+    # without this.
+    day_test_spend = defaultdict(float)
     ev = next(iter(B["events"]), "t101")
     for d in stored:
         day = raw[d] or {}
@@ -334,6 +340,7 @@ def cohorts(brand, since, until, force=False):
                 else:
                     test_spend[n] += sp
                     first_test.setdefault(n, d)
+                    day_test_spend[d] += sp
         for n, v in ((day.get("branch") or {}).get(ev) or {}).items():
             if stage_of.get(n) == "trial":
                 trial_trials[n] += float(v or 0)
@@ -341,7 +348,8 @@ def cohorts(brand, since, until, force=False):
     rows = {}
     for d in date_range(since, until):
         rows[d] = {"date": d, "live": 0, "grad": 0, "win": 0, "sup": 0,
-                   "test_spend": 0.0, "trial_spend": 0.0, "trials": 0.0}
+                   "test_spend": 0.0, "trial_spend": 0.0, "trials": 0.0,
+                   "day_test_spend": round(day_test_spend.get(d, 0.0), 2)}
     for n, d in first_test.items():
         if d not in rows:
             continue                     # went live before this window; not this cohort
@@ -370,10 +378,14 @@ def cohorts(brand, since, until, force=False):
         r["trials"] = round(r["trials"], 1)
     tot = {k: round(sum(r[k] for r in out_rows), 2)
            for k in ("live", "grad", "win", "sup", "test_spend", "trial_spend", "trials")}
+    # The last day the brand spent anything on testing at all, looked for across the whole
+    # lookback and not just the window, so an empty window can say why it is empty.
+    last_test = max((d for d in stored if day_test_spend.get(d, 0) > 0), default=None)
     data = {"brand": brand, "since": since, "until": until, "rows": out_rows,
             "totals": tot, "winner_spend": WINNER_SPEND, "super_spend": SUPER_SPEND,
             "event": ev, "event_label": B["labels"].get(ev, "Trials"),
             "stored_days": len(stored), "lookback_from": look,
+            "last_test_day": last_test,
             "cached": False, "age_min": 0, "generated_at": now_ist_str()}
     with _cohort_lock:
         _cohort_cache[key] = {"at": time.time(), "data": data}
