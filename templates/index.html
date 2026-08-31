@@ -465,6 +465,17 @@ a.mgr:hover{color:var(--accent-dk)}
 .panel h3{margin:0 0 2px;font-size:15px;font-weight:700;color:var(--navy)}
 .panel .sub{margin:0 0 12px;font-size:12px;color:var(--muted)}
 .chartbox{position:relative;width:100%;height:320px}
+/* The hour under the cursor, with every day's value for it. */
+.chartbox.hb{cursor:crosshair}
+.hguide{stroke:var(--faint);stroke-width:1;stroke-dasharray:3 3;opacity:.7}
+.htip{position:absolute;top:10px;pointer-events:none;background:var(--white);
+  border:1px solid var(--line);border-radius:10px;padding:8px 10px;min-width:168px;
+  box-shadow:0 10px 28px rgba(26,28,46,.14);font-size:12px;z-index:3}
+.htip .hh{font-weight:700;font-size:11px;color:var(--muted);margin-bottom:5px;
+  letter-spacing:.02em}
+.htip div{display:flex;align-items:center;gap:7px;line-height:1.7;white-space:nowrap}
+.htip div b{margin-left:auto;font-variant-numeric:tabular-nums}
+.htip i{width:9px;height:2.5px;border-radius:2px;flex:none}
 .chartbox svg{width:100%;height:100%;display:block;overflow:visible}
 .chartbox .grid{stroke:var(--line);stroke-width:1}
 .chartbox .axis{fill:var(--faint);font-size:10px}
@@ -2500,6 +2511,24 @@ async function loadSeries(force, quiet){
 /* Spend by hour, one line per day. Deliberately not the row-by-row chart the daily view
    draws: this answers "when does the money go out, and is today going out like the last
    three days" — a brand-level question that a hundred ad-set lines would bury. */
+/* niceMax's ladder jumps 5 -> 10, so a ₹23,357 peak asks for a ₹40,000 ceiling and the
+   whole chart lives in the bottom half of the panel. This ladder has the rungs in
+   between, and it keeps trying until the peak reaches at least three quarters of the
+   height — the axis is there to be read past, not to be admired. */
+function tightMax(v, ticks){
+  if(!(v > 0)) return 1;
+  const steps = [1, 1.5, 2, 2.5, 3, 4, 5, 6, 7.5, 10];
+  for(const t of [ticks, ticks + 1, ticks - 1]){
+    const raw = v / t, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const n = raw / mag;
+    const step = (steps.find(x => n <= x) || 10) * mag;
+    if(v / (step * t) >= .75) return step * t;
+  }
+  const raw = v / ticks, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const n = raw / mag;
+  return (steps.find(x => n <= x) || 10) * mag * ticks;
+}
+
 function renderHourly(){
   const box = document.getElementById('trendsWrap');
   if(!HOURLY){
@@ -2512,6 +2541,14 @@ function renderHourly(){
   const days = HOURLY.days, hrs = HOURLY.hours;
   const met = (document.getElementById('sHourMetric') || {value:'spend'}).value;
   const fmt = met === 'trials' ? num : rs;
+  /* Today in the brand's own colour and heavier; the days before it in greys that fade
+     with age. Four lines in four unrelated hues make you consult the legend for every
+     one — this way the question "is today tracking the last few days" is answered by
+     looking, and the legend is only needed for which grey is which. */
+  const PAST = ['#C8CCD6', '#9AA1B0', '#6B7280'];
+  const dayCol = i => i === days.length - 1
+    ? getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#20A75D'
+    : PAST[Math.max(0, PAST.length - (days.length - 1) + i)] || PAST[PAST.length - 1];
 
   /* Spend is Meta's, per hour, complete. Trials are ours, and exist only as a running
      total written down each hour — so an hour's trials is the difference between two
@@ -2548,7 +2585,7 @@ function renderHourly(){
       started.</p></div>`;
     return;
   }
-  const top = niceMax(max, 4) || 1;
+  const top = tightMax(max, 4) || 1;
   const x = h => L + (h * (W - L - R)) / 23;
   const y = v => T + (1 - v / top) * (H - T - Bm);
   let drawn = 0, seen = 0;
@@ -2565,14 +2602,13 @@ function renderHourly(){
     if(pts.length === 1){
       drawn++;
       const [cx, cy] = pts[0].split(',');
-      return `<circle cx="${cx}" cy="${cy}" r="3.5" fill="${
-        LINE_COLOURS[i % LINE_COLOURS.length]}"/>`;
+      return `<circle cx="${cx}" cy="${cy}" r="4" fill="${dayCol(i)}"/>`;
     }
     if(pts.length < 2) return '';
     drawn++;
     const last = i === days.length - 1;
-    return `<path class="ln" d="M${pts.join(' L')}"
-      stroke="${LINE_COLOURS[i % LINE_COLOURS.length]}"${last ? '' : ' stroke-opacity=".5"'}/>`;
+    return `<path class="ln" d="M${pts.join(' L')}" stroke="${dayCol(i)}"
+      stroke-width="${last ? 2.6 : 1.5}"${last ? '' : ' stroke-opacity=".85"'}/>`;
   };
   const gy = Array.from({length: 5}, (_, i) => {
     const v = top * i / 4;
@@ -2600,11 +2636,43 @@ function renderHourly(){
   const legend = days.map((d, i) => {
     const dt = new Date(d + 'T00:00:00');
     const lbl = dt.toLocaleDateString(undefined, {day:'numeric', month:'short'});
-    return `<span class="it"><i class="sw" style="border-color:${
-      LINE_COLOURS[i % LINE_COLOURS.length]}"></i>${lbl}${
+    return `<span class="it"><i class="sw" style="border-color:${dayCol(i)}"></i>${lbl}${
       i === days.length - 1 ? ' (today)' : ''} · ${dayTot(d)}</span>`;
   }).join('');
   const paths = days.map(line).join('');
+  /* Four lines that cross cannot be read by eye alone: "which of these is Sunday at 3pm"
+     is a question the chart has to answer, not one the reader should have to guess. The
+     guide follows the cursor and every day is listed for that hour, so the comparison is
+     read rather than estimated. */
+  setTimeout(() => {
+    const boxEl = document.getElementById('hbox');
+    const tip = document.getElementById('htip');
+    const guide = document.getElementById('hguide');
+    if(!boxEl || !tip || !guide) return;
+    boxEl.onmousemove = e => {
+      const r = boxEl.getBoundingClientRect();
+      const vx = ((e.clientX - r.left) / r.width) * W;
+      let h = Math.round((vx - L) / ((W - L - R) / 23));
+      h = Math.max(0, Math.min(23, h));
+      guide.setAttribute('x1', x(h)); guide.setAttribute('x2', x(h));
+      const rows = days.map((d, i) => {
+        const v = valueAt(d, h);
+        const dt = new Date(d + 'T00:00:00');
+        return `<div><i style="background:${dayCol(i)}"></i>${
+          dt.toLocaleDateString(undefined, {day:'numeric', month:'short'})}${
+          i === days.length - 1 ? ' (today)' : ''}<b>${v === null ? '—' : fmt(v)}</b></div>`;
+      }).join('');
+      tip.innerHTML = `<div class="hh">${String(h).padStart(2,'0')}:00 – ${
+        String(h).padStart(2,'0')}:59</div>${rows}`;
+      tip.hidden = false;
+      const left = (x(h) / W) * r.width;
+      tip.style.left = Math.min(Math.max(left + 12, 8), r.width - 190) + 'px';
+    };
+    boxEl.onmouseleave = () => {
+      tip.hidden = true;
+      guide.setAttribute('x1', -99); guide.setAttribute('x2', -99);
+    };
+  }, 0);
   box.innerHTML = `<div class="panel">
     <h3>${met === 'cpt' ? 'CPT' : met === 'trials' ? 'Trials' : 'Spend'} by hour ·
       last ${days.length} days</h3>
@@ -2614,8 +2682,9 @@ function renderHourly(){
         ? ' Spend comes from Meta by hour and is complete for every hour shown.'
         : ` Branch reports no trials by hour, so an hour's trials is the change in the
            running total this app records hourly — blank wherever an hour was missed.`}</p>
-    <div class="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gy}
-      ${paths}${gx}</svg></div>
+    <div class="chartbox hb" id="hbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gy}
+      <line id="hguide" class="hguide" y1="${T}" y2="${H - Bm}" x1="-99" x2="-99"/>
+      ${paths}${gx}</svg><div class="htip" id="htip" hidden></div></div>
     <div class="legend">${legend}</div>
     ${drawn ? '' : `<p class="sub warn">Nothing plotted, and the figures arrived:
       ${days.length} day(s), ${seen} hour(s) carrying a value, largest ${fmt(max)}. That
