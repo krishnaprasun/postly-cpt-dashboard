@@ -870,6 +870,11 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <input type="search" id="sq" placeholder="Filter by name…">
     <label class="chk"><input type="checkbox" id="sTesting"> include testing</label>
     <label class="chk" id="sActiveWrap"><input type="checkbox" id="sActive"> active only</label>
+    <label class="chk" id="sGrainWrap">Grain
+      <select class="sel" id="sGrain" style="margin-left:6px">
+        <option value="day" selected>Daily</option>
+        <option value="hour">Hourly · last 4 days</option>
+      </select></label>
     <label class="chk" id="sLinesWrap">Lines
       <select class="sel" id="sLines" style="margin-left:6px">
         <option value="6" selected>Top 6</option>
@@ -1894,6 +1899,28 @@ function sparkline(daily){
    top twenty. They share a fetch because they share a fold, and that fold is the
    expensive part. */
 let SERIES = null, SERIESKEY = null, SERIESBUSY = false;
+/* Hourly is its own payload and its own question: spend by hour of day, one line per
+   day, so today can be read against the last three at the same hour. Trials ride along
+   where we have recorded them — Branch has no hourly source, so they only exist from the
+   day this app started writing them down. */
+let HOURLY = null, HOURLYKEY = null, HOURLYBUSY = false;
+const hourKey = () => `${BRAND}`;
+const grain = () => (document.getElementById('sGrain') || {value:'day'}).value;
+
+async function loadHourly(force){
+  const key = hourKey();
+  if(HOURLYKEY === key && HOURLY && !force) return;
+  HOURLYBUSY = true;
+  try{
+    const r = await fetch(`/api/hourly?brand=${BRAND}&days=4${K}`);
+    const j = await r.json();
+    if(j.error){ HOURLY = null; return; }
+    if(hourKey() !== key) return;
+    HOURLY = j; HOURLYKEY = key;
+  }catch(_){ HOURLY = null; }
+  finally{ HOURLYBUSY = false; }
+  if(TAB === 'trends') renderTrends();
+}
 /* Google is its own payload for the same reason Longevity is: a different question with
    a different cost, fetched when the tab is opened and never before. */
 let GOOG = null, GOOGKEY = null, GOOGBUSY = false;
@@ -2464,7 +2491,66 @@ async function loadSeries(force, quiet){
   if(TAB === 'trends' || TAB === 'matrix'){ seriesControls(); renderTable(); noteFor(); }
 }
 
+/* Spend by hour, one line per day. Deliberately not the row-by-row chart the daily view
+   draws: this answers "when does the money go out, and is today going out like the last
+   three days" — a brand-level question that a hundred ad-set lines would bury. */
+function renderHourly(){
+  const box = document.getElementById('trendsWrap');
+  if(!HOURLY){
+    box.innerHTML = HOURLYBUSY
+      ? `<div class="panel"><h3><span class="skl" style="width:190px;display:inline-block"></span></h3>
+         <div class="sklchart"><i></i></div></div>`
+      : `<div class="panel"><p class="sub">No hourly data.</p></div>`;
+    return;
+  }
+  const days = HOURLY.days, hrs = HOURLY.hours;
+  const W = 900, H = 260, L = 58, R = 14, T = 14, Bm = 26;
+  let max = 0;
+  for(const d of days) for(let h = 0; h < 24; h++)
+    max = Math.max(max, ((hrs[d] || {})[h] || {}).spend || 0);
+  const top = niceMax(max, 4) || 1;
+  const x = h => L + (h * (W - L - R)) / 23;
+  const y = v => T + (1 - v / top) * (H - T - Bm);
+  const line = (d, i) => {
+    const pts = [];
+    for(let h = 0; h < 24; h++){
+      const c = (hrs[d] || {})[h];
+      if(!c) continue;                       // an hour with no row is a gap, not a zero
+      pts.push(`${x(h).toFixed(1)},${y(c.spend).toFixed(1)}`);
+    }
+    if(pts.length < 2) return '';
+    const last = i === days.length - 1;
+    return `<path class="ln" d="M${pts.join(' L')}"
+      stroke="${LINE_COLOURS[i % LINE_COLOURS.length]}"${last ? '' : ' stroke-opacity=".5"'}/>`;
+  };
+  const gy = Array.from({length: 5}, (_, i) => {
+    const v = top * i / 4;
+    return `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
+      <text class="axis" x="${L - 8}" y="${y(v) + 3}" text-anchor="end">${rs(v)}</text>`;
+  }).join('');
+  const gx = [0, 4, 8, 12, 16, 20, 23].map(h =>
+    `<text class="axis" x="${x(h)}" y="${H - 8}" text-anchor="middle">${h}:00</text>`).join('');
+  const tot = d => Object.values(hrs[d] || {}).reduce((a, c) => a + c.spend, 0);
+  const legend = days.map((d, i) => {
+    const dt = new Date(d + 'T00:00:00');
+    const lbl = dt.toLocaleDateString(undefined, {day:'numeric', month:'short'});
+    return `<span class="it"><i class="sw" style="border-color:${
+      LINE_COLOURS[i % LINE_COLOURS.length]}"></i>${lbl}${
+      i === days.length - 1 ? ' (today)' : ''} · ${rs(tot(d))}</span>`;
+  }).join('');
+  box.innerHTML = `<div class="panel">
+    <h3>Spend by hour · last ${days.length} days</h3>
+    <p class="sub">Hour of the ad account's day, every account for this brand added
+      together.${HOURLY.error ? ` <span class="warn">One account did not answer —
+      ${HOURLY.error}</span>` : ''} Trials have no hourly source at Branch, so this is
+      spend only: it answers when the budget goes out, not what it bought.</p>
+    <div class="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gy}
+      ${days.map(line).join('')}${gx}</svg></div>
+    <div class="legend">${legend}</div></div>`;
+}
+
 function renderTrends(){
+  if(grain() === 'hour'){ renderHourly(); return; }
   const box = document.getElementById('trendsWrap');
   if(!SERIES){
     box.innerHTML = SERIESBUSY
@@ -3332,7 +3418,10 @@ function renderTable(){
     document.getElementById('sPerWrap').style.display =
       TAB === 'matrix' ? 'inline-flex' : 'none';
     document.getElementById('sLinesWrap').style.display =
+      (TAB === 'trends' && grain() === 'day') ? 'inline-flex' : 'none';
+    document.getElementById('sGrainWrap').style.display =
       TAB === 'trends' ? 'inline-flex' : 'none';
+    if(TAB === 'trends' && grain() === 'hour' && !HOURLY && !HOURLYBUSY) loadHourly(false);
     seriesControls();
     if(TAB==='trends') renderTrends(); else renderMatrix();
     return;
@@ -4260,6 +4349,12 @@ document.getElementById('sDim').onchange = () => {
   /* A new dimension has different columns to sort by, and "sort by 12 Aug" carried over
      from the last one would silently mean a different grid. */
   MPAGE = 0; MSORT = {key:'total', dir:-1}; loadSeries(false);
+};
+document.getElementById('sGrain').onchange = () => {
+  const hourly = grain() === 'hour';
+  document.getElementById('sLinesWrap').style.display = hourly ? 'none' : 'inline-flex';
+  if(hourly) loadHourly(false);
+  renderTable(); noteFor();
 };
 document.getElementById('sMetric').onchange = () => { MPAGE = 0; renderTable(); noteFor(); };
 document.getElementById('sq').oninput = () => { MPAGE = 0; renderTable(); };

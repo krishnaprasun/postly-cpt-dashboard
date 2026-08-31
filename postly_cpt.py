@@ -273,6 +273,130 @@ def ad_preview(ad_id, fmt="MOBILE_FEED_STANDARD"):
     return url, acct
 
 
+# ---- hourly ----------------------------------------------------------------
+# Meta breaks insights down by hour of the ACCOUNT's timezone, retroactively, for any day
+# — 96 rows for four days of one account, in under two seconds. Branch does not: its query
+# API accepts granularity "day" and answers 500 to "hour". So spend can be charted by the
+# hour for any past day and trials cannot, which is why the hourly view is about pacing
+# (when the budget burns, whether a pause landed) and not about CPT.
+HOURLY_DAYS = int(os.environ.get("HOURLY_DAYS", "4"))
+HOURLY_TTL = int(os.environ.get("HOURLY_TTL", "600"))
+_hourly_cache, _hourly_lock = {}, threading.Lock()
+
+
+def _hour_of(row):
+    """Meta gives '13:00:00 - 13:59:59'. The hour is the only part that carries meaning."""
+    v = row.get("hourly_stats_aggregated_by_advertiser_time_zone") or ""
+    try:
+        return int(v[:2])
+    except ValueError:
+        return None
+
+
+def hourly_spend(brand, days=None, force=False):
+    """{days: [...], hours: {date: {hour: {spend, imp, clk}}}} for the last `days` days.
+
+    Every account for the brand, summed. The account timezone is Asia/Kolkata for all of
+    them, so "hour of the advertiser's timezone" is the hour people mean.
+    """
+    days = days or HOURLY_DAYS
+    B = C.brand(brand)
+    key = (brand, days)
+    if not force:
+        with _hourly_lock:
+            hit = _hourly_cache.get(key)
+        if hit and time.time() - hit["at"] < HOURLY_TTL:
+            return dict(hit["data"], cached=True,
+                        age_min=int((time.time() - hit["at"]) / 60))
+
+    today = datetime.strptime(today_ist(), "%Y-%m-%d").date()
+    since = (today - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    until = today.strftime("%Y-%m-%d")
+    dates = date_range(since, until)
+    hours = {d: {} for d in dates}
+    err = None
+    for a in B["accounts"]:
+        try:
+            rows = _graph(f"{a['id']}/insights", {
+                "level": "account",
+                "breakdowns": "hourly_stats_aggregated_by_advertiser_time_zone",
+                "time_range": json.dumps({"since": since, "until": until}),
+                "time_increment": "1",
+                "fields": "spend,impressions,clicks,date_start"})
+        except Exception as ex:
+            # One account failing must not empty the chart: the others are still true,
+            # and a partial answer that SAYS it is partial beats no answer.
+            err = str(ex)[:160]
+            continue
+        for r in rows:
+            d, h = r.get("date_start"), _hour_of(r)
+            if d not in hours or h is None:
+                continue
+            e = hours[d].setdefault(h, {"spend": 0.0, "imp": 0.0, "clk": 0.0})
+            e["spend"] += float(r.get("spend") or 0)
+            e["imp"] += _num(r.get("impressions"))
+            e["clk"] += _num(r.get("clicks"))
+    for d in hours:
+        for h in hours[d]:
+            hours[d][h]["spend"] = round(hours[d][h]["spend"], 2)
+    out = {"brand": brand, "days": dates, "hours": hours, "error": err,
+            "accounts": len(B["accounts"]), "generated_at": now_ist_str(),
+            "cached": False, "age_min": 0}
+    with _hourly_lock:
+        _hourly_cache[key] = {"at": time.time(), "data": out}
+        if len(_hourly_cache) > 12:
+            for k in sorted(_hourly_cache, key=lambda k: _hourly_cache[k]["at"])[:4]:
+                _hourly_cache.pop(k, None)
+    return out
+
+
+# Trials have no hourly source, so the only way to ever chart them by hour is to write
+# down where the running total stood on each hour and subtract. That is what this records:
+# one point an hour, per brand, kept for the day. It is deliberately NOT a side effect of
+# the Chat message — that runs 9am to 11pm and can fail on its own — because a series with
+# holes in it is worth much less than one without.
+def hour_ns(brand):
+    return f"{brand}hrs"
+
+
+def hour_snapshot(brand, trials, spend, installs=None):
+    """Append where the day's running totals stand right now. Best effort, never raises."""
+    if not H.available():
+        return False
+    day = today_ist()
+    try:
+        got, ok = H.get_day_raw(hour_ns(brand), day)
+        if not ok:
+            return False
+        doc = got if isinstance(got, dict) else {}
+        pts = doc.get("points") or []
+        now = datetime.now(IST)
+        pts = [p for p in pts if p.get("h") != now.hour]      # one point per hour, latest wins
+        pts.append({"h": now.hour, "at": now.strftime("%H:%M"), "ts": int(time.time()),
+                    "trials": round(float(trials or 0), 1),
+                    "spend": round(float(spend or 0), 2),
+                    "installs": None if installs is None else round(float(installs), 1)})
+        doc["points"] = sorted(pts, key=lambda p: p["h"])[-30:]
+        return bool(H.put_agg(hour_ns(brand), day, doc))
+    except Exception:
+        return False
+
+
+def hour_points(brand, dates):
+    """{date: [points]} for whichever of these days were recorded."""
+    if not (H.available() and dates):
+        return {}
+    out = {}
+    for d in dates:
+        try:
+            got, ok = H.get_day_raw(hour_ns(brand), d)
+        except Exception:
+            continue
+        if ok and isinstance(got, dict) and got.get("points"):
+            out[d] = got["points"]
+    return out
+
+
 # ---- daily budget history --------------------------------------------------
 # Meta exposes a budget only as it is RIGHT NOW. Insights carry spend per day but never
 # the budget that produced it, and this app's activity-log access retains one day. So

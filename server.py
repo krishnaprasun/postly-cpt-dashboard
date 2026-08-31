@@ -721,6 +721,79 @@ def api_refresh():
                                           refreshed=part)))
 
 
+@app.route("/api/hourly")
+@protected
+def api_hourly():
+    """Spend by hour for the last few days, plus whatever hourly trial points exist.
+
+    Two different kinds of data in one answer, and they are not equally complete. Spend
+    comes from Meta's hourly breakdown and covers every hour of every day asked for.
+    Trials have no hourly source at all — Branch answers 500 to granularity "hour" — so
+    they come from our own running-total snapshots, which start when recording started and
+    have gaps wherever a snapshot did not run. The payload says which is which rather than
+    letting the chart imply they are the same.
+    """
+    brand, err, _full = _gate(request.args.get("k", ""),
+                              request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    try:
+        days = max(1, min(int(request.args.get("days", P.HOURLY_DAYS)), 14))
+    except ValueError:
+        days = P.HOURLY_DAYS
+    try:
+        out = P.hourly_spend(brand, days=days)
+        out["trials"] = P.hour_points(brand, out["days"])
+        out["trials_note"] = ("Trials are recorded hourly by this app, not reported by "
+                              "hour by Branch — so they begin when recording began.")
+        return jsonify(out)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": _friendly(e)["text"]}), 502
+
+
+@app.route("/api/hourly/snapshot", methods=["POST", "GET"])
+def api_hour_snapshot():
+    """Write down where today's running totals stand, once an hour.
+
+    Token-gated like the other scheduled writers. Reads the payload the page already has
+    cached, so on a warm instance this costs nothing beyond a store write — and the point
+    of running it separately from the Chat message is that it keeps recording through the
+    night and through a Chat outage.
+    """
+    want = H.TOKEN
+    if not want or not hmac.compare_digest(request.headers.get("Authorization", ""),
+                                           "Bearer " + want):
+        return jsonify({"error": "unauthorized"}), 401
+    if not H.available():
+        return jsonify({"error": "no history store configured"}), 503
+    brands = [request.args.get("brand")] if request.args.get("brand") else list(C.BRANDS)
+    bad = [b for b in brands if b not in C.BRANDS]
+    if bad:
+        return jsonify({"error": f"unknown brand(s): {bad}"}), 400
+    today = P.today_ist()
+    out = []
+    for b in brands:
+        try:
+            data = get_data(today, today, b)
+            ev = (data.get("events") or ["t101"])[0]
+            pr = (data.get("prorata") or {}).get(ev) or {}
+            ch = (data.get("channels") or {}).get(ev) or {}
+            comb = data.get("combined") or {}
+            # The same figure the tiles show: measured Meta plus Meta's share of the
+            # trials Branch could not name. Anything else would make the hourly series
+            # disagree with the dashboard it sits inside.
+            trials = pr.get("meta", ch.get("meta"))
+            ok = P.hour_snapshot(b, trials, comb.get("spend"),
+                                 (data.get("installs") or {}).get("meta"))
+            out.append({"brand": b, "stored": ok, "trials": trials,
+                        "spend": comb.get("spend")})
+        except Exception as e:
+            traceback.print_exc()
+            out.append({"brand": b, "error": str(e)[:200]})
+    return jsonify({"at": datetime.now(P.IST).strftime("%H:%M"), "results": out})
+
+
 # ---- daily series -----------------------------------------------------------
 # Same stale-while-revalidate shape as /api/data, for the same reason: a fourteen-day
 # fold over a wide dimension is a real Meta and Branch cost, and nobody should watch a
