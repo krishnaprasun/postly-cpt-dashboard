@@ -1143,6 +1143,47 @@ def api_budgets():
     })
 
 
+@app.route("/api/budgets/day")
+@protected
+def api_budget_day():
+    """One day's budget in the detail the daily history throws away.
+
+    Three snapshots are taken a day; this returns each of them and what moved between
+    consecutive ones — added, removed and changed kept apart, because a total that rose
+    because fifty-one ad sets were built is a different fact from one that rose because
+    existing budgets were raised, and only the second shows up in a `moved` list.
+    """
+    brand, err, _full = _gate(request.args.get("k", ""),
+                              request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    date = (request.args.get("date") or P.today_ist()).strip()
+    try:
+        slots = P.budget_slots(brand, date)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)[:300]}), 502
+    hours = sorted(slots)
+    out = []
+    for h in hours:
+        snap = slots[h]
+        out.append({"hour": h, "at": snap.get("at"),
+                    "adsets": len(snap.get("adsets") or {}),
+                    "total": snap.get("total")})
+    steps = []
+    for a, b in zip(hours, hours[1:]):
+        d = P.budget_diff(slots[a], slots[b])
+        steps.append({"from": a, "to": b,
+                      "added": len(d["added"]), "added_total": d["added_total"],
+                      "removed": len(d["removed"]), "removed_total": d["removed_total"],
+                      "changed": len(d["changed"]), "changed_total": d["changed_total"],
+                      "top_added": d["added"][:5], "top_changed": d["changed"][:5]})
+    return jsonify({"brand": brand, "date": date, "slots": out, "steps": steps,
+                    "note": ("Slots are the 9am, 3pm and 11pm snapshots. Before "
+                             "2026-09-01 only the last of each day was kept, so earlier "
+                             "dates return one slot however many were taken.")})
+
+
 @app.route("/api/precompute", methods=["POST", "GET"])
 def api_precompute():
     """Fold the settled days for each longevity window and store the result.

@@ -516,6 +516,62 @@ def budget_ns(brand):
     return f"{brand}budg"
 
 
+# Three snapshots a day are taken and, until now, all three were written under the same
+# date — so 09:00 was overwritten by 15:00 and 15:00 by 23:00, leaving one reading a day.
+# That is enough to answer "what changed since yesterday" and useless for "why did the
+# budget climb after six", which is the question actually asked of it. Each slot now also
+# gets its own namespace, so the day keeps all three. The date-keyed copy stays exactly as
+# it was: the dashboard's budget history reads it, and this must not move under it.
+def budget_slot_ns(brand, hour):
+    return f"{brand}budg{hour:02d}"
+
+
+def budget_slots(brand, date):
+    """{hour: snapshot} for whichever of the day's slots were recorded."""
+    if not H.available():
+        return {}
+    out = {}
+    for hour in BUDGET_SLOTS:
+        try:
+            got, ok = H.get_day_raw(budget_slot_ns(brand, hour), date)
+        except Exception:
+            continue
+        if ok and isinstance(got, dict) and got.get("adsets"):
+            out[hour] = got
+    return out
+
+
+# The hours the scheduler actually runs at. A snapshot taken at any other time rounds to
+# the nearest of these rather than inventing a fourth slot nobody reads.
+BUDGET_SLOTS = (9, 15, 23)
+
+
+def _nearest_slot(hour):
+    return min(BUDGET_SLOTS, key=lambda h: abs(h - hour))
+
+
+def budget_diff(older, newer):
+    """What moved between two snapshots of the same day: added, removed, changed.
+
+    Separated deliberately. A total that rose because 51 ad sets were created is a
+    different fact from one that rose because existing budgets were raised, and the
+    first is invisible in a `moved` list — which only sees ad sets present in both.
+    """
+    a = (older or {}).get("adsets") or {}
+    b = (newer or {}).get("adsets") or {}
+    bud = lambda d, k: (d[k].get("b") or 0)
+    added = [{"id": k, "n": b[k].get("n", ""), "b": bud(b, k)} for k in b if k not in a]
+    gone = [{"id": k, "n": a[k].get("n", ""), "b": bud(a, k)} for k in a if k not in b]
+    changed = [{"id": k, "n": b[k].get("n", ""), "from": bud(a, k), "to": bud(b, k)}
+               for k in b if k in a and bud(a, k) != bud(b, k)]
+    return {"added": sorted(added, key=lambda r: -r["b"]),
+            "removed": sorted(gone, key=lambda r: -r["b"]),
+            "changed": sorted(changed, key=lambda r: -(r["to"] - r["from"])),
+            "added_total": round(sum(r["b"] for r in added), 2),
+            "removed_total": round(sum(r["b"] for r in gone), 2),
+            "changed_total": round(sum(r["to"] - r["from"] for r in changed), 2)}
+
+
 def _rupees(v):
     """Meta returns money in the account's minor unit."""
     try:
@@ -660,6 +716,10 @@ def budget_snapshot(brand, force=False, store=True):
         snap["first_at"] = snap["at"]
         snap["moved"] = []
     snap["stored"] = H.put_agg(budget_ns(brand), day, snap)
+    # And under its own slot, so the day keeps every reading rather than only the last.
+    slot = _nearest_slot(datetime.now(IST).hour)
+    snap["slot"] = slot
+    snap["slot_stored"] = H.put_agg(budget_slot_ns(brand, slot), day, snap)
     return snap
 
 
