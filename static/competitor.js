@@ -1,10 +1,9 @@
-/* Competitor Intelligence — isolated, additive, owned by ads-ops.
+/* Competitor Intelligence launcher — isolated, additive, owned by ads-ops.
  *
  * A top-of-dashboard button (Postly/Speakeasy only) that opens the existing competitor
- * dashboard as a FULL-SCREEN view inside the page (not a browser tab). The competitor app
- * is a separate Cloud Run service fed by the Meta Ad Library scraping pipeline; it's
- * embedded brand-locked (its own product toggle hidden via embed=1). Touches none of the
- * data dashboard's code.
+ * dashboard in a NEW WINDOW, locked to the brand of the page you're on. The competitor app
+ * is a separate Cloud Run service fed by the Meta Ad Library scraping pipeline. Touches
+ * none of the data dashboard's code.
  */
 (function () {
   'use strict';
@@ -32,70 +31,31 @@
     '  animation:ci-pulse 1.6s ease-in-out infinite}',
     '@keyframes ci-pulse{0%,100%{opacity:1}50%{opacity:.35}}',
     '@media(prefers-reduced-motion:reduce){.toolbtn.ci::before,.ci-dot{animation:none}}',
-    /* full-screen in-app view */
-    '.tool-ov{position:fixed;inset:0;z-index:9998;background:var(--ground,#f3f6f7);display:flex;flex-direction:column}',
-    '.tool-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;',
-    '  padding:11px 18px;border-bottom:1px solid var(--line,#e6e6e6);background:var(--panel,#fff);flex:0 0 auto}',
-    '.tool-ttl{display:flex;align-items:center;gap:9px;font-weight:700;font-size:14.5px;color:var(--ink,#111)}',
-    '.tool-ttl .sub{color:var(--muted,#777);font-weight:600;text-transform:capitalize}',
-    '.tool-x{border:1px solid var(--line,#e0e0e0);background:var(--panel2,#fafafa);border-radius:8px;',
-    '  padding:6px 13px;font:inherit;font-size:13px;font-weight:600;cursor:pointer;color:var(--muted,#555)}',
-    '.tool-x:hover{color:var(--ink,#111)}',
-    '.tool-frame{flex:1;width:100%;border:0;background:var(--panel,#fff)}',
     '@media(max-width:560px){.toolbtn span.lbl{display:none}.toolbtn{padding:6px 9px}}'
   ].join('\n');
   document.head.appendChild(style);
 
   function brand() { return (document.body.dataset.brand || ''); }
   function targetUrl() {
+    // embed=1 hides the competitor app's own product toggle; product= locks it to this
+    // brand, so opening from Postly shows Postly and from Speakeasy shows Speakeasy.
     var b = brand();
     return URL_BASE + '?embed=1' + (BRANDS[b] ? ('&product=' + encodeURIComponent(b)) : '');
-  }
-  function esc(s) {
-    return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
-    });
   }
 
   var btn = document.createElement('button');
   btn.className = 'toolbtn ci';
   btn.type = 'button';
-  btn.title = 'Competitor Intelligence — Meta Ad Library activity for tracked competitors';
+  btn.title = 'Competitor Intelligence — opens in a new window';
   btn.innerHTML = '<span class="ci-dot"></span><span class="lbl">Competitor Intel</span>';
+  btn.addEventListener('click', function () {
+    window.open(targetUrl(), '_blank', 'noopener');
+  });
 
-  var ov = null;
-  function open() {
-    close();
-    ov = document.createElement('div');
-    ov.className = 'tool-ov';
-    ov.innerHTML =
-      '<div class="tool-bar"><div class="tool-ttl"><span class="ci-dot"></span>Competitor Intelligence'
-      + ' · <span class="sub">' + esc(brand()) + '</span></div>'
-      + '<button class="tool-x" type="button">Close ✕</button></div>'
-      + '<iframe class="tool-frame" title="Competitor Intelligence" referrerpolicy="no-referrer" src="' + esc(targetUrl()) + '"></iframe>';
-    document.body.appendChild(ov);
-    document.body.style.overflow = 'hidden';
-    ov.querySelector('.tool-x').addEventListener('click', close);
-    document.addEventListener('keydown', onEsc);
-  }
-  function close() {
-    if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
-    ov = null;
-    document.body.style.overflow = '';
-    document.removeEventListener('keydown', onEsc);
-  }
-  function onEsc(e) { if (e.key === 'Escape') close(); }
-  btn.addEventListener('click', open);
-
-  // Mount only for brands with competitor data; keep the open view synced to the brand.
   function sync() {
     var ok = !!BRANDS[brand()];
     if (ok && !btn.parentNode) host.insertBefore(btn, host.firstChild);
-    else if (!ok && btn.parentNode) { btn.parentNode.removeChild(btn); close(); return; }
-    if (ok && ov) {                                   // brand switched while open -> follow
-      ov.querySelector('.tool-ttl .sub').textContent = brand();
-      var f = ov.querySelector('iframe'); if (f && f.getAttribute('src') !== targetUrl()) f.setAttribute('src', targetUrl());
-    }
+    else if (!ok && btn.parentNode) btn.parentNode.removeChild(btn);
   }
   sync();
   try { new MutationObserver(sync).observe(document.body, { attributes: true, attributeFilter: ['data-brand'] }); }
