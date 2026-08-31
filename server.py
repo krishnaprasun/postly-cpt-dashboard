@@ -721,6 +721,33 @@ def api_refresh():
                                           refreshed=part)))
 
 
+@app.route("/api/cohorts")
+@protected
+def api_cohorts():
+    """Per day: creatives that went live in testing, and what became of them.
+
+    Store-only, so it costs no Meta or Branch quota — every day it reads is settled by
+    definition, which is also why the last few rows are always thin: a cohort needs time
+    before it can graduate, and more time before a graduate can spend its way to winner.
+    """
+    brand, err, _full = _gate(request.args.get("k", ""),
+                              request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    try:
+        days = max(7, min(int(request.args.get("days", "30")), 120))
+    except ValueError:
+        days = 30
+    until = H.settled_through(P.today_ist()) if H.available() else P.today_ist()
+    since = (datetime.strptime(until, "%Y-%m-%d")
+             - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    try:
+        return jsonify(P.cohorts(brand, since, until))
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": _friendly(e)["text"]}), 502
+
+
 @app.route("/api/hourly")
 @protected
 def api_hourly():

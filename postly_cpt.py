@@ -273,6 +273,116 @@ def ad_preview(ad_id, fmt="MOBILE_FEED_STANDARD"):
     return url, acct
 
 
+# ---- testing -> trial cohorts ----------------------------------------------
+# The funnel this whole operation runs on: creatives start in a testing campaign
+# optimised for installs, the ones that work are graduated into a trial campaign, and a
+# few of those go on to carry real spend. Read by the day a creative FIRST went live in
+# testing, so each row is a cohort and the columns are what became of it.
+#
+# The unit is the ad NAME, not the ad id, because graduation clones the creative into a
+# new campaign under the same name — by id, every graduate would look like a brand new
+# ad that had never been tested.
+WINNER_SPEND = float(os.environ.get("WINNER_SPEND", "5000"))
+SUPER_SPEND = float(os.environ.get("SUPER_SPEND", "8000"))
+# How far before the window to look, to tell "went live today" from "was already
+# running". Without it every ad alive on day one of the window counts as new that day.
+COHORT_LOOKBACK = int(os.environ.get("COHORT_LOOKBACK", "45"))
+COHORT_TTL = int(os.environ.get("COHORT_TTL", "1800"))
+_cohort_cache, _cohort_lock = {}, threading.Lock()
+
+
+def cohorts(brand, since, until, force=False):
+    """Per day: how many creatives went live in testing, and what became of them."""
+    key = (brand, since, until)
+    if not force:
+        with _cohort_lock:
+            hit = _cohort_cache.get(key)
+        if hit and time.time() - hit["at"] < COHORT_TTL:
+            return dict(hit["data"], cached=True,
+                        age_min=int((time.time() - hit["at"]) / 60))
+
+    B = C.brand(brand)
+    testing_re = re.compile(B["testing_re"])
+    look = (datetime.strptime(since, "%Y-%m-%d").date()
+            - timedelta(days=COHORT_LOOKBACK)).strftime("%Y-%m-%d")
+    days = date_range(look, until)
+    raw = H.fetch_raw(brand, days) if H.available() else {}
+    stored = sorted(d for d in raw if raw[d])
+
+    first_test, first_trial = {}, {}
+    trial_spend, trial_trials, test_spend = (defaultdict(float), defaultdict(float),
+                                             defaultdict(float))
+    ev = next(iter(B["events"]), "t101")
+    for d in stored:
+        day = raw[d] or {}
+        stage_of = {}
+        for _acct, rows in (day.get("meta") or {}).items():
+            for r in rows:
+                n = r.get("ad_name") or ""
+                if not n:
+                    continue
+                st = ("testing" if testing_re.search(r.get("campaign_name") or "")
+                      else "trial")
+                # A name running in both on one day counts as trial for that day's
+                # trials: the trial campaign is the one whose result is being judged.
+                if stage_of.get(n) != "trial":
+                    stage_of[n] = st
+                sp = float(r.get("spend") or 0)
+                if st == "trial":
+                    trial_spend[n] += sp
+                    first_trial.setdefault(n, d)
+                else:
+                    test_spend[n] += sp
+                    first_test.setdefault(n, d)
+        for n, v in ((day.get("branch") or {}).get(ev) or {}).items():
+            if stage_of.get(n) == "trial":
+                trial_trials[n] += float(v or 0)
+
+    rows = {}
+    for d in date_range(since, until):
+        rows[d] = {"date": d, "live": 0, "grad": 0, "win": 0, "sup": 0,
+                   "test_spend": 0.0, "trial_spend": 0.0, "trials": 0.0}
+    for n, d in first_test.items():
+        if d not in rows:
+            continue                     # went live before this window; not this cohort
+        r = rows[d]
+        r["live"] += 1
+        r["test_spend"] += test_spend[n]
+        # Graduated means it turned up in a trial campaign on or after the day it first
+        # ran in testing. Before is a different creative that happens to share a name.
+        if n in first_trial and first_trial[n] >= d:
+            r["grad"] += 1
+            r["trial_spend"] += trial_spend[n]
+            r["trials"] += trial_trials[n]
+            if trial_spend[n] > WINNER_SPEND:
+                r["win"] += 1
+            if trial_spend[n] > SUPER_SPEND:
+                r["sup"] += 1
+    # A day the store has not written yet would otherwise read as a day on which nothing
+    # went live. Stop at the last day actually held, and say so in `until`.
+    have = set(stored)
+    out_rows = [rows[d] for d in sorted(rows) if d in have]
+    if out_rows:
+        until = out_rows[-1]["date"]
+    for r in out_rows:
+        for k in ("test_spend", "trial_spend"):
+            r[k] = round(r[k], 2)
+        r["trials"] = round(r["trials"], 1)
+    tot = {k: round(sum(r[k] for r in out_rows), 2)
+           for k in ("live", "grad", "win", "sup", "test_spend", "trial_spend", "trials")}
+    data = {"brand": brand, "since": since, "until": until, "rows": out_rows,
+            "totals": tot, "winner_spend": WINNER_SPEND, "super_spend": SUPER_SPEND,
+            "event": ev, "event_label": B["labels"].get(ev, "Trials"),
+            "stored_days": len(stored), "lookback_from": look,
+            "cached": False, "age_min": 0, "generated_at": now_ist_str()}
+    with _cohort_lock:
+        _cohort_cache[key] = {"at": time.time(), "data": data}
+        if len(_cohort_cache) > 12:
+            for k in sorted(_cohort_cache, key=lambda k: _cohort_cache[k]["at"])[:4]:
+                _cohort_cache.pop(k, None)
+    return data
+
+
 # ---- hourly ----------------------------------------------------------------
 # Meta breaks insights down by hour of the ACCOUNT's timezone, retroactively, for any day
 # — 96 rows for four days of one account, in under two seconds. Branch does not: its query

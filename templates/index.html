@@ -189,6 +189,7 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 @keyframes rfrspin{to{transform:rotate(360deg)}}
 .rfr.busy{animation:rfrspin 1s linear infinite}
 @media(prefers-reduced-motion:reduce){.rfr.busy{animation:none}}
+.sub2{display:block;font-size:10.5px;color:var(--faint);font-weight:500;margin-top:1px}
 .mcap{display:flex;align-items:center;gap:9px;flex-wrap:wrap;font-size:12.5px;
   color:var(--muted);padding:0 2px 9px}
 .mcap b{color:var(--ink);font-weight:650}
@@ -827,6 +828,8 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
             title="How long each ad set has kept spending: when it went live, days spent, whether it stopped">Lifespan <i id="n-longevity"></i></button>
     <button data-t="trends" title="One line per row, day by day">Daily trend</button>
     <button data-t="matrix" title="Rows down, days across — sort by any single day">Day grid</button>
+    <button data-t="cohorts" title="By the day a creative first ran in testing: how many
+      graduated to a trial campaign, and how many went on to carry real spend">Graduation</button>
   </div>
 
   <div class="ctl" id="gctl" style="display:none">
@@ -931,6 +934,17 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <span class="meta" id="lcount"></span>
   </div>
 
+  <div class="ctl" id="cctl" style="display:none">
+    <label class="sel"><span>Window</span>
+      <select id="cWin">
+        <option value="14">Last 14 days</option>
+        <option value="30" selected>Last 30 days</option>
+        <option value="60">Last 60 days</option>
+        <option value="90">Last 90 days</option>
+      </select></label>
+    <span class="meta" id="ccount"></span>
+  </div>
+  <div id="cohortWrap" style="display:none"></div>
   <div id="trendsWrap" style="display:none"></div>
   <div id="matrixWrap" style="display:none"></div>
   <div class="wrap" id="tblWrap"><table id="tbl"><thead></thead><tbody></tbody><tfoot></tfoot></table></div>
@@ -1923,6 +1937,92 @@ let SERIES = null, SERIESKEY = null, SERIESBUSY = false;
 let HOURLY = null, HOURLYKEY = null, HOURLYBUSY = false;
 const hourKey = () => `${BRAND}`;
 const grain = () => (document.getElementById('sGrain') || {value:'day'}).value;
+
+let COH = null, COHKEY = null, COHBUSY = false;
+const cohKey = () => `${BRAND}|${document.getElementById('cWin')
+                                  ? document.getElementById('cWin').value : 30}`;
+
+async function loadCohorts(force){
+  const key = cohKey();
+  if(COHKEY === key && COH && !force) return;
+  COHBUSY = true; renderCohorts();
+  try{
+    const days = key.split('|')[1];
+    const r = await fetch(`/api/cohorts?brand=${BRAND}&days=${days}${K}`);
+    const j = await r.json();
+    if(j.error){ COH = null; return; }
+    if(cohKey() !== key) return;
+    COH = j; COHKEY = key;
+  }catch(_){ COH = null; }
+  finally{ COHBUSY = false; }
+  if(TAB === 'cohorts') renderCohorts();
+}
+
+/* Read down the days: how many creatives went live in testing, how many of those reached
+   a trial campaign, and how many then carried real money. The last rows are always thin
+   and that is the truth rather than a gap — a cohort from two days ago has not had time
+   to graduate, let alone to spend its way past the winner bar. */
+function renderCohorts(){
+  const box = document.getElementById('cohortWrap');
+  if(!COH){
+    box.innerHTML = COHBUSY
+      ? `<div class="panel"><h3><span class="skl" style="width:210px;display:inline-block"></span></h3>
+         <div class="mwrap"><table class="mx"><tbody>${
+           sklRows(['120px','60px','60px','60px','60px','90px','70px'], 8)}</tbody></table></div></div>`
+      : `<div class="panel"><p class="sub">No graduation history yet.</p></div>`;
+    return;
+  }
+  const t = COH.totals, rs0 = v => rs(v);
+  /* A brand with no testing campaign in the window has nothing to graduate FROM, which
+     is a different thing from a brand that tested and failed. Say which one it is. */
+  if(!t.live){
+    document.getElementById('ccount').textContent = '';
+    box.innerHTML = `<div class="panel"><h3>Graduation by cohort · ${
+        (BRANDS[COH.brand]||{}).label || COH.brand}</h3>
+      <p class="sub">No creative first ran in a testing campaign between ${COH.since}
+        and ${COH.until}. ${(BRANDS[COH.brand]||{}).label || COH.brand} is running its
+        ad sets straight in trial campaigns over this window, so there is no testing
+        cohort to follow.</p></div>`;
+    return;
+  }
+  document.getElementById('ccount').textContent =
+    `${COH.rows.length} days · ${num(t.live)} creatives`;
+  const pct = (a, b) => b ? `${(100*a/b).toFixed(0)}%` : '—';
+  const row = r => `<tr>
+    <td class="l">${r.date}</td>
+    <td>${num(r.live)}</td>
+    <td>${num(r.grad)}<span class="sub2">${pct(r.grad, r.live)}</span></td>
+    <td>${num(r.win)}<span class="sub2">${pct(r.win, r.grad)}</span></td>
+    <td><b>${num(r.sup)}</b></td>
+    <td>${rs0(r.test_spend)}</td>
+    <td>${rs0(r.trial_spend)}</td>
+    <td>${num(r.trials)}</td>
+    <td class="${cls(r.trials ? r.trial_spend / r.trials : null)}">${
+      r.trials ? rs(r.trial_spend / r.trials) : '—'}</td></tr>`;
+  box.innerHTML = `<div class="panel" style="padding-bottom:10px">
+      <div class="mcap"><h3>Graduation by cohort · ${(BRANDS[COH.brand]||{}).label || COH.brand}</h3>
+        <span class="meta">settled days only, through ${COH.until}</span></div>
+      <p class="sub">Each row is the day a creative <b>first ran in a testing campaign</b>.
+        Graduated means it later appeared in a trial campaign. A winner has since spent
+        over ${rs(COH.winner_spend)} there, a super winner over ${rs(COH.super_spend)} —
+        spend in the trial campaign only, which is what graduation was for.
+        The newest rows are thin because a cohort needs days to graduate and more to
+        spend.</p></div>
+    <div class="wrap"><table id="cohtbl">
+      <thead><tr><th class="l">Went live</th><th>In testing</th><th>Graduated</th>
+        <th>Winners</th><th>Super</th><th>Testing spend</th><th>Trial spend</th>
+        <th>${COH.event_label || 'Trials'}</th><th>CPT</th></tr></thead>
+      <tbody>${COH.rows.slice().reverse().map(row).join('')}</tbody>
+      <tfoot><tr><td class="l">${COH.rows.length} days</td>
+        <td>${num(t.live)}</td>
+        <td>${num(t.grad)}<span class="sub2">${pct(t.grad, t.live)}</span></td>
+        <td>${num(t.win)}<span class="sub2">${pct(t.win, t.grad)}</span></td>
+        <td><b>${num(t.sup)}</b></td>
+        <td>${rs0(t.test_spend)}</td><td>${rs0(t.trial_spend)}</td>
+        <td>${num(t.trials)}</td>
+        <td>${t.trials ? rs(t.trial_spend / t.trials) : '—'}</td></tr></tfoot>
+    </table></div>`;
+}
 
 async function loadHourly(force){
   const key = hourKey();
@@ -3506,6 +3606,22 @@ function renderPlatform(){
 
 function renderTable(){
   const tbl = document.getElementById('tbl');
+  const isCohorts = TAB === 'cohorts';
+  document.getElementById('cohortWrap').style.display = isCohorts ? 'block' : 'none';
+  if(isCohorts){
+    document.getElementById('ctl').style.display = 'none';
+    document.getElementById('gctl').style.display = 'none';
+    document.getElementById('sctl').style.display = 'none';
+    document.getElementById('lctl').style.display = 'none';
+    document.getElementById('cctl').style.display = 'flex';
+    document.getElementById('trendsWrap').style.display = 'none';
+    document.getElementById('matrixWrap').style.display = 'none';
+    document.getElementById('tblWrap').style.display = 'none';
+    if(!COH && !COHBUSY) loadCohorts(false);
+    renderCohorts();
+    return;
+  }
+  document.getElementById('cctl').style.display = 'none';
   const isSeries = TAB==='trends' || TAB==='matrix';
   document.getElementById('lctl').style.display = TAB==='longevity' ? 'flex' : 'none';
   document.getElementById('gctl').style.display =
@@ -4483,6 +4599,7 @@ document.getElementById('tabs').onclick = e => {
   renderTable(); noteFor(); attrAvail();
   // Opening the tab is the request. Anything else means looking at an empty table and
   // wondering what to press.
+  if(TAB==='cohorts' && !COH && !COHBUSY) loadCohorts(false);
   if(TAB==='longevity' && !longFresh() && !LONGBUSY) loadLongevity(false);
   if((TAB==='trends' || TAB==='matrix') && !seriesFresh() && !SERIESBUSY) loadSeries(false);
 };
@@ -4495,6 +4612,7 @@ document.getElementById('sDim').onchange = () => {
   MPAGE = 0; MSORT = {key:'total', dir:-1}; loadSeries(false);
 };
 document.getElementById('sHourMetric').onchange = () => renderTrends();
+document.getElementById('cWin').onchange = () => { loadCohorts(false); renderCohorts(); };
 document.getElementById('sGrain').onchange = () => {
   const hourly = grain() === 'hour';
   document.getElementById('sLinesWrap').style.display = hourly ? 'none' : 'inline-flex';
@@ -4564,6 +4682,8 @@ document.getElementById('brandsw').onclick = e => {
   applyBrand(b);
   RAW = null;
   GOOG = null; GOOGKEY = null;       // Google is per-brand as well
+  COH = null; COHKEY = null;         // and so is the graduation history
+  HOURLY = null; HOURLYKEY = null;
   PRIOR = null; PRIORKEY = null;
   GSPEND = null; GSPENDKEY = null;
   SERIES = null; SERIESKEY = null;   // and never one brand's daily series under another's
