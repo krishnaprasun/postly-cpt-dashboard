@@ -875,6 +875,12 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
         <option value="day" selected>Daily</option>
         <option value="hour">Hourly · last 4 days</option>
       </select></label>
+    <label class="chk" id="sHourMetricWrap" style="display:none">Show
+      <select class="sel" id="sHourMetric" style="margin-left:6px">
+        <option value="spend" selected>Spend</option>
+        <option value="trials">Trials</option>
+        <option value="cpt">CPT</option>
+      </select></label>
     <label class="chk" id="sLinesWrap">Lines
       <select class="sel" id="sLines" style="margin-left:6px">
         <option value="6" selected>Top 6</option>
@@ -2504,19 +2510,53 @@ function renderHourly(){
     return;
   }
   const days = HOURLY.days, hrs = HOURLY.hours;
+  const met = (document.getElementById('sHourMetric') || {value:'spend'}).value;
+  const fmt = met === 'trials' ? num : rs;
+
+  /* Spend is Meta's, per hour, complete. Trials are ours, and exist only as a running
+     total written down each hour — so an hour's trials is the difference between two
+     consecutive snapshots. Where a snapshot was missed the gap is left EMPTY rather than
+     dumped onto the next hour: three hours of trials drawn as one is a spike that never
+     happened. CPT divides Meta's spend for that hour by those trials, so the numerator is
+     the accurate one and only the denominator depends on our own recording. */
+  function valueAt(d, h){
+    const cell = (hrs[d] || {})[h];
+    if(met === 'spend') return cell ? cell.spend : null;
+    const pts = ((HOURLY.trials || {})[d] || []);
+    let dt = null;
+    for(let i = 1; i < pts.length; i++){
+      if(pts[i].h === h && pts[i].h - pts[i-1].h === 1){
+        dt = pts[i].trials - pts[i-1].trials; break;
+      }
+    }
+    if(dt === null || dt < 0) return null;
+    if(met === 'trials') return dt;
+    if(!dt || !cell || !cell.spend) return null;
+    return cell.spend / dt;
+  }
+
   const W = 900, H = 260, L = 58, R = 14, T = 14, Bm = 26;
-  let max = 0;
-  for(const d of days) for(let h = 0; h < 24; h++)
-    max = Math.max(max, ((hrs[d] || {})[h] || {}).spend || 0);
+  let max = 0, any = false;
+  for(const d of days) for(let h = 0; h < 24; h++){
+    const v = valueAt(d, h);
+    if(v !== null){ any = true; max = Math.max(max, v); }
+  }
+  if(!any){
+    box.innerHTML = `<div class="panel"><h3>Hourly ${met}</h3>
+      <p class="sub">Nothing recorded yet. Branch reports no trials by hour, so this app
+      writes the running total down each hour — the series starts when that recording
+      started.</p></div>`;
+    return;
+  }
   const top = niceMax(max, 4) || 1;
   const x = h => L + (h * (W - L - R)) / 23;
   const y = v => T + (1 - v / top) * (H - T - Bm);
   const line = (d, i) => {
     const pts = [];
     for(let h = 0; h < 24; h++){
-      const c = (hrs[d] || {})[h];
-      if(!c) continue;                       // an hour with no row is a gap, not a zero
-      pts.push(`${x(h).toFixed(1)},${y(c.spend).toFixed(1)}`);
+      const v = valueAt(d, h);
+      if(v === null) continue;               // an hour with no reading is a gap, not a zero
+      pts.push(`${x(h).toFixed(1)},${y(v).toFixed(1)}`);
     }
     if(pts.length < 2) return '';
     const last = i === days.length - 1;
@@ -2526,24 +2566,42 @@ function renderHourly(){
   const gy = Array.from({length: 5}, (_, i) => {
     const v = top * i / 4;
     return `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>
-      <text class="axis" x="${L - 8}" y="${y(v) + 3}" text-anchor="end">${rs(v)}</text>`;
+      <text class="axis" x="${L - 8}" y="${y(v) + 3}" text-anchor="end">${fmt(v)}</text>`;
   }).join('');
   const gx = [0, 4, 8, 12, 16, 20, 23].map(h =>
     `<text class="axis" x="${x(h)}" y="${H - 8}" text-anchor="middle">${h}:00</text>`).join('');
-  const tot = d => Object.values(hrs[d] || {}).reduce((a, c) => a + c.spend, 0);
+  /* The legend totals the day as the metric means it: spend and trials add up, a rate
+     does not — a day's CPT is its spend over its trials, not a mean of hourly CPTs. */
+  const dayTot = d => {
+    let sp = 0, tr = 0;
+    for(let h = 0; h < 24; h++){
+      const c = (hrs[d] || {})[h];
+      if(c) sp += c.spend;
+      const pts = ((HOURLY.trials || {})[d] || []);
+      for(let i = 1; i < pts.length; i++)
+        if(pts[i].h === h && pts[i].h - pts[i-1].h === 1)
+          tr += Math.max(0, pts[i].trials - pts[i-1].trials);
+    }
+    if(met === 'spend') return rs(sp);
+    if(met === 'trials') return num(tr);
+    return tr ? rs(sp / tr) : '—';
+  };
   const legend = days.map((d, i) => {
     const dt = new Date(d + 'T00:00:00');
     const lbl = dt.toLocaleDateString(undefined, {day:'numeric', month:'short'});
     return `<span class="it"><i class="sw" style="border-color:${
       LINE_COLOURS[i % LINE_COLOURS.length]}"></i>${lbl}${
-      i === days.length - 1 ? ' (today)' : ''} · ${rs(tot(d))}</span>`;
+      i === days.length - 1 ? ' (today)' : ''} · ${dayTot(d)}</span>`;
   }).join('');
   box.innerHTML = `<div class="panel">
-    <h3>Spend by hour · last ${days.length} days</h3>
+    <h3>${met === 'cpt' ? 'CPT' : met === 'trials' ? 'Trials' : 'Spend'} by hour ·
+      last ${days.length} days</h3>
     <p class="sub">Hour of the ad account's day, every account for this brand added
       together.${HOURLY.error ? ` <span class="warn">One account did not answer —
-      ${HOURLY.error}</span>` : ''} Trials have no hourly source at Branch, so this is
-      spend only: it answers when the budget goes out, not what it bought.</p>
+      ${HOURLY.error}</span>` : ''}${met === 'spend'
+        ? ' Spend comes from Meta by hour and is complete for every hour shown.'
+        : ` Branch reports no trials by hour, so an hour's trials is the change in the
+           running total this app records hourly — blank wherever an hour was missed.`}</p>
     <div class="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gy}
       ${days.map(line).join('')}${gx}</svg></div>
     <div class="legend">${legend}</div></div>`;
@@ -3421,6 +3479,8 @@ function renderTable(){
       (TAB === 'trends' && grain() === 'day') ? 'inline-flex' : 'none';
     document.getElementById('sGrainWrap').style.display =
       TAB === 'trends' ? 'inline-flex' : 'none';
+    document.getElementById('sHourMetricWrap').style.display =
+      (TAB === 'trends' && grain() === 'hour') ? 'inline-flex' : 'none';
     if(TAB === 'trends' && grain() === 'hour' && !HOURLY && !HOURLYBUSY) loadHourly(false);
     seriesControls();
     if(TAB==='trends') renderTrends(); else renderMatrix();
@@ -4350,9 +4410,11 @@ document.getElementById('sDim').onchange = () => {
      from the last one would silently mean a different grid. */
   MPAGE = 0; MSORT = {key:'total', dir:-1}; loadSeries(false);
 };
+document.getElementById('sHourMetric').onchange = () => renderTrends();
 document.getElementById('sGrain').onchange = () => {
   const hourly = grain() === 'hour';
   document.getElementById('sLinesWrap').style.display = hourly ? 'none' : 'inline-flex';
+  document.getElementById('sHourMetricWrap').style.display = hourly ? 'inline-flex' : 'none';
   if(hourly) loadHourly(false);
   renderTable(); noteFor();
 };
