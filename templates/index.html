@@ -2551,6 +2551,7 @@ function renderHourly(){
   const top = niceMax(max, 4) || 1;
   const x = h => L + (h * (W - L - R)) / 23;
   const y = v => T + (1 - v / top) * (H - T - Bm);
+  let drawn = 0, seen = 0;
   const line = (d, i) => {
     const pts = [];
     for(let h = 0; h < 24; h++){
@@ -2558,7 +2559,17 @@ function renderHourly(){
       if(v === null) continue;               // an hour with no reading is a gap, not a zero
       pts.push(`${x(h).toFixed(1)},${y(v).toFixed(1)}`);
     }
+    seen += pts.length;
+    /* One point is a day that has only just begun — a dot, not a line, because a line
+       needs two hours and dropping it entirely makes today look like it never ran. */
+    if(pts.length === 1){
+      drawn++;
+      const [cx, cy] = pts[0].split(',');
+      return `<circle cx="${cx}" cy="${cy}" r="3.5" fill="${
+        LINE_COLOURS[i % LINE_COLOURS.length]}"/>`;
+    }
     if(pts.length < 2) return '';
+    drawn++;
     const last = i === days.length - 1;
     return `<path class="ln" d="M${pts.join(' L')}"
       stroke="${LINE_COLOURS[i % LINE_COLOURS.length]}"${last ? '' : ' stroke-opacity=".5"'}/>`;
@@ -2593,6 +2604,7 @@ function renderHourly(){
       LINE_COLOURS[i % LINE_COLOURS.length]}"></i>${lbl}${
       i === days.length - 1 ? ' (today)' : ''} · ${dayTot(d)}</span>`;
   }).join('');
+  const paths = days.map(line).join('');
   box.innerHTML = `<div class="panel">
     <h3>${met === 'cpt' ? 'CPT' : met === 'trials' ? 'Trials' : 'Spend'} by hour ·
       last ${days.length} days</h3>
@@ -2603,8 +2615,11 @@ function renderHourly(){
         : ` Branch reports no trials by hour, so an hour's trials is the change in the
            running total this app records hourly — blank wherever an hour was missed.`}</p>
     <div class="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gy}
-      ${days.map(line).join('')}${gx}</svg></div>
-    <div class="legend">${legend}</div></div>`;
+      ${paths}${gx}</svg></div>
+    <div class="legend">${legend}</div>
+    ${drawn ? '' : `<p class="sub warn">Nothing plotted, and the figures arrived:
+      ${days.length} day(s), ${seen} hour(s) carrying a value, largest ${fmt(max)}. That
+      makes this a drawing fault rather than a data one.</p>`}</div>`;
 }
 
 function renderTrends(){
