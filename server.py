@@ -1102,6 +1102,9 @@ def api_budget_snapshot():
                         "adsets": len(snap["adsets"]), "campaigns": len(snap["campaigns"]),
                         "accounts": len(snap["accounts"]), "total": snap["total"],
                         "samples": snap.get("samples"), "moved": len(snap.get("moved") or []),
+                        # Which of the day's three slots this became, so a scheduler log
+                        # says whether the 9am, 3pm or 11pm reading actually landed.
+                        "slot": snap.get("slot"), "slot_stored": snap.get("slot_stored"),
                         "degraded": snap.get("degraded") or [],
                         "stored": snap.get("stored"),
                         "error": snap.get("store_error")})
