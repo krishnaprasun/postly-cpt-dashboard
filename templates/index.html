@@ -189,6 +189,9 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 @keyframes rfrspin{to{transform:rotate(360deg)}}
 .rfr.busy{animation:rfrspin 1s linear infinite}
 @media(prefers-reduced-motion:reduce){.rfr.busy{animation:none}}
+/* The spend column rides alongside whatever metric is on screen, so it is the one that
+   gets out of the way: same figures, quieter ink. */
+.mx td.sp{color:var(--muted);font-variant-numeric:tabular-nums}
 .lnk{background:none;border:0;padding:0;margin-left:6px;font:inherit;color:var(--accent);
      font-weight:600;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
 .lnk:hover{opacity:.8}
@@ -2370,7 +2373,11 @@ let MXSIG = '';
 /* Sorted by period total, descending, to open the way it always did. `key` is 'name',
    'platform', 'stage', 'total', or a date string -- clicking a day column sorts by that
    day, which is the question the grid exists to answer. */
-let MSORT = {key:'total', dir:-1};
+/* Spend, not the metric on screen. Sorting by the metric put the CPT view in the hands
+   of whichever creative had one trial and a terrible number, and the trials view in the
+   hands of rows that spent nothing — the question is always "what is my money doing",
+   so the money orders the rows until somebody clicks a different column. */
+let MSORT = {key:'spend', dir:-1};
 /* Six lines, picked to stay apart both in hue and in lightness so the chart survives
    being printed, screenshotted or read by someone who cannot separate red from green. */
 /* An axis ceiling a person can read: 1, 2, 2.5 or 5 times a power of ten, per tick. */
@@ -2543,6 +2550,7 @@ function matrixRows(){
                  : k === 'platform' ? (r.platform || '')
                  : k === 'stage' ? (r.stage || '')
                  : k === 'total' ? rowTotal(r)
+                 : k === 'spend' ? r.total_spend
                  : m.of(r.days[k]);
   rows.sort((a, b) => {
     const x = val(a), y = val(b);
@@ -3013,7 +3021,8 @@ function renderMatrix(){
   const head = `<tr>
     ${th('name', (SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim, 'l pin')}
     ${th('platform', 'Platform', 'l')}${th('stage', 'Stage', 'l')}
-    ${th('total', 'Period ' + m.label.toLowerCase())}
+    ${th(sMetric() === 'spend' ? 'spend' : 'total', 'Period ' + m.label.toLowerCase())}
+    ${sMetric() === 'spend' ? '' : th('spend', 'Spend')}
     ${dates.map(d => th(d, `${d.slice(8)} ${
       new Date(d+'T00:00:00').toLocaleString('en-GB',{month:'short'})}`)).join('')}</tr>`;
 
@@ -3033,6 +3042,7 @@ function renderMatrix(){
           : (r.label||'—')}</td>
       <td class="l">${r.platform}</td><td class="l">${r.stage||'—'}</td>
       <td><b>${tv===null?'—':m.fmt(tv)}</b></td>
+      ${sMetric() === 'spend' ? '' : `<td class="sp">${rs(r.total_spend)}</td>`}
       ${dates.map(d => { const v = m.of(r.days[d]);
         return v===null||!isFinite(v) ? `<td class="z">—</td>`
              : `<td${v ? '' : ' class="z"'}>${m.fmt(v)}</td>`; }).join('')}</tr>`;
@@ -3072,7 +3082,9 @@ function renderMatrix(){
              : sMetric()==='clk' ? (im ? ck : null)
              : sMetric()==='gconv' ? (gcAny ? gc : null)
              : (sMetric()==='spend'?sp:sMetric()==='t101'?t:n);
-    return `<td>${gt===null?'—':m.fmt(gt)}</td>` + dates.map(d => { const v = colTot(d);
+    return `<td>${gt===null?'—':m.fmt(gt)}</td>`
+      + (sMetric() === 'spend' ? '' : `<td class="sp">${rs(sp)}</td>`)
+      + dates.map(d => { const v = colTot(d);
       return `<td>${v===null||!isFinite(v)?'—':m.fmt(v)}</td>`; }).join('');
   };
   const foot = (rows.length ? `<tr><td class="l pin">THIS PAGE · ${rows.length} row(s)</td>
@@ -3097,7 +3109,8 @@ function renderMatrix(){
         Export CSV writes every row that matches the filter, not just this page.</p>
     </div>
     <div class="mwrap"><table class="mx"><thead>${head}</thead>
-      <tbody>${body || `<tr><td class="l" colspan="${dates.length+4}">No rows match.</td></tr>`}</tbody>
+      <tbody>${body || `<tr><td class="l" colspan="${dates.length + (sMetric()==='spend'?4:5)
+        }">No rows match.</td></tr>`}</tbody>
       <tfoot>${foot}</tfoot></table></div>${pager}`;
 
   box.querySelectorAll('thead th').forEach(el => el.onclick = () => {
@@ -4627,7 +4640,7 @@ document.getElementById('sWin').onchange = () => { MPAGE = 0; loadSeries(false);
 document.getElementById('sDim').onchange = () => {
   /* A new dimension has different columns to sort by, and "sort by 12 Aug" carried over
      from the last one would silently mean a different grid. */
-  MPAGE = 0; MSORT = {key:'total', dir:-1}; loadSeries(false);
+  MPAGE = 0; MSORT = {key:'spend', dir:-1}; loadSeries(false);
 };
 document.getElementById('sHourMetric').onchange = () => renderTrends();
 document.getElementById('cWin').onchange = () => { loadCohorts(false); renderCohorts(); };
