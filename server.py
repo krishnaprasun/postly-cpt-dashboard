@@ -735,7 +735,7 @@ def api_cohorts():
     if err:
         return err
     try:
-        days = max(7, min(int(request.args.get("days", "30")), 120))
+        days = max(7, min(int(request.args.get("days", "30")), P.GRAD_STORE_DAYS))
     except ValueError:
         days = 30
     until = H.settled_through(P.today_ist()) if H.available() else P.today_ist()
@@ -1267,8 +1267,22 @@ def api_precompute():
             except Exception as e:
                 traceback.print_exc()
                 warmed.append({"brand": b, "error": str(e)[:200]})
+    # Cohorts read only the raw daily documents already in the store — no Meta, no
+    # Branch, no quota — but the scan is ten seconds a brand, so it is folded here and
+    # read back as one small document per view.
+    # Off unless asked for, like the other two halves: this endpoint already runs a
+    # longevity fold and a series warm, and three jobs sharing one request is how all of
+    # them end up finishing none. `?cohorts=1&longevity=0&series=0` is its own job.
+    grads = []
+    if request.args.get("cohorts", "0") != "0":
+        for b in brands:
+            try:
+                grads.append(P.precompute_cohorts(b))
+            except Exception as e:
+                traceback.print_exc()
+                grads.append({"ok": False, "brand": b, "error": str(e)[:200]})
     return jsonify({"wrote": sum(1 for r in out if r.get("ok")), "results": out,
-                    "series_warmed": warmed})
+                    "series_warmed": warmed, "cohorts": grads})
 
 
 @app.route("/api/snapshot", methods=["POST", "GET"])

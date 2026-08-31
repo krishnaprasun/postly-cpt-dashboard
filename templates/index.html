@@ -2013,7 +2013,8 @@ function renderCohorts(){
       r.trials ? rs(r.trial_spend / r.trials) : '—'}</td></tr>`;
   box.innerHTML = `<div class="panel" style="padding-bottom:10px">
       <div class="mcap"><h3>Graduation by cohort · ${(BRANDS[COH.brand]||{}).label || COH.brand}</h3>
-        <span class="meta">settled days only, through ${COH.until}</span></div>
+        <span class="meta">settled days only, through ${COH.until} · ${COH.stored
+          ? `folded ${COH.built_at}` : 'folded live for this request'}</span></div>
       <p class="sub">Each row is the day a creative <b>first ran in a testing campaign</b>.
         Graduated means it later appeared in a trial campaign. A winner has since spent
         over ${rs(COH.winner_spend)} there, a super winner over ${rs(COH.super_spend)} —
