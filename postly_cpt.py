@@ -2437,7 +2437,7 @@ SERIES_MAX_ROWS = int(os.environ.get("SERIES_MAX_ROWS", "20000"))
 # Bumped when the SHAPE of a folded row changes. Checked alongside dates and row_cap
 # before a stored fold is reused, for the same reason: a fold from before rows carried
 # their account gives the Matrix a grid with no links and no way to tell why.
-SERIES_SHAPE = 5
+SERIES_SHAPE = 6
 # The levels a budget belongs to. A script is an ad name and a stage is a bucket; neither
 # is a thing Meta holds a budget against.
 BUDGET_DIMS = {"adset": "adsets", "campaign": "campaigns", "account": "accounts"}
@@ -2503,7 +2503,15 @@ def _dim_day(meta_rows, branch_day, keys, dim, testing_re, acct_names):
             stage = "testing" if testing_re.search(camp) else "trial"
             sp = float(r.get("spend") or 0)
             if dim == "script":
-                k = lbl = r.get("ad_name") or ""
+                # Keyed by name AND stage, not by name alone. The same creative runs in a
+                # testing campaign and, once it graduates, in a trial one — 126 names on
+                # Funda in a single week. Keyed by name only, those two lives merge into
+                # one row whose spend, trials and CPT are a blend of an install-optimised
+                # campaign and a trial-optimised one, and whose Stage column shows
+                # whichever happened to be seen first. Two rows now, one per stage, which
+                # is what the Stage column and the "include testing" filter both assume.
+                lbl = r.get("ad_name") or ""
+                k = lbl + "\x1f" + stage
             elif dim == "adset":
                 k, lbl = r.get("adset_id"), r.get("adset_name") or ""
             elif dim == "campaign":
