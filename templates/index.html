@@ -1427,6 +1427,15 @@ let rlDeadline = 0, rlTick = null, rlFired = 0;
 
 const mmss = s => `${Math.floor(s/60)}:${String(s%60).padStart(2,'0')}`;
 
+/* The scheduled fetches: the top of every hour, and a second pass at :35 that retries
+   only the brands the first one could not get. */
+function nextFetchIST(){
+  const now = new Date(), m = now.getMinutes();
+  const at = m < 35 ? 35 : 60;
+  const t = new Date(now.getTime() + (at - m) * 60000);
+  return t.toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit'}) + ' IST';
+}
+
 function renderLimits(){
   const box = document.getElementById('limit'), rl = DATA && DATA.rate_limit;
   clearInterval(rlTick); rlTick = null;
@@ -1441,9 +1450,16 @@ function renderLimits(){
     box.innerHTML = `<div class="limitbox">
       <div class="lhead"><span class="ldot"></span>
         Meta is rate-limiting ${a.length>1 ? 'these ad accounts' : 'this ad account'}
-        <span class="lcd" id="rlcd">—</span></div>
+        ${HOURLY_MODE ? '' : `<span class="lcd" id="rlcd">—</span>`}</div>
       <div class="lbody">${who}. Refused for ${held} min so far.
-        ${rl.retry_source === 'meta'
+        ${HOURLY_MODE
+          /* The page reads what the hourly job stored and never calls Meta itself, so
+             promising a re-check "every 5 min" would be describing a thing that no longer
+             happens. Name the job and when it next runs instead. */
+          ? `This page does not read Meta — the hourly job does, and Meta turned its last
+             attempt away. It tries again at <b>${nextFetchIST()}</b>, and the figures
+             below stand until one gets through. Nothing to do.`
+          : rl.retry_source === 'meta'
           ? `Meta puts access back at <b>${rl.retry_at_ist} IST</b> and this page retries
              itself then — nothing to do.`
           : `Meta gives no recovery estimate on this endpoint, so there is no countdown to
@@ -1462,6 +1478,10 @@ function renderLimits(){
           ? `, on the <b>development access</b> tier. Standard Access lifts this ceiling.`
           : '.'}</span>` : ''}
       </div></div>`;
+    // No countdown and no self-retry in hourly mode: the schedule decides when Meta is
+    // asked again, and a page that retried on its own would be exactly the behaviour that
+    // got these accounts throttled.
+    if(HOURLY_MODE) return;
     rlDeadline = Date.now() + rl.retry_in_sec*1000;
     const tick = () => {
       const left = Math.max(0, Math.round((rlDeadline - Date.now())/1000));
@@ -1488,8 +1508,11 @@ function renderLimits(){
   if(b && b.time_pct >= 85){
     box.innerHTML = `<div class="warnbox"><b>Close to Meta's limit.</b>
       ${b.account} has used <b>${b.time_pct}%</b> of its hourly request-<i>time</i> budget
-      (call count is only ${b.calls_pct}%). Refreshes may start being refused shortly; if
-      that happens this page will say so and recover on its own.</div>`;
+      (call count is only ${b.calls_pct}%). ${HOURLY_MODE
+        ? `The hourly fetch may start being refused; if it is, the figures here hold at
+           their last good hour and this page says so.`
+        : `Refreshes may start being refused shortly; if that happens this page will say
+           so and recover on its own.`}</div>`;
     return;
   }
   box.innerHTML = '';
