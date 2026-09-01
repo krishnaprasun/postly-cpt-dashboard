@@ -878,12 +878,16 @@ def budget_snapshot(brand, force=False, store=True):
             camps_[c["id"]] = {"n": c.get("name", ""), "b": b,
                                "lt": _rupees(c.get("lifetime_budget")),
                                "st": st, "a": a["id"]}
-            if st == "ACTIVE":
+            if is_live(st):
                 acct_total += b
         for x in live_sets:
             b = _rupees(x.get("daily_budget"))
             sets_[x["id"]] = {"n": x.get("name", ""), "b": b,
-                              "lt": _rupees(x.get("lifetime_budget")), "st": "ACTIVE",
+                              "lt": _rupees(x.get("lifetime_budget")),
+                              # The listing is filtered to the states that still deliver,
+                              # so record which one it actually was rather than flattening
+                              # IN_PROCESS and PENDING_REVIEW into ACTIVE.
+                              "st": x.get("effective_status") or "ACTIVE",
                               "c": x.get("campaign_id", ""), "a": a["id"]}
             acct_total += b
         accts_[a["id"]] = {"n": a["name"], "b": round(acct_total, 2)}
@@ -1056,7 +1060,7 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 # Every other stored artifact already carries a stamp (PRORATA_MODEL, SERIES_SHAPE,
 # row_cap); the payload was the one that did not, and adding video is what found it.
 #   2 - hook rate and ThruPlay (vv / tp / vimp) at every level
-PAYLOAD_SHAPE = 4
+PAYLOAD_SHAPE = 5
 
 
 def has_vid(r):
@@ -1125,6 +1129,28 @@ def _part(acct, kind, fetch, ttl, force=False):
         return (hit["data"], True) if hit else (None, False)
 
 
+# Meta's `effective_status` is not a two-state flag, and reading it as one cost this
+# dashboard a whole page of wrong numbers. An ad set Meta reports as IN_PROCESS has its
+# own status ACTIVE and is spending money: on 1 Sept, Postly had 125 of them carrying
+# Rs2,53,529 of daily budget, and they spent Rs1,57,435 that day while the roster call —
+# which asked only for effective_status ACTIVE — returned 35 ad sets worth Rs52,693. The
+# live budget read as a seventh of itself, the LIVE tile counted a fifth of the ad sets,
+# and "active only" hid the rest of the account as though it were paused.
+#
+# So the question is not "does Meta say ACTIVE" but "has Meta stopped it". These are the
+# states where it has not: a new entity still being processed, one waiting on review, one
+# approved ahead of its start, and one running with a placement complaint against it.
+# Everything else — paused at any level, archived, disapproved, out of billing — is off.
+LIVE_STATUSES = ["ACTIVE", "IN_PROCESS", "PENDING_REVIEW", "PREAPPROVED", "WITH_ISSUES"]
+_LIVE_SET = set(LIVE_STATUSES)
+
+
+def is_live(status):
+    """True when Meta has not stopped this entity. Unknown statuses count as stopped:
+    a new state Meta invents is more likely to be a way of NOT delivering."""
+    return (status or "") in _LIVE_SET
+
+
 def meta_roster(acct, force=False):
     """(campaigns, active ad sets, active ads, ok_flags) — each piece independently
     cached and independently allowed to fail.
@@ -1140,11 +1166,11 @@ def meta_roster(acct, force=False):
     sets, ok_s = _part(acct, "adsets", lambda: _graph(
         f"{acct}/adsets", {"fields": "id,name,effective_status,daily_budget,campaign_id,"
                                      "created_time,lifetime_budget",
-                           "effective_status": json.dumps(["ACTIVE"])},
+                           "effective_status": json.dumps(LIVE_STATUSES)},
         rl_retries=0), ROSTER_TTL, force)
     ads_, ok_a = _part(acct, "ads", lambda: _graph(
         f"{acct}/ads", {"fields": "id,name,effective_status,adset_id,campaign_id",
-                        "effective_status": json.dumps(["ACTIVE"])},
+                        "effective_status": json.dumps(LIVE_STATUSES)},
         rl_retries=0), ADS_ROSTER_TTL, force)
     return (camps or [], sets or [], ads_ or [],
             {"campaigns": ok_c, "adsets": ok_s, "ads": ok_a})
@@ -3039,7 +3065,7 @@ def _series_active(B, dim):
                 ok_all = False
                 continue
             keys |= {c["id"] for c in camps
-                     if (c.get("effective_status") or "") == "ACTIVE"}
+                     if is_live(c.get("effective_status"))}
         else:
             # A script is an ad NAME, so it is still running if any live ad carries it.
             if not ok["ads"]:
@@ -3365,7 +3391,7 @@ def longevity(brand, since, until, force=False):
         for k in events:
             row[k] = round(row[k], 1)
         unknown = row["account_id"] in degraded_accts
-        row["active"] = None if unknown else (status.get(sid) == "ACTIVE")
+        row["active"] = None if unknown else is_live(status.get(sid))
         row["status"] = "UNKNOWN" if unknown else (status.get(sid) or "INACTIVE")
         row["created"] = created.get(sid, "")
         # An ad set already spending on the first day we can see did not necessarily
@@ -3604,7 +3630,7 @@ def precompute_longevity(brand, days, tail=None, status=None):
         for k in B["events"]:
             row[k] = round(row[k], 1)
         unknown = row["account_id"] in degraded
-        row["active"] = None if unknown else (st.get(sid) == "ACTIVE")
+        row["active"] = None if unknown else is_live(st.get(sid))
         row["status"] = "UNKNOWN" if unknown else (st.get(sid) or "INACTIVE")
         row["created"] = created.get(sid, "")
         row["censored"] = row["first"] <= floor
@@ -3726,7 +3752,7 @@ def longevity_fast(brand, days, force=False):
             st, created, degraded = _roster_status(B)
             for row in art["adsets"]:
                 unknown = row.get("account_id") in degraded
-                row["active"] = None if unknown else (st.get(row["id"]) == "ACTIVE")
+                row["active"] = None if unknown else is_live(st.get(row["id"]))
                 row["status"] = ("UNKNOWN" if unknown
                                  else (st.get(row["id"]) or "INACTIVE"))
                 row["created"] = created.get(row["id"], row.get("created", ""))

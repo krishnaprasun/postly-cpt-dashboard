@@ -2404,6 +2404,12 @@ let MXSIG = '';
    of whichever creative had one trial and a terrible number, and the trials view in the
    hands of rows that spent nothing — the question is always "what is my money doing",
    so the money orders the rows until somebody clicks a different column. */
+/* Mirrors LIVE_STATUSES on the server. Meta reports a running ad set as IN_PROCESS
+   while it is still being processed and PENDING_REVIEW while it waits for review, and
+   both spend money — reading the status as ACTIVE-or-nothing marked live ad sets paused
+   and hid them behind "active only". */
+const LIVE_ST = new Set(['ACTIVE','IN_PROCESS','PENDING_REVIEW','PREAPPROVED','WITH_ISSUES']);
+const isLive = st => LIVE_ST.has(st || '');
 let MSORT = {key:'spend', dir:-1};
 /* Six lines, picked to stay apart both in hue and in lightness so the chart survives
    being printed, screenshotted or read by someone who cannot separate red from green. */
@@ -3502,7 +3508,7 @@ function rows(tab, filtered){
     if(document.getElementById('activeOnly').checked && (tab==='adsets'||tab==='ads'))
       r = r.filter(o => o.active);
     if(document.getElementById('activeOnly').checked && tab==='campaigns')
-      r = r.filter(o => o.status==='ACTIVE');
+      r = r.filter(o => isLive(o.status));
     if(document.getElementById('spentOnly').checked) r = r.filter(o => o.spend > 0);
   }
   if(tab !== TAB) return r;
@@ -3548,7 +3554,7 @@ const adMedia = id => id
 
 function cell(o, c){
   if(c.kind==='name'){
-    const live = o.active || o.status==='ACTIVE';
+    const live = o.active || isLive(o.status);
     /* Share of the visible rows' spend, behind the name. Of the ROWS ON SCREEN, so it
        agrees with the footer beside it rather than with some window total the reader
        cannot see. */
@@ -3799,7 +3805,7 @@ function renderTable(){
     for(const a of acctRows()){
       h += mk(`<b>${a.name}</b>`, a, 0);
       for(const cm of DATA.campaigns.filter(
-            x => x.account_id===a.id && inSeg(x) && (x.spend>0||x.status==='ACTIVE')))
+            x => x.account_id===a.id && inSeg(x) && (x.spend>0||isLive(x.status))))
         h += mk(cm.name, cm, 1);
     }
     tbl.querySelector('tbody').innerHTML = h;
