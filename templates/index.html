@@ -2163,7 +2163,11 @@ function renderCohorts(){
         ${rs(COH.winner_spend)} in trial, a super winner over ${rs(COH.super_spend)}.
         Rates are against the day's uploads, so they read as "of everything we made that
         day". The newest rows are thin because a cohort needs days to graduate and more to
-        spend.${COH.live_known ? '' : ` <span class="warn">Meta would not return the
+        spend.${COH.band && COH.band !== 'all'
+          ? ` <b>Uploads stay the day's total</b> — a creative's testing CPI decides which
+             trial campaign it graduates into, so this filter narrows the graduation
+             columns and everything after them, not what was made that day.` : ''}${
+        COH.live_known ? '' : ` <span class="warn">Meta would not return the
         roster, so <i>Final live</i> is unknown rather than zero.</span>`}</p></div>
     <div class="wrap"><table id="cohtbl" class="coh">${head}
       <tbody>${COH.rows.slice().reverse().map(row).join('')}</tbody>${foot}</table></div>`;

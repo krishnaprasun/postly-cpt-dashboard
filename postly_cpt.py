@@ -456,12 +456,17 @@ def _cohort_rows(art, since, until, band=None, live=None):
         r = rows.get(rec["d"])
         if r is None:
             continue
-        if keep is not None and not keep(_cpi(rec)):
-            continue
+        # What was uploaded that day is a fact about the day, not about the band: a
+        # creative's testing CPI is what decides which trial campaign it graduates INTO,
+        # so the filter narrows what happened next and leaves the day's uploads alone.
+        # Filtering the uploads too made the first column move under the reader every
+        # time they changed the band, which is not what the band means.
         r["live"] += 1
         r["test_spend"] += rec["ts"]
         r["test_inst"] += rec["ti"]
         if not rec.get("g"):
+            continue
+        if keep is not None and not keep(_cpi(rec)):
             continue
         r["grad"] += 1
         r["trial_spend"] += rec["xs"]
