@@ -480,7 +480,7 @@ def cohorts(brand, since, until, force=False):
 # API accepts granularity "day" and answers 500 to "hour". So spend can be charted by the
 # hour for any past day and trials cannot, which is why the hourly view is about pacing
 # (when the budget burns, whether a pause landed) and not about CPT.
-HOURLY_DAYS = int(os.environ.get("HOURLY_DAYS", "4"))
+HOURLY_DAYS = int(os.environ.get("HOURLY_DAYS", "7"))
 HOURLY_TTL = int(os.environ.get("HOURLY_TTL", "600"))
 _hourly_cache, _hourly_lock = {}, threading.Lock()
 

@@ -518,6 +518,17 @@ a.mgr:hover{color:var(--accent-dk)}
 .legend b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   max-width:340px}
 .legend em{font-style:normal;color:var(--faint)}
+/* Legend chips that are also the control: click a day out of the chart to compare the
+   rest. `out` keeps the day readable but plainly switched off, so nobody wonders whether
+   the line is missing or hidden. */
+.legend button.hleg{display:inline-flex;align-items:center;gap:6px;max-width:100%;
+  background:none;border:0;padding:2px 4px;border-radius:6px;font:inherit;color:inherit;
+  cursor:pointer}
+.legend button.hleg:hover{background:var(--line2)}
+.legend button.hleg.out{color:var(--faint);text-decoration:line-through}
+.legend button.hleg.out i.sw{opacity:.3}
+.legend button.hleg.all{color:var(--accent-dk);font-weight:600}
+.legend i.sw{width:20px;height:0;border-top:2px solid;flex:0 0 auto}
 /* The grid scrolls inside itself; the page must never scroll sideways. */
 .mwrap{overflow-x:auto;border:1px solid var(--line);border-radius:12px;
   background:var(--white);box-shadow:var(--shadow)}
@@ -893,7 +904,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <label class="chk" id="sGrainWrap">Grain
       <select class="sel" id="sGrain" style="margin-left:6px">
         <option value="day" selected>Daily</option>
-        <option value="hour">Hourly · last 4 days</option>
+        <option value="hour">Hourly · last 7 days</option>
       </select></label>
     <label class="chk" id="sHourMetricWrap" style="display:none">Show
       <select class="sel" id="sHourMetric" style="margin-left:6px">
@@ -1941,6 +1952,9 @@ let SERIES = null, SERIESKEY = null, SERIESBUSY = false;
    where we have recorded them — Branch has no hourly source, so they only exist from the
    day this app started writing them down. */
 let HOURLY = null, HOURLYKEY = null, HOURLYBUSY = false;
+// Days the reader has clicked out of the hourly chart. Kept outside the payload so a
+// refresh does not put them back.
+const HHIDE = new Set();
 const hourKey = () => `${BRAND}`;
 const grain = () => (document.getElementById('sGrain') || {value:'day'}).value;
 
@@ -2050,7 +2064,7 @@ async function loadHourly(force){
   if(HOURLYKEY === key && HOURLY && !force) return;
   HOURLYBUSY = true;
   try{
-    const r = await fetch(`/api/hourly?brand=${BRAND}&days=4${K}`);
+    const r = await fetch(`/api/hourly?brand=${BRAND}&days=7${K}`);
     const j = await r.json();
     if(j.error){ HOURLY = null; return; }
     if(hourKey() !== key) return;
@@ -2667,14 +2681,19 @@ function renderHourly(){
   const days = HOURLY.days, hrs = HOURLY.hours;
   const met = (document.getElementById('sHourMetric') || {value:'spend'}).value;
   const fmt = met === 'trials' ? num : rs;
-  /* Today in the brand's own colour and heavier; the days before it in greys that fade
-     with age. Four lines in four unrelated hues make you consult the legend for every
-     one — this way the question "is today tracking the last few days" is answered by
-     looking, and the legend is only needed for which grey is which. */
-  const PAST = ['#C8CCD6', '#9AA1B0', '#6B7280'];
+  /* Today in the brand's own colour and heavier; the days before it each in a hue of
+     their own. Greys that faded with age worked at four lines and failed at seven —
+     three of them landed within a shade of each other and the chart stopped answering
+     "which day is this". Distinct hues cost a glance at the legend and give back six
+     lines that can actually be told apart. Blue through brown, chosen to stay separable
+     from each other and from all three brand accents (green, gold, purple). */
+  const PAST = ['#0F6FC5', '#56B4E9', '#D55E00', '#CC79A7', '#8C6D46', '#4C4F5A'];
   const dayCol = i => i === days.length - 1
     ? getComputedStyle(document.body).getPropertyValue('--accent').trim() || '#20A75D'
     : PAST[Math.max(0, PAST.length - (days.length - 1) + i)] || PAST[PAST.length - 1];
+  // Days switched off from the legend. Seven lines is a lot to hold at once; clicking a
+  // day out of the way is how you compare two of them.
+  const off = d => HHIDE.has(d);
 
   /* Spend is Meta's, per hour, complete. Trials are ours, and exist only as a running
      total written down each hour — so an hour's trials is the difference between two
@@ -2700,10 +2719,10 @@ function renderHourly(){
 
   const W = 900, H = 260, L = 58, R = 14, T = 14, Bm = 26;
   let max = 0, any = false;
-  for(const d of days) for(let h = 0; h < 24; h++){
+  for(const d of days){ if(off(d)) continue; for(let h = 0; h < 24; h++){
     const v = valueAt(d, h);
     if(v !== null){ any = true; max = Math.max(max, v); }
-  }
+  }}
   if(!any){
     box.innerHTML = `<div class="panel"><h3>Hourly ${met}</h3>
       <p class="sub">Nothing recorded yet. Branch reports no trials by hour, so this app
@@ -2716,6 +2735,7 @@ function renderHourly(){
   const y = v => T + (1 - v / top) * (H - T - Bm);
   let drawn = 0, seen = 0;
   const line = (d, i) => {
+    if(off(d)) return '';
     const pts = [];
     for(let h = 0; h < 24; h++){
       const v = valueAt(d, h);
@@ -2761,9 +2781,11 @@ function renderHourly(){
   };
   const legend = days.map((d, i) => {
     const dt = new Date(d + 'T00:00:00');
-    const lbl = dt.toLocaleDateString(undefined, {day:'numeric', month:'short'});
-    return `<span class="it"><i class="sw" style="border-color:${dayCol(i)}"></i>${lbl}${
-      i === days.length - 1 ? ' (today)' : ''} · ${dayTot(d)}</span>`;
+    const lbl = dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'});
+    return `<button class="it hleg${off(d) ? ' out' : ''}" data-hd="${d}"
+      title="${off(d) ? 'Show' : 'Hide'} this day">
+      <i class="sw" style="background:${dayCol(i)};border-color:${dayCol(i)}"></i>${lbl}${
+      i === days.length - 1 ? ' (today)' : ''} · ${dayTot(d)}</button>`;
   }).join('');
   const paths = days.map(line).join('');
   /* Four lines that cross cannot be read by eye alone: "which of these is Sunday at 3pm"
@@ -2781,7 +2803,8 @@ function renderHourly(){
       let h = Math.round((vx - L) / ((W - L - R) / 23));
       h = Math.max(0, Math.min(23, h));
       guide.setAttribute('x1', x(h)); guide.setAttribute('x2', x(h));
-      const rows = days.map((d, i) => {
+      const rows = days.filter(d => !off(d)).map((d) => {
+        const i = days.indexOf(d);
         const v = valueAt(d, h);
         const dt = new Date(d + 'T00:00:00');
         return `<div><i style="background:${dayCol(i)}"></i>${
@@ -2798,6 +2821,14 @@ function renderHourly(){
       tip.hidden = true;
       guide.setAttribute('x1', -99); guide.setAttribute('x2', -99);
     };
+    box.querySelectorAll('.hleg').forEach(el => el.onclick = () => {
+      const d = el.dataset.hd;
+      if(d === '*') HHIDE.clear();
+      else if(HHIDE.has(d)) HHIDE.delete(d);
+      // The last line standing stays: an empty chart is not a comparison.
+      else if(days.filter(x => !HHIDE.has(x)).length > 1) HHIDE.add(d);
+      renderHourly();
+    });
   }, 0);
   box.innerHTML = `<div class="panel">
     <h3>${met === 'cpt' ? 'CPT' : met === 'trials' ? 'Trials' : 'Spend'} by hour ·
@@ -2811,7 +2842,8 @@ function renderHourly(){
     <div class="chartbox hb" id="hbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gy}
       <line id="hguide" class="hguide" y1="${T}" y2="${H - Bm}" x1="-99" x2="-99"/>
       ${paths}${gx}</svg><div class="htip" id="htip" hidden></div></div>
-    <div class="legend">${legend}</div>
+    <div class="legend hlegs">${legend}${HHIDE.size
+      ? `<button class="it hleg all" data-hd="*">Show all ${days.length} days</button>` : ''}</div>
     ${drawn ? '' : `<p class="sub warn">Nothing plotted, and the figures arrived:
       ${days.length} day(s), ${seen} hour(s) carrying a value, largest ${fmt(max)}. That
       makes this a drawing fault rather than a data one.</p>`}</div>`;
