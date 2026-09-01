@@ -247,6 +247,19 @@ def _restorable(brand, since, until):
     return saved
 
 
+def _payload_age(brand, day):
+    """Seconds since this brand's `today` payload was built, or None if there is none."""
+    key = (day, day, brand)
+    with _lock:
+        hit = _cache.get(key)
+    if hit:
+        return time.time() - hit["at"]
+    saved = _restorable(brand, day, day)
+    if saved and saved.get("_saved_at"):
+        return max(0.0, time.time() - saved["_saved_at"])
+    return None
+
+
 # One fetch an hour, from one place. Every viewer used to trigger their own build when
 # the cache went cold, so a busy afternoon meant dozens of Meta pulls for numbers that had
 # not moved — and on a rate-limited day that ended with Funda showing nothing at all,
@@ -847,9 +860,22 @@ def api_hour_snapshot():
     if bad:
         return jsonify({"error": f"unknown brand(s): {bad}"}), 400
     today = P.today_ist()
+    # A brand whose payload is already fresh is skipped, so a second pass later in the
+    # hour costs nothing for the brands that succeeded and retries only the ones Meta
+    # refused. Without it a throttled hour meant no refresh at all until the next one.
+    try:
+        floor_min = int(request.args.get("if_older_than", "0"))
+    except ValueError:
+        floor_min = 0
     out = []
     for b in brands:
         try:
+            if floor_min:
+                age = _payload_age(b, today)
+                if age is not None and age < floor_min * 60:
+                    out.append({"brand": b, "skipped": "already fresh",
+                                "age_min": int(age // 60)})
+                    continue
             # This job IS the dashboard's refresh: it fetches once an hour and every
             # viewer reads what it leaves behind, instead of each of them triggering a
             # build of their own.
