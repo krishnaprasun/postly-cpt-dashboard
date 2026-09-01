@@ -534,7 +534,20 @@ a.mgr:hover{color:var(--accent-dk)}
    cell that spans columns is laid out at its own content width and the band stops short
    of the columns it is labelling. Separate borders fix the spanning row, and only the
    second header row needs to stick anyway. */
-table.coh{border-collapse:separate;border-spacing:0}
+/* Fixed columns, because auto layout hands the slack to whichever column holds the most
+   text — here the date — and 375px of it left the coloured bands floating over numbers
+   they were not above. Percentages so the table still fills its panel at any width. */
+table.coh{border-collapse:separate;border-spacing:0;table-layout:fixed}
+table.coh col.c-dt{width:15%}
+table.coh col.c-up{width:9%}
+table.coh col.c-day{width:6.6%}
+table.coh col.c-fin{width:10%}
+table.coh col.c-win{width:10%}
+table.coh col.c-rate{width:10%}
+table.coh th,table.coh td{padding-left:10px;padding-right:12px}
+/* The date is the one cell that may need two lines once the width is fixed; everything
+   else is a number and must not wrap. */
+table.coh td.l,table.coh th.l{white-space:normal}
 table.coh th,table.coh td{border-bottom:1px solid var(--line2)}
 table.coh thead tr:last-child th{position:sticky;top:0;z-index:2}
 table.coh thead tr.grp th{position:static;font-size:10px;letter-spacing:.08em;
@@ -552,7 +565,8 @@ table.coh tbody tr.idle td{background:none}
 /* A day that has not settled is still a real day — it just has not stopped moving, and
    the row says so rather than being left out until it has. */
 table.coh tbody tr.prov td{background:var(--line2)}
-.pill.prov{background:var(--gold-lt);color:var(--gold-dk);border-color:transparent}
+.pill.prov{background:var(--gold-lt);color:var(--gold-dk);border-color:transparent;
+  font-size:9px;padding:1px 5px;margin-left:5px}
 /* Legend chips that are also the control: click a day out of the chart to compare the
    rest. `out` keeps the day readable but plainly switched off, so nobody wonders whether
    the line is missing or hidden. */
@@ -2170,7 +2184,9 @@ function renderCohorts(){
           ? ` <b>Uploads stay the day's total</b> — a creative's testing CPI decides which
              trial campaign it graduates into, so this filter narrows the graduation
              columns and everything after them, not what was made that day.` : ''}</p></div>
-    <div class="wrap"><table id="cohtbl" class="coh">${head}
+    <div class="wrap"><table id="cohtbl" class="coh">
+      <colgroup><col class="c-dt"><col span="2" class="c-up"><col span="5" class="c-day">
+        <col class="c-fin"><col class="c-win"><col class="c-rate"></colgroup>${head}
       <tbody>${COH.rows.slice().reverse().map(row).join('')}</tbody>${foot}</table></div>`;
 }
 
