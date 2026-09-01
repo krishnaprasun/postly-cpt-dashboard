@@ -779,7 +779,10 @@ def api_cohorts():
         days = max(7, min(int(request.args.get("days", "30")), P.GRAD_STORE_DAYS))
     except ValueError:
         days = 30
-    until = H.settled_through(P.today_ist()) if H.available() else P.today_ist()
+    # To today, not to the settle line. The last few days come from the hourly series
+    # fold rather than the day store and are labelled provisional in the payload — the
+    # view used to simply end three days back, which read as missing data.
+    until = P.today_ist()
     since = (datetime.strptime(until, "%Y-%m-%d")
              - timedelta(days=days - 1)).strftime("%Y-%m-%d")
     if not C.BRANDS[brand].get("graduation", True):

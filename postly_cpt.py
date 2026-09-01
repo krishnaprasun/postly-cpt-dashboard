@@ -360,6 +360,44 @@ def _cohort_scan(brand, since, until):
             if stage_of.get(n) == "testing":
                 test_inst[n] += float(v or 0)
 
+    # ---- the unsettled tail -------------------------------------------------------
+    # The raw day store deliberately stops three days back: Meta bills late and Branch
+    # backfills, so a day is not written until it has stopped moving. That left this view
+    # ending on the 29th while people were asking about the 31st. The daily series fold is
+    # already refreshed hourly and already carries the tail, keyed by ad name AND stage
+    # with spend, trials and installs per day — everything this scan needs. Take the days
+    # the raw store does not have from there, and mark them provisional so nobody reads a
+    # half-settled day as final.
+    last_raw = stored[-1] if stored else None
+    provisional = []
+    sart = H.get_agg(_series_ns(brand, "script")) if H.available() else None
+    if sart and sart.get("shape") == SERIES_SHAPE:
+        tail = sorted(d for d in (sart.get("dates") or [])
+                      if (last_raw is None or d > last_raw) and d <= until)
+        if tail:
+            provisional = tail
+            for r in sart.get("rows") or []:
+                n = r.get("label") or ""
+                if not n:
+                    continue
+                testing = (r.get("stage") or "") == "testing"
+                for d in tail:
+                    v = (r.get("days") or {}).get(d)
+                    if not v:
+                        continue
+                    sp = float(v.get("spend") or 0)
+                    if testing:
+                        if sp:
+                            test_spend[n] += sp
+                            day_test_spend[d] += sp
+                            first_test.setdefault(n, d)
+                        test_inst[n] += float(v.get("inst") or 0)
+                    else:
+                        if sp:
+                            trial_spend[n] += sp
+                            first_trial.setdefault(n, d)
+                        trial_trials[n] += float(v.get(ev) or 0)
+
     out = []
     for n, d in first_test.items():
         g = first_trial.get(n)
@@ -371,17 +409,22 @@ def _cohort_scan(brand, since, until):
                     "ts": round(test_spend[n], 2), "ti": round(test_inst[n], 1),
                     "xs": round(trial_spend[n], 2), "xt": round(trial_trials[n], 1)})
     out.sort(key=lambda r: (r["d"], r["n"]))
-    last_test = max((d for d in stored if day_test_spend.get(d, 0) > 0), default=None)
+    dates = stored + provisional
+    last_test = max((d for d in dates if day_test_spend.get(d, 0) > 0), default=None)
     return out, {"stored_days": len(stored), "lookback_from": look,
                  "last_test_day": last_test, "event": ev,
                  "event_label": B["labels"].get(ev, "Trials"),
-                 "days": {d: round(day_test_spend.get(d, 0.0), 2) for d in stored},
-                 "dates": stored}
+                 "days": {d: round(day_test_spend.get(d, 0.0), 2) for d in dates},
+                 "dates": dates, "provisional": provisional}
 
 
 def cohort_build(brand, until=None):
-    """The whole retained range as one document, ready to store and to slice."""
-    until = until or H.settled_through(today_ist())
+    """The whole retained range as one document, ready to store and to slice.
+
+    Runs to TODAY rather than to the settle line: the last few days come from the daily
+    series fold instead of the raw store, and are labelled as such.
+    """
+    until = until or today_ist()
     since = (datetime.strptime(until, "%Y-%m-%d").date()
              - timedelta(days=GRAD_STORE_DAYS - 1)).strftime("%Y-%m-%d")
     recs, meta = _cohort_scan(brand, since, until)
@@ -393,6 +436,7 @@ def cohort_build(brand, until=None):
     return {"shape": GRAD_SHAPE, "brand": brand, "since": since, "built_for": until,
             "until": dates[-1] if dates else until, "dates": dates,
             "day_test_spend": {d: meta["days"][d] for d in dates},
+            "provisional": [d for d in (meta.get("provisional") or []) if d >= since],
             "creatives": [r for r in recs if r["d"] >= since],
             "last_test_day": meta["last_test_day"], "event": meta["event"],
             "event_label": meta["event_label"], "stored_days": meta["stored_days"],
@@ -447,10 +491,12 @@ def live_trial_names(brand):
 def _cohort_rows(art, since, until, band=None, live=None):
     """Fold the ledger into one row per day, under whichever CPI band is asked for."""
     keep = CPI_BANDS.get(band, (None, None))[1] if band and band != "all" else None
+    prov = set(art.get("provisional") or [])
     rows = {d: {"date": d, "live": 0, "grad": 0, "win": 0, "sup": 0, "onair": 0,
                 "d1": 0, "d2": 0, "d3": 0, "d4": 0, "d5": 0,
                 "test_spend": 0.0, "test_inst": 0.0, "trial_spend": 0.0, "trials": 0.0,
-                "day_test_spend": (art.get("day_test_spend") or {}).get(d, 0.0)}
+                "day_test_spend": (art.get("day_test_spend") or {}).get(d, 0.0),
+                "prov": d in prov}
             for d in art.get("dates") or [] if since <= d <= until}
     for rec in art.get("creatives") or []:
         r = rows.get(rec["d"])
@@ -528,6 +574,7 @@ def cohorts(brand, since, until, band=None, force=False):
         recs, meta = _cohort_scan(brand, since, until)
         art = {"brand": brand, "since": since, "until": until,
                "dates": meta["dates"], "day_test_spend": meta["days"],
+               "provisional": meta.get("provisional") or [],
                "creatives": recs, "last_test_day": meta["last_test_day"],
                "event": meta["event"], "event_label": meta["event_label"],
                "stored_days": meta["stored_days"], "lookback_from": meta["lookback_from"],
@@ -552,6 +599,8 @@ def cohorts(brand, since, until, band=None, force=False):
             "stored_days": art.get("stored_days"),
             "lookback_from": art.get("lookback_from"),
             "creatives": len(art.get("creatives") or []),
+            "provisional": [d for d in (art.get("provisional") or [])
+                            if since <= d <= until],
             "stored": stored, "built_at": art.get("generated_at") if stored else None,
             "cached": False, "age_min": 0, "generated_at": now_ist_str()}
     with _cohort_lock:

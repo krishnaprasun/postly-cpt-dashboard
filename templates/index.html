@@ -549,6 +549,10 @@ table.coh th.g-sm{background:#2C6FBF}
 table.coh td.gr{background:var(--gold-lt)}
 table.coh td.wn{background:var(--accent-lt)}
 table.coh tbody tr.idle td{background:none}
+/* A day that has not settled is still a real day — it just has not stopped moving, and
+   the row says so rather than being left out until it has. */
+table.coh tbody tr.prov td{background:var(--line2)}
+.pill.prov{background:var(--gold-lt);color:var(--gold-dk);border-color:transparent}
 /* Legend chips that are also the control: click a day out of the chart to compare the
    rest. `out` keeps the day readable but plainly switched off, so nobody wonders whether
    the line is missing or hidden. */
@@ -2108,12 +2112,12 @@ function renderCohorts(){
      money, and a day that graduated one creative which then won reads as 100% on the
      other denominator. */
   const row = r => !r.live ? `<tr class="idle">
-      <td class="l">${dayLbl(r.date)}</td>
+      <td class="l">${dayLbl(r.date)}${r.prov ? PROV : ''}</td>
       <td colspan="13" class="l dimtxt">${r.day_test_spend
         ? `nothing uploaded — ${rs(r.day_test_spend)} spent testing what was already running`
         : 'no testing spend'}</td></tr>`
-    : `<tr>
-      <td class="l">${dayLbl(r.date)}</td>
+    : `<tr${r.prov ? ' class="prov"' : ''}>
+      <td class="l">${dayLbl(r.date)}${r.prov ? PROV : ''}</td>
       <td>${num(r.live)}</td><td><b>${num(r.live)}</b></td>
       <td class="gr">${n0(r.d1)}</td><td class="gr">${n0(r.d2)}</td>
       <td class="gr">${n0(r.d3)}</td><td class="gr">${n0(r.d4)}</td>
@@ -2154,7 +2158,8 @@ function renderCohorts(){
       <td>${pct(t.win, t.live)}</td><td>${pct(t.sup, t.live)}</td></tr></tfoot>`;
   box.innerHTML = `<div class="panel" style="padding-bottom:10px">
       <div class="mcap"><h3>Graduation funnel · ${lbl}${bandLbl}</h3>
-        <span class="meta">settled days only, through ${COH.until} · ${COH.stored
+        <span class="meta">through ${COH.until}${(COH.provisional||[]).length
+          ? ` · last ${COH.provisional.length} day(s) provisional` : ''} · ${COH.stored
           ? `folded ${COH.built_at}` : 'folded live for this request'}</span></div>
       <p class="sub">Each row is a day's <b>uploads</b> — creatives whose ad set was
         created in a testing campaign that day — followed forward: which day they
@@ -2163,7 +2168,11 @@ function renderCohorts(){
         ${rs(COH.winner_spend)} in trial, a super winner over ${rs(COH.super_spend)}.
         Rates are against the day's uploads, so they read as "of everything we made that
         day". The newest rows are thin because a cohort needs days to graduate and more to
-        spend.${COH.band && COH.band !== 'all'
+        spend.${(COH.provisional||[]).length ? ` The last ${COH.provisional.length}
+          day(s) are marked <i>provisional</i>: settled days come out of the day store,
+          which deliberately waits three days for Meta's billing corrections and Branch's
+          late events, so those rows are read from the hourly fold instead and can still
+          move.` : ''}${COH.band && COH.band !== 'all'
           ? ` <b>Uploads stay the day's total</b> — a creative's testing CPI decides which
              trial campaign it graduates into, so this filter narrows the graduation
              columns and everything after them, not what was made that day.` : ''}${
@@ -2175,6 +2184,8 @@ function renderCohorts(){
 
 /* "20 Aug" reads faster than "2026-08-20" in a column of forty dates, and the year is
    already in the caption. */
+const PROV = '<span class="pill prov">provisional</span>';
+
 function dayLbl(d){
   const dt = new Date(d + 'T00:00:00');
   return dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'});
