@@ -557,8 +557,7 @@ table.coh thead tr.grp th.g-dt{background:var(--navy)}
 table.coh th.g-up{background:#2C6FBF}
 table.coh th.g-gr{background:#B07A18}
 table.coh th.g-sc{background:#3A4C9E}
-table.coh th.g-rs{background:#1F6B45}
-table.coh th.g-sm{background:#2C6FBF}
+table.coh th.g-none{background:var(--line2)}
 table.coh td.gr{background:var(--gold-lt)}
 table.coh td.wn{background:var(--accent-lt)}
 table.coh tbody tr.idle td{background:none}
@@ -2145,8 +2144,9 @@ function renderCohorts(){
       <th colspan="2" class="g-up">Creatives uploaded</th>
       <th colspan="5" class="g-gr">Graduation</th>
       <th class="g-sc">Post scaling</th>
-      <th class="g-rs">Final trial → result</th>
-      <th class="g-sm">Summary</th></tr>
+      <!-- Winning and Win rate stand on their own headers. A band naming a single column
+           twice over was two labels doing no work. -->
+      <th colspan="2" class="g-none"></th></tr>
     <tr>
       <th class="l">Date</th>
       <th title="Ad sets created in a testing campaign that day">Meta</th>
