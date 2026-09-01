@@ -538,12 +538,10 @@ a.mgr:hover{color:var(--accent-dk)}
    text — here the date — and 375px of it left the coloured bands floating over numbers
    they were not above. Percentages so the table still fills its panel at any width. */
 table.coh{border-collapse:separate;border-spacing:0;table-layout:fixed}
-table.coh col.c-dt{width:15%}
-table.coh col.c-up{width:9%}
-table.coh col.c-day{width:6.6%}
-table.coh col.c-fin{width:10%}
-table.coh col.c-win{width:10%}
-table.coh col.c-rate{width:10%}
+table.coh col.c-dt{width:20%}
+table.coh col.c-up{width:11%}
+table.coh col.c-day{width:8%}
+table.coh col.c-fin{width:18%}
 table.coh th,table.coh td{padding-left:10px;padding-right:12px}
 /* The date is the one cell that may need two lines once the width is fixed; everything
    else is a number and must not wrap. */
@@ -559,7 +557,6 @@ table.coh th.g-gr{background:#B07A18}
 table.coh th.g-sc{background:#3A4C9E}
 table.coh th.g-none{background:var(--line2)}
 table.coh td.gr{background:var(--gold-lt)}
-table.coh td.wn{background:var(--accent-lt)}
 table.coh tbody tr.idle td{background:none}
 /* A day that has not settled is still a real day — it just has not stopped moving, and
    the row says so rather than being left out until it has. */
@@ -2093,7 +2090,7 @@ function renderCohorts(){
     box.innerHTML = COHBUSY
       ? `<div class="panel"><h3><span class="skl" style="width:210px;display:inline-block"></span></h3>
          <div class="mwrap"><table class="mx"><tbody>${
-           sklRows(['104px','56px','60px','48px','48px','48px','48px','48px','60px','56px','52px'], 8)}</tbody></table></div></div>`
+           sklRows(['120px','60px','68px','52px','52px','52px','52px','52px','72px'], 8)}</tbody></table></div></div>`
       : `<div class="panel"><p class="sub">No graduation history yet.</p></div>`;
     return;
   }
@@ -2120,13 +2117,12 @@ function renderCohorts(){
     `${COH.rows.length} days · ${num(t.live)} ad sets created`;
   const pct = (a, b) => b ? `${(100*a/b).toFixed(0)}%` : '—';
   const n0 = v => v ? num(v) : '<span class="dimtxt">0</span>';
-  /* Win rate is measured against what was UPLOADED, not against what graduated: the
-     question the row exists to answer is how many of the day's creatives turned into
-     money, and a day that graduated one creative which then won reads as 100% on the
-     other denominator. */
+  /* Shares are measured against what was UPLOADED, not against what graduated: the
+     question the row exists to answer is how much of a day's work reached a trial
+     campaign, and against graduates every day would read 100%. */
   const row = r => !r.live ? `<tr class="idle">
       <td class="l">${dayLbl(r.date)}${r.prov ? PROV : ''}</td>
-      <td colspan="10" class="l dimtxt">${r.day_test_spend
+      <td colspan="8" class="l dimtxt">${r.day_test_spend
         ? `nothing uploaded — ${rs(r.day_test_spend)} spent testing what was already running`
         : 'no testing spend'}</td></tr>`
     : `<tr${r.prov ? ' class="prov"' : ''}>
@@ -2135,18 +2131,13 @@ function renderCohorts(){
       <td class="gr">${n0(r.d1)}</td><td class="gr">${n0(r.d2)}</td>
       <td class="gr">${n0(r.d3)}</td><td class="gr">${n0(r.d4)}</td>
       <td class="gr" title="Graduated more than four days after going live">${n0(r.d5)}</td>
-      <td><b>${n0(r.grad)}</b><span class="sub2">${pct(r.grad, r.live)}</span></td>
-      <td class="wn">${n0(r.win)}</td>
-      <td>${pct(r.win, r.live)}</td></tr>`;
+      <td><b>${n0(r.grad)}</b><span class="sub2">${pct(r.grad, r.live)}</span></td></tr>`;
   const head = `<thead>
     <tr class="grp">
       <th class="l g-dt"></th>
       <th colspan="2" class="g-up">Creatives uploaded</th>
       <th colspan="5" class="g-gr">Graduation</th>
-      <th class="g-sc">Post scaling</th>
-      <!-- Winning and Win rate stand on their own headers. A band naming a single column
-           twice over was two labels doing no work. -->
-      <th colspan="2" class="g-none"></th></tr>
+      <th class="g-sc">Post scaling</th></tr>
     <tr>
       <th class="l">Date</th>
       <th title="Ad sets created in a testing campaign that day">Meta</th>
@@ -2155,16 +2146,14 @@ function renderCohorts(){
       <th>Day 2</th><th>Day 3</th><th>Day 4</th>
       <th title="Graduated more than four days later">Day 5+</th>
       <th title="Everything from that day that graduated — the day columns added up">Final live</th>
-      <th title="Graduates that have spent ${rs(COH.winner_spend)} or more in a trial campaign">Winning</th>
-      <th title="Winners as a share of the day's uploads">Win rate</th></tr></thead>`;
+      </tr></thead>`;
   const foot = `<tfoot><tr>
       <td class="l">${COH.rows.length} days</td>
       <td>${num(t.live)}</td><td><b>${num(t.live)}</b></td>
       <td class="gr">${n0(t.d1)}</td><td class="gr">${n0(t.d2)}</td>
       <td class="gr">${n0(t.d3)}</td><td class="gr">${n0(t.d4)}</td><td class="gr">${n0(t.d5)}</td>
       <td><b>${num(t.grad)}</b><span class="sub2">${pct(t.grad, t.live)}</span></td>
-      <td class="wn">${n0(t.win)}</td>
-      <td>${pct(t.win, t.live)}</td></tr></tfoot>`;
+      </tr></tfoot>`;
   box.innerHTML = `<div class="panel" style="padding-bottom:10px">
       <div class="mcap"><h3>Graduation funnel · ${lbl}${bandLbl}</h3>
         <span class="meta">through ${COH.until}${(COH.provisional||[]).length
@@ -2173,9 +2162,8 @@ function renderCohorts(){
       <p class="sub">Each row is a day's <b>uploads</b> — creatives whose ad set was
         created in a testing campaign that day — followed forward: which day they
         graduated into a trial campaign (one creative counts once), how many of those are
-        graduated in total, and how many carried real money there. A winner has spent
-        ${rs(COH.winner_spend)} or more in a trial campaign. Rates are against the day's
-        uploads, so they read as "of everything we made that day". The newest rows are thin because a cohort needs days to graduate and more to
+        graduated in total. The graduation share is against the day's uploads, so it
+        reads as "of everything we made that day". The newest rows are thin because a cohort needs days to graduate and more to
         spend.${(COH.provisional||[]).length ? ` The last ${COH.provisional.length}
           day(s) are marked <i>provisional</i>: settled days come out of the day store,
           which deliberately waits three days for Meta's billing corrections and Branch's
@@ -2186,7 +2174,7 @@ function renderCohorts(){
              columns and everything after them, not what was made that day.` : ''}</p></div>
     <div class="wrap"><table id="cohtbl" class="coh">
       <colgroup><col class="c-dt"><col span="2" class="c-up"><col span="5" class="c-day">
-        <col class="c-fin"><col class="c-win"><col class="c-rate"></colgroup>${head}
+        <col class="c-fin"></colgroup>${head}
       <tbody>${COH.rows.slice().reverse().map(row).join('')}</tbody>${foot}</table></div>`;
 }
 
