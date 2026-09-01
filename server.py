@@ -850,7 +850,10 @@ def api_hour_snapshot():
             # This job IS the dashboard's refresh: it fetches once an hour and every
             # viewer reads what it leaves behind, instead of each of them triggering a
             # build of their own.
-            data = get_data(today, today, b, job=True)
+            # force, so the job builds here and now rather than being handed the
+            # hour-old payload it is supposed to be replacing — and so the hourly point
+            # it records is the figure it just fetched.
+            data = get_data(today, today, b, force=True, job=True)
             ev = (data.get("events") or ["t101"])[0]
             pr = (data.get("prorata") or {}).get(ev) or {}
             ch = (data.get("channels") or {}).get(ev) or {}
