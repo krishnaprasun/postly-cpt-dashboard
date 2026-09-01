@@ -1699,6 +1699,14 @@ function kpis(){
   }
 
   const pace = c.budget ? 100*sp/c.budget : 0;
+  /* A day's spend measured against the budget of whatever is switched on at this second
+     is not a percentage of anything. Postly spent Rs1.93L on 1 Sept across 181 ad sets,
+     paused 166 of them by lunchtime, and the tile read "366% used" against the Rs52,693
+     still live. The opening snapshot is the budget that was actually in force while the
+     money was going out, so that is what the day is measured against — with the live
+     figure kept beside it, because "what is still running" is its own question. */
+  const bOpen = DATA.budget_open;
+  const paceOpen = bOpen && bOpen.total ? 100*sp/bOpen.total : null;
   // budgets and statuses are only partly known when an account's roster failed
   const deg = !!(DATA.degraded && DATA.degraded.length);
   /* With a target, the hero says how far off it is. Without one it still leads with
@@ -1734,6 +1742,11 @@ function kpis(){
      <div class="v">${rs(sp)}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
+       : paceOpen !== null
+             ? `${rs(bOpen.total)} budget at ${bOpen.at} · ${paceOpen.toFixed(0)}% used
+                · <span title="Budget of the ad sets switched on right now. Lower than the
+                  morning's whenever ad sets have been paused during the day."
+                  >${rs(c.budget)} live now</span>${budgetAge()}`
              : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
    (trials ? `
    <div class="kpi"><div class="k">Trials${modLbl}${srcBtn('trials')}</div>

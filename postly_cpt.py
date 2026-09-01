@@ -745,6 +745,38 @@ def budget_slots(brand, date):
 # The hours the scheduler actually runs at. A snapshot taken at any other time rounds to
 # the nearest of these rather than inventing a fourth slot nobody reads.
 BUDGET_SLOTS = (9, 15, 23)
+_open_cache, _open_lock = {}, threading.Lock()
+
+
+def budget_open(brand, day):
+    """What the day's budget was when it started, from the first slot recorded.
+
+    The live budget is the budget of what is switched on RIGHT NOW, and dividing a whole
+    day's spend by it is not a percentage of anything: Postly spent Rs1.93L on 1 Sept
+    across 181 ad sets, then paused 166 of them, leaving Rs52,693 live and a tile that
+    read 366% used. The money was spent against the budget that was in force while it
+    was spending, and the 09:00 snapshot is the closest record of that.
+    """
+    key = (brand, day)
+    with _open_lock:
+        hit = _open_cache.get(key)
+    if hit and time.time() - hit["at"] < 900:
+        return hit["val"]
+    val = None
+    if H.available():
+        for hour in BUDGET_SLOTS:
+            try:
+                got, ok = H.get_day_raw(budget_slot_ns(brand, hour), day)
+            except Exception:
+                continue
+            if ok and isinstance(got, dict) and got.get("total"):
+                val = {"total": round(float(got["total"]), 2),
+                       "at": (got.get("at") or "")[11:16] or f"{hour:02d}:00",
+                       "slot": hour}
+                break
+    with _open_lock:
+        _open_cache[key] = {"at": time.time(), "val": val}
+    return val
 
 
 def _nearest_slot(hour):
@@ -1024,7 +1056,7 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 # Every other stored artifact already carries a stamp (PRORATA_MODEL, SERIES_SHAPE,
 # row_cap); the payload was the one that did not, and adding video is what found it.
 #   2 - hook rate and ThruPlay (vv / tp / vimp) at every level
-PAYLOAD_SHAPE = 3
+PAYLOAD_SHAPE = 4
 
 
 def has_vid(r):
@@ -4186,6 +4218,12 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         "trials_as_of": _as_of_str(prov.get("branch_at")),
         "trials_age_sec": _age_of(prov.get("branch_at")),
         "all_stored": prov.get("meta_at") is None,
+        # What the day's budget was when the day started, so a whole day's spend has a
+        # denominator that was actually in force while it was being spent. Only for a
+        # window that IS today: over a longer window the tile shows a per-day average and
+        # this would answer a question nobody asked.
+        "budget_open": (budget_open(brand, until)
+                        if since == until == today_ist() else None),
         "budget_age_sec": budget_age,
         "budget_as_of": (datetime.fromtimestamp(time.time() - budget_age, IST)
                          .strftime("%H:%M") if budget_age is not None else ""),
