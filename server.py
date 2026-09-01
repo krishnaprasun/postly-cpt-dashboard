@@ -229,7 +229,33 @@ def _build_into_cache(key):
             _refreshing.discard(key)
 
 
-def get_data(since, until, brand, force=False, hard=False):
+def _restorable(brand, since, until):
+    """The stored payload for this window, if it is one this build can still serve.
+
+    A payload built by an older pro-rata model is not a stale number, it is a wrong one:
+    the page scales every trial by the multiplier the payload carries. Same argument one
+    level up for the shape — a payload built before a field existed cannot grow it, and
+    the page would render blanks off it until the artifact aged out.
+    """
+    saved = H.get_payload(brand, since, until)
+    if not saved or not saved.get("combined"):
+        return None
+    if saved.get("prorata") and saved.get("prorata_model") != P.PRORATA_MODEL:
+        return None
+    if saved.get("payload_shape") != P.PAYLOAD_SHAPE:
+        return None
+    return saved
+
+
+# One fetch an hour, from one place. Every viewer used to trigger their own build when
+# the cache went cold, so a busy afternoon meant dozens of Meta pulls for numbers that had
+# not moved — and on a rate-limited day that ended with Funda showing nothing at all,
+# which is worse than showing an hour-old figure. Now a scheduled job does the fetching
+# and the page only ever reads what it left behind.
+HOURLY_ONLY = os.environ.get("HOURLY_ONLY", "1").strip() not in ("0", "false", "no")
+
+
+def get_data(since, until, brand, force=False, hard=False, job=False):
     """Fresh -> serve. Stale -> serve stale, refresh behind the request. Cold -> block.
 
     `force` skips this cache. `hard` additionally re-reads Meta's roster — names,
@@ -242,6 +268,25 @@ def get_data(since, until, brand, force=False, hard=False):
     # separate set of Meta and Branch calls, and one brand's throttle must never evict
     # or stale another's figures.
     key = (since, until, brand)
+    # In hourly mode a browser never triggers a build: it takes the newest thing already
+    # in hand, however old, and the age is on screen so nobody mistakes it for live. Only
+    # the scheduled job (job=True) is allowed to go and fetch.
+    if HOURLY_ONLY and not job:
+        with _lock:
+            hit = _cache.get(key)
+        if hit:
+            age = int(time.time() - hit["at"])
+            return _with_live_limits(dict(hit["data"], cached=True, age=age,
+                                          stale=False, hourly=True))
+        saved = _restorable(brand, since, until)
+        if saved:
+            age = int(max(0, time.time() - (saved.get("_saved_at") or 0)))
+            with _lock:
+                _cache[key] = {"at": time.time() - age, "data": saved}
+            return _with_live_limits(dict(saved, cached=True, age=age, stale=False,
+                                          restored=True, hourly=True))
+        # Nothing stored anywhere — a brand-new window, or a store that has never been
+        # written. Build it once rather than showing an empty page forever.
     with _lock:
         hit = _cache.get(key)
         age = time.time() - hit["at"] if hit else None
@@ -271,19 +316,8 @@ def get_data(since, until, brand, force=False, hard=False):
     # that immediately and rebuilding behind the request is the whole point: a woken
     # instance should show real numbers at once, not spend half a minute proving it can.
     if not (force or hard):
-        saved = H.get_payload(brand, since, until)
-        # A payload built by an older pro-rata model is not a stale number, it is a
-        # wrong one: the page scales every trial by the multiplier the payload carries.
-        # Drop it and pay for the rebuild rather than restore it.
-        if saved and saved.get("prorata") \
-                and saved.get("prorata_model") != P.PRORATA_MODEL:
-            saved = None
-        # Same argument, one level up: a payload built before a field existed cannot grow
-        # it, and the page would render blanks off it until the artifact aged out. Cheaper
-        # to rebuild once than to serve a shape the shipped code no longer matches.
-        if saved and saved.get("payload_shape") != P.PAYLOAD_SHAPE:
-            saved = None
-        if saved and saved.get("combined"):
+        saved = _restorable(brand, since, until)
+        if saved:
             age = int(max(0, time.time() - (saved.get("_saved_at") or 0)))
             with _lock:
                 if key not in _refreshing:
@@ -632,6 +666,7 @@ def index(key=None):
         app_version=APP_VERSION,
         link_key=key,
         can_act=caps["full"],
+        hourly_only=HOURLY_ONLY,
         # Export is its own right, not a shade of `full`. Downloading a table costs
         # nothing and answers a real need; forcing a Meta roster re-read spends the one
         # budget everyone looking at this page shares. A link, which is nobody in
@@ -706,6 +741,11 @@ def api_refresh():
                               request.args.get("brand", C.DEFAULT_BRAND))
     if err:
         return err
+    if HOURLY_ONLY:
+        # Nothing in the page offers this any more, but the route stays reachable and a
+        # refusal is better than a quiet Meta pull from a bookmarked URL.
+        return jsonify({"error": "this dashboard refreshes once an hour; there is "
+                                 "nothing to re-read on demand"}), 409
     key = (since, until, brand)
     try:
         data = P.build(since, until, brand, only=part)
@@ -807,7 +847,10 @@ def api_hour_snapshot():
     out = []
     for b in brands:
         try:
-            data = get_data(today, today, b)
+            # This job IS the dashboard's refresh: it fetches once an hour and every
+            # viewer reads what it leaves behind, instead of each of them triggering a
+            # build of their own.
+            data = get_data(today, today, b, job=True)
             ev = (data.get("events") or ["t101"])[0]
             pr = (data.get("prorata") or {}).get(ev) or {}
             ch = (data.get("channels") or {}).get(ev) or {}
@@ -868,13 +911,14 @@ def api_series():
             days = P.SERIES_DEFAULT_DAYS
         since, until = P.series_window(days)
     dim = request.args.get("dim", "script")
-    force = full and request.args.get("force") == "1"
+    force = full and request.args.get("force") == "1" and not HOURLY_ONLY
     args = (brand, since, until, dim)
     try:
-        out = P.series(*args, force=force)
+        out = P.series(*args, force=force, store_only=HOURLY_ONLY)
         # Served from cache and old enough to be worth refreshing: hand back what we have
         # and rebuild behind the request, exactly as the main payload does.
-        if out.get("cached") and out.get("age_min", 0) >= 5 and not force:
+        if not HOURLY_ONLY and out.get("cached") and out.get("age_min", 0) >= 5 \
+                and not force:
             with _lock:
                 start = args not in _series_refreshing
                 if start:

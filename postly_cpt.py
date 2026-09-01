@@ -3181,7 +3181,7 @@ def _with_active(data, brand):
                       for r in (data.get("rows") or [])])
 
 
-def series(brand, since, until, dim="script", force=False):
+def series(brand, since, until, dim="script", force=False, store_only=False):
     """Per-day spend, trials and installs for every row of one dimension.
 
     Same source split as everything else: settled days out of the store, the rest live.
@@ -3224,7 +3224,10 @@ def series(brand, since, until, dim="script", force=False):
                 "dates": [], "rows": [], "generated_at": now_ist_str()}
 
     stored = H.fetch_raw(brand, dates) if H.available() else {}
-    live_days = [x for x in dates if x not in stored]
+    # `store_only` is how a browser asks for this fold on an hourly-refresh deployment:
+    # fold what the store holds and leave the tail to the scheduled warm, rather than
+    # every open tab paying Meta for the same two days.
+    live_days = [] if store_only else [x for x in dates if x not in stored]
     live = {}
     # Contiguous runs only: Meta and Branch both cost far more per call than per day, so
     # one range beats a call per day, and a gap in the middle is cheaper to re-fetch than

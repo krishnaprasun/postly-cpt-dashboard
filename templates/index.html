@@ -183,6 +183,10 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
   background:var(--accent-lt)}
 /* The hero card carries a left accent bar; nudge clear of it. */
 .kpi.hero .rfr{left:18px}
+/* Same slot, no affordance: in hourly mode this is a timestamp, not a control. */
+.rfr.flat{cursor:default;border-color:transparent}
+.hrly{font-size:11px;font-weight:600;color:var(--muted);background:var(--line2);
+  border:1px solid var(--line);border-radius:99px;padding:5px 11px;white-space:nowrap}
 .rfr:disabled{opacity:.55;cursor:default}
 .rfr.warn{color:var(--red)}
 .rfr.busy{color:var(--accent-dk);border-color:var(--line)}
@@ -766,7 +770,13 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
            other actions rather than buried in the identity menu. -->
       <a class="btn" href="/admin/users" title="Who can open this dashboard">Manage access</a>
       {% endif %}
-      {% if can_act %}<button class="btn" id="refresh">Refresh</button>{% endif %}
+      {% if hourly_only %}
+      <!-- No Refresh button, on purpose. One scheduled job fetches for everybody once an
+           hour; a button here would either lie (re-render the same numbers) or do the
+           very thing that got Funda rate-limited to a blank page. -->
+      <span class="hrly" id="hrly" title="A scheduled job reads Meta and Branch once an
+        hour and every viewer sees what it left behind">Refreshes hourly</span>
+      {% elif can_act %}<button class="btn" id="refresh">Refresh</button>{% endif %}
       {% if not can_act and not can_export %}
       <!-- View-only: the controls that would spend Meta's budget are not rendered. The
            server refuses them regardless — see _gate — so this is about not offering a
@@ -1066,6 +1076,9 @@ const LINK_KEY = {{ link_key | tojson }};
    recompute. The server enforces it; the page only avoids offering buttons that would be
    ignored. */
 const CAN_ACT = {{ can_act | tojson }};
+/* True when one scheduled job does the fetching for everybody. The page then never asks
+   for a build of its own — it re-reads what the job stored, and says how old that is. */
+const HOURLY_MODE = {{ hourly_only | tojson }};
 /* Downloading a table and forcing a Meta re-read are different rights. View-only access
    has neither; a member has the first. */
 const CAN_EXPORT = {{ can_export | tojson }};
@@ -1152,9 +1165,15 @@ const SRCS = {
 };
 
 function srcBtn(part){
+  /* Hourly deployments have no per-source refresh: one job reads Meta and Branch for
+     everybody, so a button that re-read one of them would be spending the quota this
+     whole arrangement exists to protect. The age is still worth showing — it is how you
+     know which hour you are looking at. */
   const src = SRCS[part];
   const secs = src && src.age();
   if(secs === null || secs === undefined) return '';
+  if(HOURLY_MODE) return `<span class="rfr flat${secs > 5400 ? ' warn' : ''}"
+      title="${src.what} as of ${ago(secs)}">${ago(secs).replace(' ago','')}</span>`;
   return `<button class="rfr${secs > 2100 ? ' warn' : ''}" data-rfr="${part}"
       title="${src.what} last read ${ago(secs)} — click to re-read ${
         part === 'both' ? 'both' : src.what} only"
@@ -1226,6 +1245,24 @@ function stampNow(){
   }
   const m = pullAge('meta_age_sec'), t = pullAge('trials_age_sec'),
         b = pullAge('budget_age_sec');
+  /* Hourly mode has one clock worth reading: when the job last fetched, and when it is
+     due again. "4 min ago" against a 15-minute cadence meant something; against an
+     hourly one it invites somebody to sit and wait for a number that will not move for
+     another 40 minutes. */
+  if(HOURLY_MODE){
+    const secs = m === null ? null : m;
+    const due = secs === null ? null : Math.max(0, 3600 - (secs % 3600));
+    el.innerHTML = secs === null
+      ? `Refreshed hourly · <b>${(DATA.generated_at||'').replace(' IST','')}</b> IST`
+      : `Data as of <b class="${secs > 5400 ? 'warn' : ''}">${ago(secs)
+          .replace(' ago','')}</b>${due !== null && secs < 5400
+          ? ` · next in ${Math.round(due/60)} min` : ''}`;
+    el.title = `Meta spend pulled ${DATA.meta_as_of || '—'} IST`
+      + (DATA.trials_as_of ? `\nBranch trials pulled ${DATA.trials_as_of} IST` : '')
+      + (DATA.budget_as_of ? `\nBudgets and statuses as of ${DATA.budget_as_of} IST` : '')
+      + `\nA scheduled job fetches once an hour; the page reads what it stored.`;
+    return;
+  }
   const bit = (lab, secs, warnAt) => secs === null ? ''
     : ` · <span class="${secs > warnAt ? 'warn' : ''}">${lab} ${ago(secs)
         .replace(' ago','').replace('just now','now')}</span>`;
@@ -4742,6 +4779,7 @@ document.getElementById('cGo').onclick = () => {
 /* Delegated: the tiles are rebuilt from scratch on every render, so a handler bound to
    the button itself would be gone a second later. */
 document.getElementById('kpis').addEventListener('click', e => {
+  if(HOURLY_MODE) return;
   const b = e.target.closest('button[data-rfr]');
   if(!b || b.disabled) return;
   refreshPart(b.dataset.rfr, b);
@@ -4816,7 +4854,8 @@ document.getElementById('gCamp').onchange = renderGoogle;
    status come from. Without the second, pressing Refresh could never move a budget
    figure for up to 30 minutes, which is the opposite of what the button promises. It
    blocks, and the veil makes that legible. */
-if(CAN_ACT) document.getElementById('refresh').onclick = () => load(true, false, true);
+const refreshBtn = document.getElementById('refresh');
+if(CAN_ACT && refreshBtn) refreshBtn.onclick = () => load(true, false, true);
 /* Name, logo, favicon and accent all move together. Doing it in one place means the
    page can never end up wearing one brand's colour under another's name — and it runs
    before the fetch, so the switch feels instant even though the numbers take seconds. */
@@ -5074,6 +5113,10 @@ document.getElementById('cpCols').onchange = render;   // also swaps the KPI row
    for free: /healthz touches no upstream API, so the ping can be frequent while the data
    pull stays rare. */
 const REFRESH_MS = 15*60*1000, KEEPALIVE_MS = 10*60*1000;
+/* Five minutes, and it costs nothing upstream: the request is answered from the payload
+   the hourly job stored, so this only decides how soon a new hour's numbers appear on a
+   page somebody left open. */
+const HOURLY_POLL_MS = 5*60*1000;
 let keepalive = null;
 function setAuto(on){
   clearInterval(timer); clearInterval(keepalive); timer = keepalive = null;
@@ -5087,10 +5130,13 @@ function setAuto(on){
      Hidden tabs skip the pull entirely. A page nobody is looking at should not spend
      rate-limited quota to stay current, and the focus handler already re-pulls anything
      older than two minutes the moment it is looked at again. */
+  /* On an hourly deployment the page still checks back — but for the JOB's newer
+     numbers, not to trigger a fetch of its own. The server hands back whatever the last
+     hourly build left; if that has not changed, nothing changes on screen. */
   timer = setInterval(() => {
     if(document.visibilityState === 'hidden') return;
     load(false, true, false, true);
-  }, REFRESH_MS);
+  }, HOURLY_MODE ? HOURLY_POLL_MS : REFRESH_MS);
   /* The keepalive does NOT skip hidden tabs: keeping the instance out of a cold start is
      the one thing worth doing while nobody is watching, and it costs no upstream call. */
   keepalive = setInterval(()=>fetch('/healthz').catch(()=>{}), KEEPALIVE_MS);
