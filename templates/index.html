@@ -2080,7 +2080,7 @@ function renderCohorts(){
     box.innerHTML = COHBUSY
       ? `<div class="panel"><h3><span class="skl" style="width:210px;display:inline-block"></span></h3>
          <div class="mwrap"><table class="mx"><tbody>${
-           sklRows(['104px','56px','56px','48px','48px','48px','48px','56px','56px','56px'], 8)}</tbody></table></div></div>`
+           sklRows(['104px','56px','60px','48px','48px','48px','48px','48px','60px','56px','52px'], 8)}</tbody></table></div></div>`
       : `<div class="panel"><p class="sub">No graduation history yet.</p></div>`;
     return;
   }
@@ -2113,7 +2113,7 @@ function renderCohorts(){
      other denominator. */
   const row = r => !r.live ? `<tr class="idle">
       <td class="l">${dayLbl(r.date)}${r.prov ? PROV : ''}</td>
-      <td colspan="13" class="l dimtxt">${r.day_test_spend
+      <td colspan="10" class="l dimtxt">${r.day_test_spend
         ? `nothing uploaded — ${rs(r.day_test_spend)} spent testing what was already running`
         : 'no testing spend'}</td></tr>`
     : `<tr${r.prov ? ' class="prov"' : ''}>
@@ -2122,18 +2122,17 @@ function renderCohorts(){
       <td class="gr">${n0(r.d1)}</td><td class="gr">${n0(r.d2)}</td>
       <td class="gr">${n0(r.d3)}</td><td class="gr">${n0(r.d4)}</td>
       <td class="gr" title="Graduated more than four days after going live">${n0(r.d5)}</td>
-      <td>${num(r.grad)}<span class="sub2">${pct(r.grad, r.live)}</span></td>
-      <td>${COH.live_known ? n0(r.onair) : '<span class="dimtxt">—</span>'}</td>
-      <td class="wn">${n0(r.win)}</td><td class="wn"><b>${n0(r.sup)}</b></td>
-      <td>${pct(r.win, r.live)}</td><td>${pct(r.sup, r.live)}</td></tr>`;
+      <td><b>${n0(r.grad)}</b><span class="sub2">${pct(r.grad, r.live)}</span></td>
+      <td class="wn">${n0(r.win)}</td>
+      <td>${pct(r.win, r.live)}</td></tr>`;
   const head = `<thead>
     <tr class="grp">
       <th class="l g-dt"></th>
       <th colspan="2" class="g-up">Creatives uploaded</th>
-      <th colspan="6" class="g-gr">Graduation</th>
+      <th colspan="5" class="g-gr">Graduation</th>
       <th class="g-sc">Post scaling</th>
-      <th colspan="2" class="g-rs">Final trial → result</th>
-      <th colspan="2" class="g-sm">Summary</th></tr>
+      <th class="g-rs">Final trial → result</th>
+      <th class="g-sm">Summary</th></tr>
     <tr>
       <th class="l">Date</th>
       <th title="Ad sets created in a testing campaign that day">Meta</th>
@@ -2141,21 +2140,17 @@ function renderCohorts(){
       <th title="Graduated the same day or the next one">Day 1</th>
       <th>Day 2</th><th>Day 3</th><th>Day 4</th>
       <th title="Graduated more than four days later">Day 5+</th>
-      <th title="All of them, and what share of the day's uploads that is">Graduated</th>
-      <th title="Graduates from that day still live in a trial campaign right now">Final live</th>
-      <th title="Graduates that have since spent over ${rs(COH.winner_spend)} in trial">Winning</th>
-      <th title="Graduates past ${rs(COH.super_spend)} in trial">Super winning</th>
-      <th title="Winners as a share of the day's uploads">Win rate</th>
-      <th title="Super winners as a share of the day's uploads">Super win rate</th></tr></thead>`;
+      <th title="Everything from that day that graduated — the day columns added up">Final live</th>
+      <th title="Graduates that have spent ${rs(COH.winner_spend)} or more in a trial campaign">Winning</th>
+      <th title="Winners as a share of the day's uploads">Win rate</th></tr></thead>`;
   const foot = `<tfoot><tr>
       <td class="l">${COH.rows.length} days</td>
       <td>${num(t.live)}</td><td><b>${num(t.live)}</b></td>
       <td class="gr">${n0(t.d1)}</td><td class="gr">${n0(t.d2)}</td>
       <td class="gr">${n0(t.d3)}</td><td class="gr">${n0(t.d4)}</td><td class="gr">${n0(t.d5)}</td>
-      <td>${num(t.grad)}<span class="sub2">${pct(t.grad, t.live)}</span></td>
-      <td>${COH.live_known ? n0(t.onair) : '—'}</td>
-      <td class="wn">${n0(t.win)}</td><td class="wn"><b>${n0(t.sup)}</b></td>
-      <td>${pct(t.win, t.live)}</td><td>${pct(t.sup, t.live)}</td></tr></tfoot>`;
+      <td><b>${num(t.grad)}</b><span class="sub2">${pct(t.grad, t.live)}</span></td>
+      <td class="wn">${n0(t.win)}</td>
+      <td>${pct(t.win, t.live)}</td></tr></tfoot>`;
   box.innerHTML = `<div class="panel" style="padding-bottom:10px">
       <div class="mcap"><h3>Graduation funnel · ${lbl}${bandLbl}</h3>
         <span class="meta">through ${COH.until}${(COH.provisional||[]).length
@@ -2164,10 +2159,9 @@ function renderCohorts(){
       <p class="sub">Each row is a day's <b>uploads</b> — creatives whose ad set was
         created in a testing campaign that day — followed forward: which day they
         graduated into a trial campaign (one creative counts once), how many of those are
-        still live, and how many carried real money there. A winner has spent over
-        ${rs(COH.winner_spend)} in trial, a super winner over ${rs(COH.super_spend)}.
-        Rates are against the day's uploads, so they read as "of everything we made that
-        day". The newest rows are thin because a cohort needs days to graduate and more to
+        graduated in total, and how many carried real money there. A winner has spent
+        ${rs(COH.winner_spend)} or more in a trial campaign. Rates are against the day's
+        uploads, so they read as "of everything we made that day". The newest rows are thin because a cohort needs days to graduate and more to
         spend.${(COH.provisional||[]).length ? ` The last ${COH.provisional.length}
           day(s) are marked <i>provisional</i>: settled days come out of the day store,
           which deliberately waits three days for Meta's billing corrections and Branch's
@@ -2175,9 +2169,7 @@ function renderCohorts(){
           move.` : ''}${COH.band && COH.band !== 'all'
           ? ` <b>Uploads stay the day's total</b> — a creative's testing CPI decides which
              trial campaign it graduates into, so this filter narrows the graduation
-             columns and everything after them, not what was made that day.` : ''}${
-        COH.live_known ? '' : ` <span class="warn">Meta would not return the
-        roster, so <i>Final live</i> is unknown rather than zero.</span>`}</p></div>
+             columns and everything after them, not what was made that day.` : ''}</p></div>
     <div class="wrap"><table id="cohtbl" class="coh">${head}
       <tbody>${COH.rows.slice().reverse().map(row).join('')}</tbody>${foot}</table></div>`;
 }

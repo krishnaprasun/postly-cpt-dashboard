@@ -282,8 +282,10 @@ def ad_preview(ad_id, fmt="MOBILE_FEED_STANDARD"):
 # The unit is the ad NAME, not the ad id, because graduation clones the creative into a
 # new campaign under the same name — by id, every graduate would look like a brand new
 # ad that had never been tested.
+# A winner has spent Rs5,000 or more in a trial campaign. At or above, not past: an ad set
+# sitting exactly on the bar has cleared it, and the owner set the bar to be cleared.
+# There is no second tier — the Rs8,000 "super winner" was dropped on 2026-09-01.
 WINNER_SPEND = float(os.environ.get("WINNER_SPEND", "5000"))
-SUPER_SPEND = float(os.environ.get("SUPER_SPEND", "8000"))
 # How far before the window to look, to tell "went live today" from "was already
 # running". Without it every ad alive on day one of the window counts as new that day.
 COHORT_LOOKBACK = int(os.environ.get("COHORT_LOOKBACK", "45"))
@@ -466,33 +468,11 @@ def _cpi(rec):
     return (rec["ts"] / rec["ti"]) if rec.get("ti") else None
 
 
-def live_trial_names(brand):
-    """Ad-set names live in a TRIAL campaign right now, or None if Meta would not say.
-
-    The one figure on this view that cannot come out of the store: "still live" is a fact
-    about this minute. None rather than an empty set when a roster is degraded — zero live
-    ad sets and "we could not ask" must not render as the same thing.
-    """
-    B = C.brand(brand)
-    testing_re = re.compile(B.get("testing_re") or C.TESTING_RE_DEFAULT)
-    names = set()
-    for a in B["accounts"]:
-        camps, live_sets, _live_ads, ok = meta_roster(a["id"], False)
-        if not ok["adsets"] or not ok["campaigns"]:
-            return None
-        testing_ids = {c["id"] for c in camps
-                       if testing_re.search(c.get("name") or "")}
-        for s in live_sets:
-            if s.get("campaign_id") not in testing_ids and s.get("name"):
-                names.add(s["name"])
-    return names
-
-
-def _cohort_rows(art, since, until, band=None, live=None):
+def _cohort_rows(art, since, until, band=None):
     """Fold the ledger into one row per day, under whichever CPI band is asked for."""
     keep = CPI_BANDS.get(band, (None, None))[1] if band and band != "all" else None
     prov = set(art.get("provisional") or [])
-    rows = {d: {"date": d, "live": 0, "grad": 0, "win": 0, "sup": 0, "onair": 0,
+    rows = {d: {"date": d, "live": 0, "grad": 0, "win": 0,
                 "d1": 0, "d2": 0, "d3": 0, "d4": 0, "d5": 0,
                 "test_spend": 0.0, "test_inst": 0.0, "trial_spend": 0.0, "trials": 0.0,
                 "day_test_spend": (art.get("day_test_spend") or {}).get(d, 0.0),
@@ -525,12 +505,8 @@ def _cohort_rows(art, since, until, band=None, live=None):
                - datetime.strptime(rec["d"], "%Y-%m-%d")).days
         r["d1" if lag <= 1 else "d2" if lag == 2 else "d3" if lag == 3
           else "d4" if lag == 4 else "d5"] += 1
-        if live is not None and rec["n"] in live:
-            r["onair"] += 1
-        if rec["xs"] > WINNER_SPEND:
+        if rec["xs"] >= WINNER_SPEND:
             r["win"] += 1
-        if rec["xs"] > SUPER_SPEND:
-            r["sup"] += 1
     out = [rows[d] for d in sorted(rows)]
     for r in out:
         for k in ("test_spend", "trial_spend", "day_test_spend"):
@@ -542,8 +518,8 @@ def _cohort_rows(art, since, until, band=None, live=None):
 
 def _cohort_totals(rows):
     return {k: round(sum(r[k] for r in rows), 2)
-            for k in ("live", "grad", "win", "sup", "onair", "d1", "d2", "d3", "d4",
-                      "d5", "test_spend", "test_inst", "trial_spend", "trials")}
+            for k in ("live", "grad", "win", "d1", "d2", "d3", "d4", "d5",
+                      "test_spend", "test_inst", "trial_spend", "trials")}
 
 
 def cohorts(brand, since, until, band=None, force=False):
@@ -580,20 +556,13 @@ def cohorts(brand, since, until, band=None, force=False):
                "stored_days": meta["stored_days"], "lookback_from": meta["lookback_from"],
                "generated_at": now_ist_str()}
 
-    # "Still live" is a fact about this minute, so it is read now rather than folded — and
-    # it is allowed to fail without taking the rest of the view with it.
-    try:
-        live = live_trial_names(brand)
-    except Exception:
-        live = None
-    rows = _cohort_rows(art, since, until, band, live)
+    rows = _cohort_rows(art, since, until, band)
     data = {"brand": brand,
             "since": rows[0]["date"] if rows else since,
             "until": rows[-1]["date"] if rows else until,
             "rows": rows, "totals": _cohort_totals(rows),
             "band": band, "bands": {k: v[0] for k, v in CPI_BANDS.items()},
-            "live_known": live is not None,
-            "winner_spend": WINNER_SPEND, "super_spend": SUPER_SPEND,
+            "winner_spend": WINNER_SPEND,
             "event": art.get("event"), "event_label": art.get("event_label"),
             "last_test_day": art.get("last_test_day"),
             "stored_days": art.get("stored_days"),
