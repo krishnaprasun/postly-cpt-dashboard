@@ -908,6 +908,15 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
 
   <div class="ctl" id="ctl">
     <input type="search" id="q" placeholder="Filter by name…">
+    <!-- Two scopes rather than one search box: "everything in the Install account" and
+         "everything in this campaign" are the questions actually asked of the ad set and
+         ad tables, and typing a name into a free-text filter answers neither reliably —
+         an account name matches nothing, and a campaign name matches every ad set that
+         happens to contain the same word. -->
+    <label class="sel" id="fAcctWrap"><span>Account</span>
+      <select id="fAcct"><option value="">All accounts</option></select></label>
+    <label class="sel" id="fCampWrap"><span>Campaign</span>
+      <select id="fCamp"><option value="">All campaigns</option></select></label>
     <label class="chk"><input type="checkbox" id="activeOnly" checked> active only</label>
     <label class="chk"><input type="checkbox" id="spentOnly"> spent &gt; 0 only</label>
     <label class="chk" id="cpWrap" style="display:none"><input type="checkbox" id="cpCols" checked> signups &amp; mandates</label>
@@ -3615,12 +3624,46 @@ function colsFor(tab){
    from the same code — an exported ad set row and the one on screen must never be able
    to disagree. The current sort is applied only to the level actually on screen; the
    others keep the payload's spend-descending order. */
+/* The two scope selects are filled from the rows the current tab actually has, so every
+   option is guaranteed to produce something — an account with nothing in this segment, or
+   a campaign that stopped last month, is not offered. A selection that survives a brand
+   or segment change but no longer matches anything is dropped rather than left showing an
+   empty table with a filter the reader has to notice. */
+function fillScopes(base){
+  const wantAcct = TAB === 'campaigns' || TAB === 'adsets' || TAB === 'ads';
+  const wantCamp = TAB === 'adsets' || TAB === 'ads';
+  document.getElementById('fAcctWrap').style.display = wantAcct ? '' : 'none';
+  document.getElementById('fCampWrap').style.display = wantCamp ? '' : 'none';
+  if(!wantAcct){ return; }
+  const aSel = document.getElementById('fAcct'), cSel = document.getElementById('fCamp');
+  const accts = new Map(), camps = new Map();
+  for(const o of base){
+    if(o.account_id) accts.set(o.account_id, o.account || o.account_id);
+    if(wantCamp && o.campaign_id && (!aSel.value || o.account_id === aSel.value))
+      camps.set(o.campaign_id, o.campaign || o.campaign_id);
+  }
+  const fill = (sel, map, allLabel) => {
+    const sig = [...map.keys()].sort().join('|');
+    if(sel.dataset.sig === sig) return;
+    sel.dataset.sig = sig;
+    const was = sel.value;
+    sel.innerHTML = `<option value="">${allLabel}</option>` +
+      [...map.entries()].sort((a, b) => a[1].localeCompare(b[1]))
+        .map(([id, name]) => `<option value="${id}">${name}</option>`).join('');
+    sel.value = map.has(was) ? was : '';
+  };
+  fill(aSel, accts, `All accounts (${accts.size})`);
+  if(wantCamp) fill(cSel, camps, `All campaigns (${camps.size})`);
+}
+
 function rows(tab, filtered){
   tab = tab || TAB;
   filtered = filtered !== false;
   if(tab==='combined') return [];
   const base = tab === 'accounts' ? acctRows() : DATA[tab];
-  let r = base.filter(inSeg).map(o => Object.assign({}, o, {
+  const inScope = base.filter(inSeg);
+  if(filtered && tab === TAB) fillScopes(inScope);
+  let r = inScope.map(o => Object.assign({}, o, {
       trials: o[EV], cpt: cpt(o.spend, o[EV]),
       /* CTR and CPM divide by impressions, and CPM divides the spend that CAME WITH
          those impressions -- `imp_spend`, not total spend. Over a window whose older
@@ -3648,6 +3691,10 @@ function rows(tab, filtered){
     if(document.getElementById('activeOnly').checked && tab==='campaigns')
       r = r.filter(o => isLive(o.status));
     if(document.getElementById('spentOnly').checked) r = r.filter(o => o.spend > 0);
+    const fa = document.getElementById('fAcct').value;
+    if(fa) r = r.filter(o => o.account_id === fa);
+    const fc = document.getElementById('fCamp').value;
+    if(fc) r = r.filter(o => o.campaign_id === fc);
   }
   if(tab !== TAB) return r;
   const k = SORT.key, d = SORT.dir;
@@ -4863,6 +4910,14 @@ document.getElementById('sGrain').onchange = () => {
   renderTable(); noteFor();
 };
 document.getElementById('sMetric').onchange = () => { MPAGE = 0; renderTable(); noteFor(); };
+/* Narrowing the account re-narrows the campaign list under it, so the pair reads as one
+   scope rather than two filters that can contradict each other. */
+document.getElementById('fAcct').onchange = () => {
+  const c = document.getElementById('fCamp');
+  c.dataset.sig = ''; c.value = '';
+  renderTable(); noteFor();
+};
+document.getElementById('fCamp').onchange = () => { renderTable(); noteFor(); };
 document.getElementById('sq').oninput = () => { MPAGE = 0; renderTable(); };
 document.getElementById('sTesting').onchange = () => { MPAGE = 0; renderTable(); };
 document.getElementById('sActive').onchange = () => { MPAGE = 0; renderTable(); };
@@ -4926,6 +4981,10 @@ document.getElementById('brandsw').onclick = e => {
   RAW = null;
   GOOG = null; GOOGKEY = null;       // Google is per-brand as well
   COH = null; COHKEY = null;         // and so is the graduation history
+  for(const id of ['fAcct','fCamp']){   // another brand's accounts are not this one's
+    const el = document.getElementById(id);
+    if(el){ el.value = ''; el.dataset.sig = ''; }
+  }
   HOURLY = null; HOURLYKEY = null;
   PRIOR = null; PRIORKEY = null;
   GSPEND = null; GSPENDKEY = null;
