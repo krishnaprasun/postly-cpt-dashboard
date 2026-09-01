@@ -867,6 +867,12 @@ def api_hour_snapshot():
         floor_min = int(request.args.get("if_older_than", "0"))
     except ValueError:
         floor_min = 0
+    # Which windows to refresh. Only `today` used to be, so anyone who moved the period
+    # picker to Yesterday was reading whatever had last been built for that window —
+    # hours old, with nothing scheduled to replace it. The page offers these windows, so
+    # the job has to keep them.
+    windows = [w.strip() for w in request.args.get("ranges", "today,yesterday").split(",")
+               if w.strip()]
     out = []
     for b in brands:
         try:
@@ -882,7 +888,19 @@ def api_hour_snapshot():
             # force, so the job builds here and now rather than being handed the
             # hour-old payload it is supposed to be replacing — and so the hourly point
             # it records is the figure it just fetched.
-            data = get_data(today, today, b, force=True, job=True)
+            data = None
+            built = []
+            for w in windows:
+                w_since, w_until = resolve_range(w, None, None)
+                d = get_data(w_since, w_until, b, force=True, job=True)
+                built.append(w)
+                if w == "today":
+                    data = d
+            # The hourly point is recorded off today's figures; a job asked for other
+            # windows only still refreshes them and records nothing.
+            if data is None:
+                out.append({"brand": b, "refreshed": built})
+                continue
             ev = (data.get("events") or ["t101"])[0]
             pr = (data.get("prorata") or {}).get(ev) or {}
             ch = (data.get("channels") or {}).get(ev) or {}
@@ -894,7 +912,7 @@ def api_hour_snapshot():
             ok = P.hour_snapshot(b, trials, comb.get("spend"),
                                  (data.get("installs") or {}).get("meta"))
             out.append({"brand": b, "stored": ok, "trials": trials,
-                        "spend": comb.get("spend")})
+                        "spend": comb.get("spend"), "refreshed": built})
         except Exception as e:
             traceback.print_exc()
             out.append({"brand": b, "error": str(e)[:200]})
