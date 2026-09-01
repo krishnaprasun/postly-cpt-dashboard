@@ -195,6 +195,10 @@ BRANDS = {
                        "t10m": "postly_trial_nc_after10min_backend"},
         # Raised from 150 on 2026-08-31 at the owner's instruction.
         "cpt_target": 180,
+        # Postly stopped running testing campaigns on 2026-08-15 — every ad set now
+        # launches straight into a trial campaign — so there is no testing-to-trial
+        # funnel to show and the Graduation view is hidden rather than left empty.
+        "graduation": False,
         "classplus": True,
         "logo": "brand/postly.svg",
         # Chrome only — active tab, hover, focus ring, hero wash, spinner. The

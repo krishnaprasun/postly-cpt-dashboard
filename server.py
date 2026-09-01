@@ -657,7 +657,8 @@ def index(key=None):
                         "accounts": len(C.BRANDS[k]["accounts"]),
                         "branch": bool(C.BRAND_HAS_BRANCH(k)),
                         "classplus": bool(C.BRANDS[k]["classplus"]),
-                        "logo": C.BRANDS[k]["logo"]}
+                        "logo": C.BRANDS[k]["logo"],
+                        "graduation": bool(C.BRANDS[k].get("graduation", True))}
                     for k in allowed})
 
 
@@ -741,8 +742,12 @@ def api_cohorts():
     until = H.settled_through(P.today_ist()) if H.available() else P.today_ist()
     since = (datetime.strptime(until, "%Y-%m-%d")
              - timedelta(days=days - 1)).strftime("%Y-%m-%d")
+    if not C.BRANDS[brand].get("graduation", True):
+        return jsonify({"error": f"{C.BRANDS[brand]['label']} does not run testing "
+                                 f"campaigns, so it has no graduation funnel"}), 404
     try:
-        return jsonify(P.cohorts(brand, since, until))
+        return jsonify(P.cohorts(brand, since, until,
+                                 band=request.args.get("band", "all")))
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": _friendly(e)["text"]}), 502

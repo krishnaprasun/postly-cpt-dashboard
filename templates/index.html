@@ -414,6 +414,11 @@ section.ns p{margin:0}
 /* The Google table carries two attributions side by side, so the header says which
    columns belong to which. A vertical rule at each group boundary does the separating;
    the group row above only has to name them. */
+/* `.grp` is also a flex row elsewhere on the page (the segmented controls), and that
+   rule was landing on these header rows too: a `tr` set to `display:flex` stops being a
+   table row, so every spanning band shrank to its text and stopped lining up with the
+   columns it names. Two other tables had been quietly wearing this. */
+thead tr.grp{display:table-row}
 thead tr.grp th{font-size:9.5px;letter-spacing:.7px;text-transform:uppercase;
   font-weight:650;color:var(--muted);padding:5px 8px 3px;border-bottom:0;background:transparent}
 thead tr.grp th.gA{color:var(--accent-dk)}
@@ -518,6 +523,28 @@ a.mgr:hover{color:var(--accent-dk)}
 .legend b{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
   max-width:340px}
 .legend em{font-style:normal;color:var(--faint)}
+/* The Graduation table is read across, not down: a day's uploads, then what happened to
+   them, then what it was worth. The group row is what makes those three readable as
+   phases instead of as fourteen columns. */
+/* `border-collapse: collapse` plus a sticky th is the combination Chrome gets wrong: a
+   cell that spans columns is laid out at its own content width and the band stops short
+   of the columns it is labelling. Separate borders fix the spanning row, and only the
+   second header row needs to stick anyway. */
+table.coh{border-collapse:separate;border-spacing:0}
+table.coh th,table.coh td{border-bottom:1px solid var(--line2)}
+table.coh thead tr:last-child th{position:sticky;top:0;z-index:2}
+table.coh thead tr.grp th{position:static;font-size:10px;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--white);border-bottom:0;padding:5px 8px;
+  text-align:center}
+table.coh thead tr.grp th.g-dt{background:var(--navy)}
+table.coh th.g-up{background:#2C6FBF}
+table.coh th.g-gr{background:#B07A18}
+table.coh th.g-sc{background:#3A4C9E}
+table.coh th.g-rs{background:#1F6B45}
+table.coh th.g-sm{background:#2C6FBF}
+table.coh td.gr{background:var(--gold-lt)}
+table.coh td.wn{background:var(--accent-lt)}
+table.coh tbody tr.idle td{background:none}
 /* Legend chips that are also the control: click a day out of the chart to compare the
    rest. `out` keeps the day readable but plainly switched off, so nobody wonders whether
    the line is missing or hidden. */
@@ -952,6 +979,15 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   </div>
 
   <div class="ctl" id="cctl" style="display:none">
+    <label class="sel"><span>Testing CPI</span>
+      <select id="cBand" title="Which trial campaign a creative is graduated into is
+        decided by what it cost to buy an install while it was testing">
+        <option value="all" selected>All creatives</option>
+        <option value="lt8">CPI under ₹8</option>
+        <option value="8to12">CPI ₹8 – ₹12</option>
+        <option value="gt12">CPI over ₹12</option>
+        <option value="none">No installs yet</option>
+      </select></label>
     <label class="sel"><span>Window</span>
       <select id="cWin">
         <option value="14">Last 14 days</option>
@@ -1973,15 +2009,17 @@ const grain = () => (document.getElementById('sGrain') || {value:'day'}).value;
 
 let COH = null, COHKEY = null, COHBUSY = false;
 const cohKey = () => `${BRAND}|${document.getElementById('cWin')
-                                  ? document.getElementById('cWin').value : 30}`;
+                                  ? document.getElementById('cWin').value : 30}|${
+                        document.getElementById('cBand')
+                          ? document.getElementById('cBand').value : 'all'}`;
 
 async function loadCohorts(force){
   const key = cohKey();
   if(COHKEY === key && COH && !force) return;
   COHBUSY = true; renderCohorts();
   try{
-    const days = key.split('|')[1];
-    const r = await fetch(`/api/cohorts?brand=${BRAND}&days=${days}${K}`);
+    const [, days, band] = key.split('|');
+    const r = await fetch(`/api/cohorts?brand=${BRAND}&days=${days}&band=${band}${K}`);
     const j = await r.json();
     if(j.error){ COH = null; return; }
     if(cohKey() !== key) return;
@@ -2001,75 +2039,104 @@ function renderCohorts(){
     box.innerHTML = COHBUSY
       ? `<div class="panel"><h3><span class="skl" style="width:210px;display:inline-block"></span></h3>
          <div class="mwrap"><table class="mx"><tbody>${
-           sklRows(['120px','60px','60px','60px','60px','90px','70px'], 8)}</tbody></table></div></div>`
+           sklRows(['104px','56px','56px','48px','48px','48px','48px','56px','56px','56px'], 8)}</tbody></table></div></div>`
       : `<div class="panel"><p class="sub">No graduation history yet.</p></div>`;
     return;
   }
-  const t = COH.totals, rs0 = v => rs(v);
-  /* A brand with no testing campaign in the window has nothing to graduate FROM, which
-     is a different thing from a brand that tested and failed. Say which one it is. */
+  const t = COH.totals;
+  const lbl = (BRANDS[COH.brand]||{}).label || COH.brand;
+  const bandLbl = COH.band && COH.band !== 'all'
+    ? ` · testing CPI ${(COH.bands||{})[COH.band] || COH.band}` : '';
+  /* A window with nothing uploaded has nothing to graduate FROM, which is a different
+     thing from a brand that uploaded and failed. Say which one it is. */
   if(!t.live){
     document.getElementById('ccount').textContent = '';
-    const lbl = (BRANDS[COH.brand]||{}).label || COH.brand;
-    box.innerHTML = `<div class="panel"><h3>Graduation by cohort · ${lbl}</h3>
+    box.innerHTML = `<div class="panel"><h3>Graduation funnel · ${lbl}${bandLbl}</h3>
       <p class="sub">No creative first ran in a testing campaign between ${COH.since}
-        and ${COH.until}${COH.last_test_day
-          ? `. ${lbl} last spent on a testing campaign on <b>${COH.last_test_day}</b> —
-             since then every ad set has been launched straight into a trial campaign,
-             so there is no testing cohort to follow`
-          : `, so there is no testing cohort to follow`}.
+        and ${COH.until}${COH.band !== 'all' ? ' with a testing CPI in this band' : ''}${
+        COH.last_test_day && COH.band === 'all'
+          ? `. ${lbl} last spent on a testing campaign on <b>${COH.last_test_day}</b>`
+          : ''}.
         ${COH.last_test_day && COH.last_test_day < COH.since
           ? `<button class="lnk" onclick="widenCohorts('${COH.last_test_day}')">Widen the
              window to reach ${COH.last_test_day}</button>` : ''}</p></div>`;
     return;
   }
   document.getElementById('ccount').textContent =
-    `${COH.rows.length} days · ${num(t.live)} creatives`;
+    `${COH.rows.length} days · ${num(t.live)} ad sets created`;
   const pct = (a, b) => b ? `${(100*a/b).toFixed(0)}%` : '—';
+  const n0 = v => v ? num(v) : '<span class="dimtxt">0</span>';
+  /* Win rate is measured against what was UPLOADED, not against what graduated: the
+     question the row exists to answer is how many of the day's creatives turned into
+     money, and a day that graduated one creative which then won reads as 100% on the
+     other denominator. */
   const row = r => !r.live ? `<tr class="idle">
-    <td class="l">${r.date}</td>
-    <td colspan="8" class="l dimtxt">${r.day_test_spend
-        ? `no new creative — ${rs(r.day_test_spend)} spent testing the ones already running`
-        : 'no testing spend'}</td></tr>` : `<tr>
-    <td class="l">${r.date}</td>
-    <td>${num(r.live)}</td>
-    <td>${num(r.grad)}<span class="sub2">${pct(r.grad, r.live)}</span></td>
-    <td>${num(r.win)}<span class="sub2">${pct(r.win, r.grad)}</span></td>
-    <td><b>${num(r.sup)}</b></td>
-    <td>${rs0(r.test_spend)}</td>
-    <td>${rs0(r.trial_spend)}</td>
-    <td>${num(r.trials)}</td>
-    <td class="${cls(r.trials ? r.trial_spend / r.trials : null)}">${
-      r.trials ? rs(r.trial_spend / r.trials) : '—'}</td></tr>`;
+      <td class="l">${dayLbl(r.date)}</td>
+      <td colspan="13" class="l dimtxt">${r.day_test_spend
+        ? `nothing uploaded — ${rs(r.day_test_spend)} spent testing what was already running`
+        : 'no testing spend'}</td></tr>`
+    : `<tr>
+      <td class="l">${dayLbl(r.date)}</td>
+      <td>${num(r.live)}</td><td><b>${num(r.live)}</b></td>
+      <td class="gr">${n0(r.d1)}</td><td class="gr">${n0(r.d2)}</td>
+      <td class="gr">${n0(r.d3)}</td><td class="gr">${n0(r.d4)}</td>
+      <td class="gr" title="Graduated more than four days after going live">${n0(r.d5)}</td>
+      <td>${num(r.grad)}<span class="sub2">${pct(r.grad, r.live)}</span></td>
+      <td>${COH.live_known ? n0(r.onair) : '<span class="dimtxt">—</span>'}</td>
+      <td class="wn">${n0(r.win)}</td><td class="wn"><b>${n0(r.sup)}</b></td>
+      <td>${pct(r.win, r.live)}</td><td>${pct(r.sup, r.live)}</td></tr>`;
+  const head = `<thead>
+    <tr class="grp">
+      <th class="l g-dt"></th>
+      <th colspan="2" class="g-up">Creatives uploaded</th>
+      <th colspan="6" class="g-gr">Graduation</th>
+      <th class="g-sc">Post scaling</th>
+      <th colspan="2" class="g-rs">Final trial → result</th>
+      <th colspan="2" class="g-sm">Summary</th></tr>
+    <tr>
+      <th class="l">Date</th>
+      <th title="Ad sets created in a testing campaign that day">Meta</th>
+      <th title="Every platform. Only Meta runs testing campaigns, so this matches Meta.">Total uploads</th>
+      <th title="Graduated the same day or the next one">Day 1</th>
+      <th>Day 2</th><th>Day 3</th><th>Day 4</th>
+      <th title="Graduated more than four days later">Day 5+</th>
+      <th title="All of them, and what share of the day's uploads that is">Graduated</th>
+      <th title="Graduates from that day still live in a trial campaign right now">Final live</th>
+      <th title="Graduates that have since spent over ${rs(COH.winner_spend)} in trial">Winning</th>
+      <th title="Graduates past ${rs(COH.super_spend)} in trial">Super winning</th>
+      <th title="Winners as a share of the day's uploads">Win rate</th>
+      <th title="Super winners as a share of the day's uploads">Super win rate</th></tr></thead>`;
+  const foot = `<tfoot><tr>
+      <td class="l">${COH.rows.length} days</td>
+      <td>${num(t.live)}</td><td><b>${num(t.live)}</b></td>
+      <td class="gr">${n0(t.d1)}</td><td class="gr">${n0(t.d2)}</td>
+      <td class="gr">${n0(t.d3)}</td><td class="gr">${n0(t.d4)}</td><td class="gr">${n0(t.d5)}</td>
+      <td>${num(t.grad)}<span class="sub2">${pct(t.grad, t.live)}</span></td>
+      <td>${COH.live_known ? n0(t.onair) : '—'}</td>
+      <td class="wn">${n0(t.win)}</td><td class="wn"><b>${n0(t.sup)}</b></td>
+      <td>${pct(t.win, t.live)}</td><td>${pct(t.sup, t.live)}</td></tr></tfoot>`;
   box.innerHTML = `<div class="panel" style="padding-bottom:10px">
-      <div class="mcap"><h3>Graduation by cohort · ${(BRANDS[COH.brand]||{}).label || COH.brand}</h3>
+      <div class="mcap"><h3>Graduation funnel · ${lbl}${bandLbl}</h3>
         <span class="meta">settled days only, through ${COH.until} · ${COH.stored
           ? `folded ${COH.built_at}` : 'folded live for this request'}</span></div>
-      <p class="sub">Each row is the day a creative <b>first ran in a testing campaign</b>.
-        Graduated means it later appeared in a trial campaign. A winner has since spent
-        over ${rs(COH.winner_spend)} there, a super winner over ${rs(COH.super_spend)} —
-        spend in the trial campaign only, which is what graduation was for.
-        The newest rows are thin because a cohort needs days to graduate and more to
-        spend.</p></div>
-    <div class="wrap"><table id="cohtbl">
-      <thead><tr><th class="l">Went live</th><th title="Creatives whose first testing day
-          this was">In testing</th><th title="Of those, how many later ran in a trial
-          campaign">Graduated</th><th title="Graduates that have since spent over ${
-          rs(COH.winner_spend)} in trial">Winners</th><th title="Graduates past ${
-          rs(COH.super_spend)} in trial">Super</th>
-        <th title="What this cohort has spent in testing, all days">Spent testing</th>
-        <th title="What this cohort has spent in trial, all days">Spent in trial</th>
-        <th>${COH.event_label || 'Trials'}</th><th>CPT</th></tr></thead>
-      <tbody>${COH.rows.slice().reverse().map(row).join('')}</tbody>
-      <tfoot><tr><td class="l">${COH.rows.length} days</td>
-        <td>${num(t.live)}</td>
-        <td>${num(t.grad)}<span class="sub2">${pct(t.grad, t.live)}</span></td>
-        <td>${num(t.win)}<span class="sub2">${pct(t.win, t.grad)}</span></td>
-        <td><b>${num(t.sup)}</b></td>
-        <td>${rs0(t.test_spend)}</td><td>${rs0(t.trial_spend)}</td>
-        <td>${num(t.trials)}</td>
-        <td>${t.trials ? rs(t.trial_spend / t.trials) : '—'}</td></tr></tfoot>
-    </table></div>`;
+      <p class="sub">Each row is a day's <b>uploads</b> — creatives whose ad set was
+        created in a testing campaign that day — followed forward: which day they
+        graduated into a trial campaign (one creative counts once), how many of those are
+        still live, and how many carried real money there. A winner has spent over
+        ${rs(COH.winner_spend)} in trial, a super winner over ${rs(COH.super_spend)}.
+        Rates are against the day's uploads, so they read as "of everything we made that
+        day". The newest rows are thin because a cohort needs days to graduate and more to
+        spend.${COH.live_known ? '' : ` <span class="warn">Meta would not return the
+        roster, so <i>Final live</i> is unknown rather than zero.</span>`}</p></div>
+    <div class="wrap"><table id="cohtbl" class="coh">${head}
+      <tbody>${COH.rows.slice().reverse().map(row).join('')}</tbody>${foot}</table></div>`;
+}
+
+/* "20 Aug" reads faster than "2026-08-20" in a column of forty dates, and the year is
+   already in the caption. */
+function dayLbl(d){
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString(undefined, {weekday:'short', day:'numeric', month:'short'});
 }
 
 async function loadHourly(force){
@@ -3688,6 +3755,17 @@ function renderPlatform(){
 
 function renderTable(){
   const tbl = document.getElementById('tbl');
+  /* Postly stopped running testing campaigns, so it has no funnel to show. The tab goes
+     away rather than standing there with an explanation nobody asked for. */
+  const gradOn = (BRANDS[BRAND] || {}).graduation !== false;
+  const gradBtn = [...document.querySelectorAll('#tabs button')]
+    .find(b => b.dataset.t === 'cohorts');
+  if(gradBtn) gradBtn.style.display = gradOn ? '' : 'none';
+  if(TAB === 'cohorts' && !gradOn){
+    TAB = 'combined';
+    [...document.getElementById('tabs').children].forEach(
+      b => b.classList.toggle('on', b.dataset.t === 'combined'));
+  }
   const isCohorts = TAB === 'cohorts';
   document.getElementById('cohortWrap').style.display = isCohorts ? 'block' : 'none';
   if(isCohorts){
@@ -4695,6 +4773,7 @@ document.getElementById('sDim').onchange = () => {
 };
 document.getElementById('sHourMetric').onchange = () => renderTrends();
 document.getElementById('cWin').onchange = () => { loadCohorts(false); renderCohorts(); };
+document.getElementById('cBand').onchange = () => { loadCohorts(false); renderCohorts(); };
 /* Pick the shortest offered window that still reaches the day testing last ran, rather
    than making the reader try 60 and then 90. */
 function widenCohorts(day){

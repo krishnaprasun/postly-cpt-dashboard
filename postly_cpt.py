@@ -294,7 +294,7 @@ COHORT_TTL = int(os.environ.get("COHORT_TTL", "1800"))
 GRAD_STORE_DAYS = int(os.environ.get("GRAD_STORE_DAYS", "120"))
 # Bumped when the shape of a stored cohort row changes, so a new deploy rejects the old
 # artifact instead of rendering it with a column missing.
-GRAD_SHAPE = 1
+GRAD_SHAPE = 2
 _cohort_cache, _cohort_lock = {}, threading.Lock()
 
 
@@ -303,13 +303,14 @@ def _grad_ns(brand):
 
 
 def _cohort_scan(brand, since, until):
-    """Walk the stored raw days once and return per-day cohort rows.
+    """One pass over the stored raw days -> a record per creative.
 
-    Every number on this view comes out of this one pass: which day each ad NAME first
-    ran in testing, whether it ever reached a trial campaign, and what it has spent on
-    each side since. Nothing here asks Meta or Branch — the raw daily documents in the
-    store already hold it, which is why this can be folded nightly and read back in one
-    request.
+    A record, not a per-day total, because every column on the Graduation view has to be
+    recomputable under a filter: "the ad sets uploaded on the 20th whose testing CPI came
+    in under Rs8" is a different set from the day's total, and a stored aggregate can only
+    answer the question it was aggregated for. Nothing here asks Meta or Branch — the raw
+    daily documents already hold it, which is why this folds nightly and reads back as one
+    document.
     """
     B = C.brand(brand)
     testing_re = re.compile(B.get("testing_re") or C.TESTING_RE_DEFAULT)
@@ -319,13 +320,11 @@ def _cohort_scan(brand, since, until):
     stored = sorted(d for d in raw if raw[d])
 
     first_test, first_trial = {}, {}
-    trial_spend, trial_trials, test_spend = (defaultdict(float), defaultdict(float),
-                                             defaultdict(float))
-    # What the testing campaigns spent ON each day, as opposed to what a cohort went on
-    # to spend. A day with testing spend and no new name means the pipeline shipped
-    # nothing that day; a day with neither means the brand was not testing at all.
-    # Postly stopped testing outright on 2026-08-15, and the two read identically
-    # without this.
+    test_spend, test_inst = defaultdict(float), defaultdict(float)
+    trial_spend, trial_trials = defaultdict(float), defaultdict(float)
+    # What the testing campaigns spent ON each day, as opposed to what a cohort went on to
+    # spend. A day with testing spend and no new name means the pipeline shipped nothing
+    # that day; a day with neither means the brand was not testing at all.
     day_test_spend = defaultdict(float)
     ev = next(iter(B["events"]), "t101")
     for d in stored:
@@ -338,8 +337,8 @@ def _cohort_scan(brand, since, until):
                     continue
                 st = ("testing" if testing_re.search(r.get("campaign_name") or "")
                       else "trial")
-                # A name running in both on one day counts as trial for that day's
-                # trials: the trial campaign is the one whose result is being judged.
+                # A name running in both on one day counts as trial for that day's events:
+                # the trial campaign is the one whose result is being judged.
                 if stage_of.get(n) != "trial":
                     stage_of[n] = st
                 sp = float(r.get("spend") or 0)
@@ -350,95 +349,162 @@ def _cohort_scan(brand, since, until):
                     test_spend[n] += sp
                     first_test.setdefault(n, d)
                     day_test_spend[d] += sp
-        for n, v in ((day.get("branch") or {}).get(ev) or {}).items():
+        branch = day.get("branch") or {}
+        for n, v in (branch.get(ev) or {}).items():
             if stage_of.get(n) == "trial":
                 trial_trials[n] += float(v or 0)
+        # Installs while the creative was still in TESTING. That is the denominator of the
+        # testing CPI the graduation decision is made on — installs it earns later, in a
+        # trial campaign, say nothing about how it tested.
+        for n, v in (branch.get("inst") or {}).items():
+            if stage_of.get(n) == "testing":
+                test_inst[n] += float(v or 0)
 
-    rows = {}
-    for d in date_range(since, until):
-        rows[d] = {"date": d, "live": 0, "grad": 0, "win": 0, "sup": 0,
-                   "test_spend": 0.0, "trial_spend": 0.0, "trials": 0.0,
-                   "day_test_spend": round(day_test_spend.get(d, 0.0), 2)}
+    out = []
     for n, d in first_test.items():
-        if d not in rows:
-            continue                     # went live before this window; not this cohort
-        r = rows[d]
-        r["live"] += 1
-        r["test_spend"] += test_spend[n]
-        # Graduated means it turned up in a trial campaign on or after the day it first
-        # ran in testing. Before is a different creative that happens to share a name.
-        if n in first_trial and first_trial[n] >= d:
-            r["grad"] += 1
-            r["trial_spend"] += trial_spend[n]
-            r["trials"] += trial_trials[n]
-            if trial_spend[n] > WINNER_SPEND:
-                r["win"] += 1
-            if trial_spend[n] > SUPER_SPEND:
-                r["sup"] += 1
-    # A day the store has not written yet would otherwise read as a day on which nothing
-    # went live. Stop at the last day actually held, and say so in `until`.
-    have = set(stored)
-    out_rows = [rows[d] for d in sorted(rows) if d in have]
-    for r in out_rows:
-        for k in ("test_spend", "trial_spend"):
-            r[k] = round(r[k], 2)
-        r["trials"] = round(r["trials"], 1)
-    # The last day the brand spent anything on testing at all, looked for across the whole
-    # lookback and not just the window, so an empty window can say why it is empty.
+        g = first_trial.get(n)
+        out.append({"n": n, "d": d,
+                    # Graduated means it turned up in a trial campaign on or after the day
+                    # it first ran in testing. Before is a different creative that happens
+                    # to share a name.
+                    "g": g if (g and g >= d) else None,
+                    "ts": round(test_spend[n], 2), "ti": round(test_inst[n], 1),
+                    "xs": round(trial_spend[n], 2), "xt": round(trial_trials[n], 1)})
+    out.sort(key=lambda r: (r["d"], r["n"]))
     last_test = max((d for d in stored if day_test_spend.get(d, 0) > 0), default=None)
-    return out_rows, {"stored_days": len(stored), "lookback_from": look,
-                      "last_test_day": last_test, "event": ev,
-                      "event_label": B["labels"].get(ev, "Trials")}
+    return out, {"stored_days": len(stored), "lookback_from": look,
+                 "last_test_day": last_test, "event": ev,
+                 "event_label": B["labels"].get(ev, "Trials"),
+                 "days": {d: round(day_test_spend.get(d, 0.0), 2) for d in stored},
+                 "dates": stored}
+
+
+def cohort_build(brand, until=None):
+    """The whole retained range as one document, ready to store and to slice."""
+    until = until or H.settled_through(today_ist())
+    since = (datetime.strptime(until, "%Y-%m-%d").date()
+             - timedelta(days=GRAD_STORE_DAYS - 1)).strftime("%Y-%m-%d")
+    recs, meta = _cohort_scan(brand, since, until)
+    dates = [d for d in meta["dates"] if d >= since]
+    # `built_for` is the settled day the fold was asked about; `until` is the last day the
+    # store actually held when it ran, usually a day behind it. The reader compares
+    # against the first: matching on the second rejects every artifact for being one day
+    # short of a day that does not exist yet.
+    return {"shape": GRAD_SHAPE, "brand": brand, "since": since, "built_for": until,
+            "until": dates[-1] if dates else until, "dates": dates,
+            "day_test_spend": {d: meta["days"][d] for d in dates},
+            "creatives": [r for r in recs if r["d"] >= since],
+            "last_test_day": meta["last_test_day"], "event": meta["event"],
+            "event_label": meta["event_label"], "stored_days": meta["stored_days"],
+            "lookback_from": meta["lookback_from"], "generated_at": now_ist_str()}
+
+
+def precompute_cohorts(brand):
+    """Fold the creative ledger for one brand and store it. Nightly."""
+    art = cohort_build(brand)
+    ok = H.put_agg(_grad_ns(brand), today_ist(), art)
+    return {"ok": ok, "brand": brand, "days": len(art["dates"]),
+            "creatives": len(art["creatives"]), "since": art["since"],
+            "until": art["until"], "error": None if ok else H.last_error()}
+
+
+# The two trial campaigns a creative can graduate into are chosen by what it cost to buy
+# an install while it was testing, so that is the cut the view filters on.
+CPI_BANDS = {"lt8": ("under Rs8", lambda c: c is not None and c < 8),
+             "8to12": ("Rs8 to Rs12", lambda c: c is not None and 8 <= c <= 12),
+             "gt12": ("over Rs12", lambda c: c is not None and c > 12),
+             "none": ("no installs", lambda c: c is None)}
+
+
+def _cpi(rec):
+    """Testing CPI: what the creative paid per install while it was still in testing.
+    None when it never got an install — a rate with no denominator is not a zero."""
+    return (rec["ts"] / rec["ti"]) if rec.get("ti") else None
+
+
+def live_trial_names(brand):
+    """Ad-set names live in a TRIAL campaign right now, or None if Meta would not say.
+
+    The one figure on this view that cannot come out of the store: "still live" is a fact
+    about this minute. None rather than an empty set when a roster is degraded — zero live
+    ad sets and "we could not ask" must not render as the same thing.
+    """
+    B = C.brand(brand)
+    testing_re = re.compile(B.get("testing_re") or C.TESTING_RE_DEFAULT)
+    names = set()
+    for a in B["accounts"]:
+        camps, live_sets, _live_ads, ok = meta_roster(a["id"], False)
+        if not ok["adsets"] or not ok["campaigns"]:
+            return None
+        testing_ids = {c["id"] for c in camps
+                       if testing_re.search(c.get("name") or "")}
+        for s in live_sets:
+            if s.get("campaign_id") not in testing_ids and s.get("name"):
+                names.add(s["name"])
+    return names
+
+
+def _cohort_rows(art, since, until, band=None, live=None):
+    """Fold the ledger into one row per day, under whichever CPI band is asked for."""
+    keep = CPI_BANDS.get(band, (None, None))[1] if band and band != "all" else None
+    rows = {d: {"date": d, "live": 0, "grad": 0, "win": 0, "sup": 0, "onair": 0,
+                "d1": 0, "d2": 0, "d3": 0, "d4": 0, "d5": 0,
+                "test_spend": 0.0, "test_inst": 0.0, "trial_spend": 0.0, "trials": 0.0,
+                "day_test_spend": (art.get("day_test_spend") or {}).get(d, 0.0)}
+            for d in art.get("dates") or [] if since <= d <= until}
+    for rec in art.get("creatives") or []:
+        r = rows.get(rec["d"])
+        if r is None:
+            continue
+        if keep is not None and not keep(_cpi(rec)):
+            continue
+        r["live"] += 1
+        r["test_spend"] += rec["ts"]
+        r["test_inst"] += rec["ti"]
+        if not rec.get("g"):
+            continue
+        r["grad"] += 1
+        r["trial_spend"] += rec["xs"]
+        r["trials"] += rec["xt"]
+        # Exclusive buckets by how long the creative took to graduate. Day 1 holds the
+        # same-day graduations too: a creative moved before its first testing day closed
+        # was still moved on day one, and a bucket nobody can reach is worse than a
+        # bucket that reads a shade wide.
+        lag = (datetime.strptime(rec["g"], "%Y-%m-%d")
+               - datetime.strptime(rec["d"], "%Y-%m-%d")).days
+        r["d1" if lag <= 1 else "d2" if lag == 2 else "d3" if lag == 3
+          else "d4" if lag == 4 else "d5"] += 1
+        if live is not None and rec["n"] in live:
+            r["onair"] += 1
+        if rec["xs"] > WINNER_SPEND:
+            r["win"] += 1
+        if rec["xs"] > SUPER_SPEND:
+            r["sup"] += 1
+    out = [rows[d] for d in sorted(rows)]
+    for r in out:
+        for k in ("test_spend", "trial_spend", "day_test_spend"):
+            r[k] = round(r[k], 2)
+        for k in ("trials", "test_inst"):
+            r[k] = round(r[k], 1)
+    return out
 
 
 def _cohort_totals(rows):
     return {k: round(sum(r[k] for r in rows), 2)
-            for k in ("live", "grad", "win", "sup", "test_spend", "trial_spend",
-                      "trials")}
+            for k in ("live", "grad", "win", "sup", "onair", "d1", "d2", "d3", "d4",
+                      "d5", "test_spend", "test_inst", "trial_spend", "trials")}
 
 
-def cohort_build(brand, until=None):
-    """The whole retained range in one document, ready to store and to slice."""
-    until = until or H.settled_through(today_ist())
-    since = (datetime.strptime(until, "%Y-%m-%d").date()
-             - timedelta(days=GRAD_STORE_DAYS - 1)).strftime("%Y-%m-%d")
-    rows, meta = _cohort_scan(brand, since, until)
-    # `built_for` is the settled day the fold was asked about; `until` is the last day the
-    # store actually held when it ran, which is usually a day behind it. The reader
-    # compares against the first: matching on the second would reject every artifact for
-    # being one day short of a day that does not exist yet.
-    return dict(meta, shape=GRAD_SHAPE, brand=brand, since=since, built_for=until,
-                until=rows[-1]["date"] if rows else until, rows=rows,
-                winner_spend=WINNER_SPEND, super_spend=SUPER_SPEND,
-                generated_at=now_ist_str())
+def cohorts(brand, since, until, band=None, force=False):
+    """Per day: creatives uploaded into testing, and what became of them.
 
-
-def precompute_cohorts(brand):
-    """Fold the cohorts for one brand and store them. Nightly."""
-    art = cohort_build(brand)
-    ok = H.put_agg(_grad_ns(brand), today_ist(), art)
-    return {"ok": ok, "brand": brand, "days": len(art["rows"]),
-            "since": art["since"], "until": art["until"],
-            "error": None if ok else H.last_error()}
-
-
-def _cohort_slice(art, since, until):
-    """The rows of a stored artifact that fall inside one window, plus fresh totals."""
-    rows = [r for r in art.get("rows") or [] if since <= r["date"] <= until]
-    return dict(art, rows=rows, since=rows[0]["date"] if rows else since,
-                until=rows[-1]["date"] if rows else until,
-                totals=_cohort_totals(rows))
-
-
-def cohorts(brand, since, until, force=False):
-    """Per day: how many creatives went live in testing, and what became of them.
-
-    Served from the nightly artifact whenever one covers the window — the scan behind it
-    reads two and a half months of raw daily documents and takes ten seconds, which is
-    not a thing to do inside somebody's page load. A missing or stale artifact falls back
-    to scanning live, so a night the job did not run costs latency and not the view.
+    Served from the nightly ledger whenever one covers the window — the scan behind it
+    reads two and a half months of raw daily documents and takes ten seconds, which is not
+    a thing to do inside a page load. A missing or stale artifact falls back to scanning
+    live, so a night the job did not run costs latency and not the view.
     """
-    key = (brand, since, until)
+    band = band if band in CPI_BANDS else "all"
+    key = (brand, since, until, band)
     if not force:
         with _cohort_lock:
             hit = _cohort_cache.get(key)
@@ -446,29 +512,46 @@ def cohorts(brand, since, until, force=False):
             return dict(hit["data"], cached=True,
                         age_min=int((time.time() - hit["at"]) / 60))
 
-    data = None
+    art, stored = None, False
     if not force:
-        art = H.get_agg(_grad_ns(brand))
-        # Thresholds live in the artifact because they decide `win` and `sup` at fold
-        # time: an artifact folded at Rs5,000 must not be served under a changed bar.
-        if art and art.get("shape") == GRAD_SHAPE \
-                and art.get("winner_spend") == WINNER_SPEND \
-                and art.get("super_spend") == SUPER_SPEND \
-                and art.get("since", "9") <= since \
-                and art.get("built_for", "") >= until:
-            data = dict(_cohort_slice(art, since, until), stored=True,
-                        built_at=art.get("generated_at"), cached=False, age_min=0)
-    if data is None:
-        rows, meta = _cohort_scan(brand, since, until)
-        data = dict(meta, brand=brand, since=since,
-                    until=rows[-1]["date"] if rows else until, rows=rows,
-                    totals=_cohort_totals(rows), winner_spend=WINNER_SPEND,
-                    super_spend=SUPER_SPEND, stored=False, built_at=None,
-                    cached=False, age_min=0, generated_at=now_ist_str())
-    data.pop("shape", None)
+        got = H.get_agg(_grad_ns(brand))
+        if got and got.get("shape") == GRAD_SHAPE \
+                and got.get("since", "9") <= since \
+                and got.get("built_for", "") >= until:
+            art, stored = got, True
+    if art is None:
+        recs, meta = _cohort_scan(brand, since, until)
+        art = {"brand": brand, "since": since, "until": until,
+               "dates": meta["dates"], "day_test_spend": meta["days"],
+               "creatives": recs, "last_test_day": meta["last_test_day"],
+               "event": meta["event"], "event_label": meta["event_label"],
+               "stored_days": meta["stored_days"], "lookback_from": meta["lookback_from"],
+               "generated_at": now_ist_str()}
+
+    # "Still live" is a fact about this minute, so it is read now rather than folded — and
+    # it is allowed to fail without taking the rest of the view with it.
+    try:
+        live = live_trial_names(brand)
+    except Exception:
+        live = None
+    rows = _cohort_rows(art, since, until, band, live)
+    data = {"brand": brand,
+            "since": rows[0]["date"] if rows else since,
+            "until": rows[-1]["date"] if rows else until,
+            "rows": rows, "totals": _cohort_totals(rows),
+            "band": band, "bands": {k: v[0] for k, v in CPI_BANDS.items()},
+            "live_known": live is not None,
+            "winner_spend": WINNER_SPEND, "super_spend": SUPER_SPEND,
+            "event": art.get("event"), "event_label": art.get("event_label"),
+            "last_test_day": art.get("last_test_day"),
+            "stored_days": art.get("stored_days"),
+            "lookback_from": art.get("lookback_from"),
+            "creatives": len(art.get("creatives") or []),
+            "stored": stored, "built_at": art.get("generated_at") if stored else None,
+            "cached": False, "age_min": 0, "generated_at": now_ist_str()}
     with _cohort_lock:
         _cohort_cache[key] = {"at": time.time(), "data": data}
-        if len(_cohort_cache) > 12:
+        if len(_cohort_cache) > 16:
             for k in sorted(_cohort_cache, key=lambda k: _cohort_cache[k]["at"])[:4]:
                 _cohort_cache.pop(k, None)
     return data
