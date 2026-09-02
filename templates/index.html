@@ -570,6 +570,12 @@ table.coh tbody tr.prov td{background:var(--line2)}
 /* Legend chips that are also the control: click a day out of the chart to compare the
    rest. `out` keeps the day readable but plainly switched off, so nobody wonders whether
    the line is missing or hidden. */
+/* The rank, on the line and in the legend. Two places, one number. */
+.legend i.rkn{display:inline-flex;align-items:center;justify-content:center;
+  width:15px;height:15px;border-radius:5px;color:#fff;font-size:9.5px;font-weight:700;
+  font-style:normal;flex:0 0 auto}
+.legend .tln{cursor:default;padding:2px 5px;border-radius:7px}
+.legend .tln:hover{background:var(--line2)}
 /* The day at the end of its own line. Halo so it stays readable where lines cross. */
 .chartbox .endlbl{font-size:9.5px;font-weight:700;paint-order:stroke;
   stroke:var(--white);stroke-width:3px;stroke-linejoin:round}
@@ -3000,26 +3006,7 @@ function renderHourly(){
   const x = h => L + (h * (W - L - R)) / 23;
   const y = v => T + (1 - v / top) * (H - T - Bm);
   let drawn = 0, seen = 0;
-  /* Catmull-Rom through the points, converted to cubic Béziers. Spend does not jump
-     between hours in straight lines, and the kinked polyline made every crossing look
-     like an event. The control points are clamped to the two hours they sit between, so a
-     smooth curve can never invent a peak that was not in the data or dip below zero. */
-  function curve(pts){
-    if(pts.length < 2) return '';
-    let d = `M${pts[0][0]},${pts[0][1]}`;
-    for(let i = 0; i < pts.length - 1; i++){
-      const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1],
-            p3 = pts[i + 2] || p2;
-      const lo = Math.min(p1[1], p2[1]), hi = Math.max(p1[1], p2[1]);
-      const c1y = Math.max(lo, Math.min(hi, p1[1] + (p2[1] - p0[1]) / 6));
-      const c2y = Math.max(lo, Math.min(hi, p2[1] - (p3[1] - p1[1]) / 6));
-      d += ` C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)},${c1y.toFixed(1)}` +
-           ` ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)},${c2y.toFixed(1)}` +
-           ` ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
-    }
-    return d;
-  }
-
+  const curve = smoothPath;
   const ends = [];
   const line = (d, i) => {
     if(off(d)) return '';
@@ -3120,19 +3107,9 @@ function renderHourly(){
     if(!boxEl || !tip || !guide) return;
     /* Draw each line on rather than flashing seven finished curves at once: the eye
        follows one line at a time as they arrive, which is most of what makes seven of
-       them separable. Staggered by day, oldest first, so today lands last and on top.
-       Skipped entirely for a reader who has asked for less motion. */
+       them separable. Oldest first, so today lands last and on top. */
     const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-    boxEl.querySelectorAll('path.ln').forEach((pth, i) => {
-      if(still) return;
-      const len = pth.getTotalLength();
-      pth.style.strokeDasharray = len;
-      pth.style.strokeDashoffset = len;
-      pth.getBoundingClientRect();                      // commit before transitioning
-      pth.style.transition = `stroke-dashoffset .85s cubic-bezier(.35,.7,.3,1) ${
-        (i * 0.07).toFixed(2)}s`;
-      pth.style.strokeDashoffset = '0';
-    });
+    drawOn(boxEl, 'path.ln');
     boxEl.querySelectorAll('.endlbl, circle.dot').forEach((el, i) => {
       if(still) return;
       el.style.opacity = '0';
@@ -3205,6 +3182,42 @@ function renderHourly(){
       makes this a drawing fault rather than a data one.</p>`}</div>`;
 }
 
+/* Catmull-Rom through the points, converted to cubic Béziers. Neither spend nor CPT moves
+   between readings in straight lines, and a kinked polyline makes every crossing of two
+   rows look like an event. The control points are clamped to the two points they sit
+   between, so a smooth curve can never invent a peak that was not in the data or dip
+   below zero. */
+function smoothPath(pts){
+  if(pts.length < 2) return '';
+  let d = `M${pts[0][0]},${pts[0][1]}`;
+  for(let i = 0; i < pts.length - 1; i++){
+    const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1], p3 = pts[i + 2] || p2;
+    const lo = Math.min(p1[1], p2[1]), hi = Math.max(p1[1], p2[1]);
+    const c1y = Math.max(lo, Math.min(hi, p1[1] + (p2[1] - p0[1]) / 6));
+    const c2y = Math.max(lo, Math.min(hi, p2[1] - (p3[1] - p1[1]) / 6));
+    d += ` C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)},${c1y.toFixed(1)}` +
+         ` ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)},${c2y.toFixed(1)}` +
+         ` ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+  }
+  return d;
+}
+
+/* One line drawn on after another, oldest or lowest first so the biggest lands last and
+   on top. Shared by both charts; skipped for a reader who has asked for less motion. */
+function drawOn(box, sel){
+  if(matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  box.querySelectorAll(sel).forEach((pth, i) => {
+    const len = pth.getTotalLength();
+    if(!len) return;
+    pth.style.strokeDasharray = len;
+    pth.style.strokeDashoffset = len;
+    pth.getBoundingClientRect();                        // commit before transitioning
+    pth.style.transition = `stroke-dashoffset .85s cubic-bezier(.35,.7,.3,1) ${
+      (i * 0.06).toFixed(2)}s`;
+    pth.style.strokeDashoffset = '0';
+  });
+}
+
 function renderTrends(){
   if(grain() === 'hour'){ renderHourly(); return; }
   const box = document.getElementById('trendsWrap');
@@ -3251,26 +3264,54 @@ function renderTrends(){
     g += `<text class="axis" x="${px(i).toFixed(1)}" y="${H-8}" text-anchor="middle">${
       d.slice(8)} ${new Date(d+'T00:00:00').toLocaleString('en-GB',{month:'short'})}</text>`; });
   let lines = '';
+  const ends = [];
   vals.forEach((vs,ri) => {
     const col = LINE_COLOURS[ri % LINE_COLOURS.length];
     /* A null (no spend, so no CPT) breaks the line rather than being drawn as zero —
-       joining across it would invent a value the row never had. */
-    let d = '', pen = false;
+       joining across it would invent a value the row never had. Each unbroken run is
+       curved on its own, so a gap stays a gap instead of being smoothed across. */
+    let d = '', run = [];
+    const flush = () => {
+      if(run.length > 1) d += smoothPath(run) + ' ';
+      else if(run.length === 1) d += `M${run[0][0].toFixed(1)},${run[0][1].toFixed(1)} `;
+      run = [];
+    };
     vs.forEach((v,i) => {
-      if(v === null || !isFinite(v)){ pen = false; return; }
-      d += `${pen ? 'L' : 'M'}${px(i).toFixed(1)},${py(v).toFixed(1)} `; pen = true;
+      if(v === null || !isFinite(v)){ flush(); return; }
+      run.push([px(i), py(v)]);
     });
-    lines += `<path class="ln" stroke="${col}" d="${d.trim()}"${
+    flush();
+    lines += `<path class="ln" data-ln="${ri}" stroke="${col}" d="${d.trim()}"${
       thin ? ` stroke-width="1.1" stroke-opacity="${vals.length > 60 ? .42 : .6}"` : ''}/>`;
     if(dates.length === 1 && vs[0] !== null)
       lines += `<circle class="pt" cx="${px(0)}" cy="${py(vs[0])}" r="4" fill="${col}"/>`;
+    // Where this row's line actually finishes, for the rank chip.
+    for(let i = vs.length - 1; i >= 0; i--)
+      if(vs[i] !== null && isFinite(vs[i])){ ends.push({ri, x: px(i), y: py(vs[i]), col}); break; }
   });
+  /* A number at the end of each line, matching the number in the legend. The rows here
+     are ad names forty characters long — printing those on the chart would bury it — but
+     six anonymous colours are no better, and the whole difficulty is holding "which line
+     is which" while looking somewhere else. Only while the chart is readable at all:
+     past a dozen lines this is noise on top of noise. */
+  let chips = '';
+  if(ends.length <= 12){
+    const GAP = 13;
+    ends.sort((a, b) => a.y - b.y);
+    for(let i = 1; i < ends.length; i++)
+      if(ends[i].y - ends[i-1].y < GAP) ends[i].y = ends[i-1].y + GAP;
+    const over = ends.length ? ends[ends.length-1].y - (H - Bt) : 0;
+    if(over > 0) for(const e of ends) e.y = Math.max(Tp + 5, e.y - over);
+    chips = ends.map(e => `<text class="endlbl" x="${Math.min(e.x + 7, W - 4).toFixed(1)}"
+      y="${(e.y + 3).toFixed(1)}" fill="${e.col}">${e.ri + 1}</text>`).join('');
+  }
   /* A legend of 284 names is not a legend. Past LEGEND_MAX it names the biggest and
      says how many it did not -- the hover read-out is how you identify the rest. */
   const shown = rows.slice(0, LEGEND_MAX);
   const legend = shown.map((r,i) => {
     const col = LINE_COLOURS[i % LINE_COLOURS.length], tv = rowTotal(r);
-    return `<span class="it"><i class="sw" style="border-color:${col}"></i>
+    return `<span class="it tln" data-ln="${i}"><i class="rkn" style="background:${col}"
+        >${i + 1}</i>
       <b title="${(r.label||'').replace(/"/g,'&quot;')}">${r.label||'—'}</b>
       <em>· ${r.platform}${r.stage ? ' · '+r.stage : ''} · ${
         tv===null ? '—' : m.fmt(tv)}</em></span>`; }).join('')
@@ -3291,10 +3332,25 @@ function renderTrends(){
       when you change metric.${thin ? ` Drawn thin because there are ${rows.length} of
       them — hover any day to read the biggest ${TIP_MAX} there by name.` : ''}</p>
     <div class="chartbox" id="chartbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
-      ${g}${lines}</svg><div class="xhair" id="xhair"></div>
+      ${g}${lines}${chips}</svg><div class="xhair" id="xhair"></div>
       <div id="hdots"></div><div class="ttip" id="ttip"></div></div>
     <div class="legend">${legend}</div></div>`;
   bindTrendHover();
+  const cbox = document.getElementById('chartbox');
+  drawOn(cbox, 'path.ln');
+  /* Pointing at a row in the legend pulls its line out of the pile — the same gesture the
+     hourly chart uses, and the reason the numbers are there. */
+  box.querySelectorAll('.legend .tln').forEach(el => {
+    el.onmouseenter = () => {
+      cbox.classList.add('focus');
+      cbox.querySelectorAll('path.ln').forEach(
+        p => p.classList.toggle('hi', p.dataset.ln === el.dataset.ln));
+    };
+    el.onmouseleave = () => {
+      cbox.classList.remove('focus');
+      cbox.querySelectorAll('path.ln.hi').forEach(p => p.classList.remove('hi'));
+    };
+  });
 }
 
 /* ---------- trend hover read-out ---------- */
