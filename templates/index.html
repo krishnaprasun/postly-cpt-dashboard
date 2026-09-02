@@ -114,6 +114,10 @@ td.sparkcell{padding:4px 13px;width:126px}
   width:282px;background:var(--white);border:1px solid var(--line);border-radius:12px;
   box-shadow:0 12px 34px rgba(26,28,46,.13);padding:7px}
 .expwrap.on .expmenu{display:block}
+.expmenu .colrow{display:flex;align-items:center;gap:8px;padding:5px 9px;border-radius:8px;
+  font-size:12.5px;font-weight:550;color:var(--ink);cursor:pointer}
+.expmenu .colrow:hover{background:var(--accent-lt);color:var(--accent-dk)}
+.segsw.shapesw button{padding:5px 11px;font-size:12px}
 .expmenu .exph{font-size:10px;text-transform:uppercase;letter-spacing:.8px;
   color:var(--faint);font-weight:700;padding:6px 9px 5px}
 .expmenu button{display:flex;justify-content:space-between;align-items:baseline;gap:10px;
@@ -926,12 +930,33 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
   </div>
 
   <div class="ctl" id="sctl" style="display:none">
+    <!-- Totals answers "which of these is best over the range", by-day answers "when did
+         it change". Same rows, same range, same level — one toggle rather than two tabs
+         that would drift apart. -->
+    <div class="segsw shapesw" id="shapesw">
+      <button data-sh="totals" class="on">Totals</button>
+      <button data-sh="day">By day</button>
+    </div>
     <select class="sel" id="sWin">
       <option value="7">Last 7 days</option>
       <option value="14">Last 14 days</option>
       <option value="30" selected>Last 30 days</option>
       <option value="60">Last 60 days</option>
+      <option value="custom">Custom range…</option>
     </select>
+    <span class="dtwrap" id="sCustom" style="display:none">
+      <input type="date" id="sSince" aria-label="Start date">
+      <span class="arw">→</span>
+      <input type="date" id="sUntil" aria-label="End date">
+      <button class="btn sm go" id="sGo">Apply</button>
+    </span>
+    <!-- Columns, not one metric: the question is rarely about a single number, and having
+         to change a dropdown to see whether the cheap one also had the clicks is how a
+         reader ends up comparing two screens from memory. -->
+    <div class="expwrap" id="colwrap">
+      <button class="btn sm" id="colBtn">Metrics ▾</button>
+      <div class="expmenu" id="colMenu"><div class="exph">Columns</div></div>
+    </div>
     <label class="chk">Dimension
       <select class="sel" id="sDim" style="margin-left:6px">
         <option value="script" selected data-c="meta">Script (ad name)</option>
@@ -2577,7 +2602,22 @@ let TCH = null;                      // what the trend hover read-out needs
    window. Following the picker meant opening Trends on its default of "Today" and being
    shown a single point and a paragraph explaining why it was useless. */
 const sWin = () => document.getElementById('sWin').value;
-const seriesKey = () => `${CHAN}|${BRAND}|${sWin()}|${sDim()}`;
+/* A typed range is sent as dates, anything else as a day count; both go into the cache
+   key so switching between them never serves one window's fold under another's heading. */
+const sRange = () => ({since: document.getElementById('sSince').value,
+                       until: document.getElementById('sUntil').value});
+function sWinQuery(){
+  if(sWin() !== 'custom') return `days=${sWin()}`;
+  const {since, until} = sRange();
+  return since && until ? `since=${since}&until=${until}` : 'days=30';
+}
+const seriesKey = () => `${CHAN}|${BRAND}|${sWin()}|${
+  sWin() === 'custom' ? sRange().since + '_' + sRange().until : ''}|${sDim()}`;
+
+/* Which shape the grid is in, and which metrics are columns in the totals shape. Spend,
+   trials and CPT to begin with: the three every conversation here starts from. */
+let SHAPE = 'totals';
+let MCOLS = ['spend', 't101', 'cpt'];
 const seriesFresh = () => !!(SERIES && SERIESKEY === seriesKey());
 const sDim = () => document.getElementById('sDim').value;
 const sMetric = () => document.getElementById('sMetric').value;
@@ -2705,7 +2745,52 @@ function sMetricAvail(){
    sets in it, and Budget/day stays greyed out because the last thing to judge it was the
    Script fold. It looked like the feature was broken. */
 function seriesControls(){
-  sDimAvail(); sActiveAvail(); sMetricAvail();
+  sDimAvail(); sActiveAvail(); sMetricAvail(); shapeControls();
+}
+
+/* The two shapes want different controls: totals wants a set of columns, by-day wants one
+   metric and a grain. Showing both at once left two pickers on screen where only one did
+   anything. */
+function shapeControls(){
+  const onMatrix = TAB === 'matrix';
+  document.getElementById('shapesw').style.display = onMatrix ? 'inline-flex' : 'none';
+  const totals = onMatrix && SHAPE === 'totals';
+  document.getElementById('colwrap').style.display = totals ? '' : 'none';
+  const mw = document.getElementById('sMetric').parentElement;
+  mw.style.display = totals ? 'none' : '';
+  document.getElementById('sCustom').style.display =
+    sWin() === 'custom' ? 'inline-flex' : 'none';
+  for(const b of document.getElementById('shapesw').children)
+    b.classList.toggle('on', b.dataset.sh === SHAPE);
+  if(totals) fillColMenu();
+}
+
+/* Built from the same METRICS map the by-day view uses, minus whatever this channel
+   cannot produce — an option that cannot exist here is not a disabled choice. */
+function fillColMenu(){
+  const menu = document.getElementById('colMenu');
+  const want = chanIsMeta() ? 'meta' : 'google';
+  const avail = Object.keys(METRICS).filter(k => {
+    const o = document.querySelector(`#sMetric option[value="${k}"]`);
+    return !o || !o.dataset.c || o.dataset.c === want;
+  });
+  const sig = avail.join('|') + '::' + MCOLS.join('|');
+  if(menu.dataset.sig === sig) return;
+  menu.dataset.sig = sig;
+  menu.innerHTML = `<div class="exph">Columns</div>` + avail.map(k =>
+    `<label class="colrow"><input type="checkbox" data-col="${k}"${
+      MCOLS.includes(k) ? ' checked' : ''}> ${METRICS[k].label}</label>`).join('');
+  menu.querySelectorAll('input[data-col]').forEach(el => el.onchange = () => {
+    const k = el.dataset.col;
+    if(el.checked){ if(!MCOLS.includes(k)) MCOLS.push(k); }
+    else MCOLS = MCOLS.filter(x => x !== k);
+    // Never leave the table with no numbers in it.
+    if(!MCOLS.length){ MCOLS = ['spend']; el.parentElement.parentElement
+      .querySelector('input[data-col="spend"]').checked = true; }
+    if(!MCOLS.includes(MSORT.key)) MSORT = {key: MCOLS[0], dir: -1};
+    menu.dataset.sig = '';
+    renderTotals();
+  });
 }
 
 function sActiveAvail(){
@@ -2733,6 +2818,9 @@ function matrixRows(){
                  : k === 'stage' ? (r.stage || '')
                  : k === 'total' ? rowTotal(r)
                  : k === 'spend' ? r.total_spend
+                 /* In the totals shape a sort key is a METRIC, not a date: "sort by CPT"
+                    has to mean the range's CPT, not the CPT of a day called "cpt". */
+                 : (SHAPE === 'totals' && METRICS[k]) ? metricTotal(r, k)
                  : m.of(r.days[k]);
   rows.sort((a, b) => {
     const x = val(a), y = val(b);
@@ -2798,7 +2886,7 @@ async function loadSeries(force, quiet){
        below this line -- the chart, the grid, paging, sorting, the hover read-out, the
        export -- is untouched by which channel is on screen. */
     const path = chanIsMeta() ? '/api/series' : '/api/google/series';
-    const r = await fetch(`${path}?brand=${BRAND}&days=${sWin()}&dim=${sDim()}${
+    const r = await fetch(`${path}?brand=${BRAND}&${sWinQuery()}&dim=${sDim()}${
       force && !quiet ? '&force=1' : ''}${K}`);
     const j = await r.json();
     if(j.error){ document.getElementById('scount').textContent = 'failed: ' + j.error; return; }
@@ -3186,6 +3274,113 @@ function bindTrendHover(){
     const ty = e.clientY - r.top - th / 2;
     tip.style.top = Math.max(0, Math.min(r.height - th, ty)).toFixed(1) + 'px';
   };
+}
+
+/* One row per thing, one column per chosen metric, totalled over the range. Rates are
+   recomputed from their own components rather than averaged: a mean of daily CPTs weights
+   a Rs200 day the same as a Rs2 lakh one, which is how a row with one cheap Tuesday ends
+   up looking like the best ad set of the month. */
+function metricTotal(r, key){
+  const m = METRICS[key];
+  if(!m) return null;
+  if(m.agg) return m.agg(r.total_spend, rowSums(r));
+  if(key === 'spend') return r.total_spend;
+  const v = r['total_' + key];
+  return v === undefined ? null : v;
+}
+
+function sumRows(rows, key){
+  const m = METRICS[key];
+  const sums = rows.reduce((a, r) => {
+    a.spend += r.total_spend || 0;
+    for(const k of ['t101','inst','imp','clk','isp','vv','tp','vimp','gconv','bud']){
+      const v = r['total_' + k];
+      if(v != null){ a[k] = (a[k] || 0) + v; a.has[k] = true; }
+    }
+    return a;
+  }, {spend: 0, has: {}});
+  if(m && m.agg) return m.agg(sums.spend, sums);
+  if(key === 'spend') return sums.spend;
+  return sums.has[key] ? sums[key] : null;
+}
+
+function renderTotals(){
+  const box = document.getElementById('matrixWrap');
+  if(!SERIES){
+    box.innerHTML = SERIESBUSY
+      ? `<div class="panel" style="padding-bottom:10px">
+           <h3><span class="skl" style="width:230px;display:inline-block"></span></h3>
+           <p class="sub"><span class="skl" style="width:55%;display:inline-block"></span></p>
+         </div>
+         <div class="mwrap"><table class="mx"><tbody>${
+           sklRows(['240px','58px','54px','76px','76px','76px'], 9)}</tbody></table></div>`
+      : `<div class="panel"><p class="sub">No data for this window.</p></div>`;
+    document.getElementById('scount').textContent = SERIESBUSY ? CNT : '';
+    return;
+  }
+  const all = matrixRows(), pages = mPages(all.length);
+  if(MPAGE >= pages) MPAGE = pages - 1;
+  if(MPAGE < 0) MPAGE = 0;
+  const from = MPER ? MPAGE * MPER : 0;
+  const rows = MPER ? all.slice(from, from + MPER) : all;
+  document.getElementById('scount').textContent = all.length
+    ? `${all.length} row(s) · showing ${from + 1}–${from + rows.length}`
+    : '0 rows';
+  const cols = MCOLS.filter(k => METRICS[k]);
+  const arrow = k => MSORT.key === k ? (MSORT.dir < 0 ? ' ↓' : ' ↑') : '';
+  const th = (k, label, cls) =>
+    `<th data-mk="${k}" class="${[cls, MSORT.key === k ? 'sorted' : ''].filter(Boolean)
+      .join(' ')}">${label}${arrow(k)}</th>`;
+  const head = `<tr>${th('name', (SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim, 'l pin')}
+    ${th('platform', 'Platform', 'l')}${th('stage', 'Stage', 'l')}
+    ${cols.map(k => th(k, METRICS[k].label)).join('')}</tr>`;
+  const body = rows.map((r, i) => {
+    const url = (SERIES.dim === 'script' && r.ad) ? adMedia(r.ad) : null;
+    return `<tr>
+      <td class="l pin nm" title="${(r.label||'').replace(/"/g,'&quot;')}"><span class="rk"
+        >${from + i + 1}</span>${url
+          ? `<a class="fbl" href="${url}" target="_blank" rel="noopener noreferrer"
+               title="Open the creative">${r.label||'—'}</a>` : (r.label||'—')}</td>
+      <td class="l">${r.platform}</td><td class="l">${r.stage||'—'}</td>
+      ${cols.map(k => { const v = metricTotal(r, k);
+        const heat = (k === 'cpt' || k === 'cpi') ? ` class="heat ${cls(v)}"` : '';
+        return `<td${heat}>${v === null || v === undefined || !isFinite(v)
+          ? '<span class="z">—</span>' : METRICS[k].fmt(v)}</td>`; }).join('')}</tr>`;
+  }).join('');
+  const foot = (set, label, cl) => `<tr${cl ? ` class="${cl}"` : ''}>
+    <td class="l pin">${label}</td><td></td><td></td>
+    ${cols.map(k => { const v = sumRows(set, k);
+      return `<td>${v === null || !isFinite(v) ? '—' : METRICS[k].fmt(v)}</td>`; }).join('')}</tr>`;
+  const pager = pages > 1 ? `<div class="pager">
+      <button class="btn sm" data-mp="first" ${MPAGE?'':'disabled'}>&laquo; First</button>
+      <button class="btn sm" data-mp="prev" ${MPAGE?'':'disabled'}>&lsaquo; Prev</button>
+      <span class="meta">Page ${MPAGE+1} of ${pages}</span>
+      <button class="btn sm" data-mp="next" ${MPAGE<pages-1?'':'disabled'}>Next &rsaquo;</button>
+      <button class="btn sm" data-mp="last" ${MPAGE<pages-1?'':'disabled'}>Last &raquo;</button>
+    </div>` : '';
+  box.innerHTML = `<div class="panel" style="padding-bottom:10px">
+      <h3>${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim} totals · ${
+        SERIES.since} to ${SERIES.until}</h3>
+      <p class="sub">${num(all.length)} row(s), each one totalled over the whole range.
+        Rates are worked out from their own components over the range — CPT is the range's
+        spend over the range's trials, not an average of daily CPTs. Click a column to sort
+        by it, or <b>By day</b> to see when a number moved.</p></div>
+    <div class="mwrap"><table class="mx"><thead>${head}</thead>
+      <tbody>${body || `<tr><td class="l" colspan="${cols.length+3}">No rows match.</td></tr>`}</tbody>
+      <tfoot>${rows.length ? foot(rows, `THIS PAGE · ${rows.length} row(s)`) : ''}${
+        all.length > rows.length ? foot(all, `ALL ${num(all.length)} ROWS`, 'grand') : ''
+      }</tfoot></table></div>${pager}`;
+  box.querySelectorAll('thead th').forEach(el => el.onclick = () => {
+    const k = el.dataset.mk;
+    MSORT = {key: k, dir: MSORT.key === k ? -MSORT.dir
+                       : (k==='name'||k==='platform'||k==='stage' ? 1 : -1)};
+    MPAGE = 0; renderTotals();
+  });
+  box.querySelectorAll('.pager button').forEach(el => el.onclick = () => {
+    const w = el.dataset.mp;
+    MPAGE = w==='first' ? 0 : w==='last' ? pages-1 : w==='prev' ? MPAGE-1 : MPAGE+1;
+    renderTotals();
+  });
 }
 
 function renderMatrix(){
@@ -3963,7 +4158,9 @@ function renderTable(){
       (TAB === 'trends' && grain() === 'hour') ? 'inline-flex' : 'none';
     if(TAB === 'trends' && grain() === 'hour' && !HOURLY && !HOURLYBUSY) loadHourly(false);
     seriesControls();
-    if(TAB==='trends') renderTrends(); else renderMatrix();
+    if(TAB === 'trends') renderTrends();
+    else if(SHAPE === 'totals') renderTotals();
+    else renderMatrix();
     return;
   }
   if(TAB==='longevity'){
@@ -4886,7 +5083,47 @@ document.getElementById('tabs').onclick = e => {
 };
 /* Dimension changes the fold, so it re-fetches. Metric and the filters are pure
    re-renders of an answer already in hand. */
-document.getElementById('sWin').onchange = () => { MPAGE = 0; loadSeries(false); };
+document.getElementById('sWin').onchange = () => {
+  const custom = sWin() === 'custom';
+  document.getElementById('sCustom').style.display = custom ? 'inline-flex' : 'none';
+  if(custom){
+    // Seed from the window being left, so a typed range starts from what is on screen
+    // rather than from two empty boxes.
+    const si = document.getElementById('sSince'), ui = document.getElementById('sUntil');
+    if(!si.value || !ui.value){
+      si.value = (SERIES && SERIES.since) || ''; ui.value = (SERIES && SERIES.until) || '';
+    }
+    return;                                   // nothing to fetch until Apply
+  }
+  MPAGE = 0; loadSeries(false);
+};
+document.getElementById('sGo').onclick = () => {
+  const {since, until} = sRange();
+  if(!since || !until) return;
+  if(since > until){
+    document.getElementById('scount').textContent = 'start date is after the end date';
+    return;
+  }
+  MPAGE = 0; loadSeries(false);
+};
+document.getElementById('shapesw').onclick = e => {
+  const b = e.target.closest('button[data-sh]');
+  if(!b || b.dataset.sh === SHAPE) return;
+  SHAPE = b.dataset.sh;
+  /* Sort keys do not survive the switch: "sort by 22 Aug" means nothing in a totals table
+     and "sort by CPT" means nothing in a grid of dates. */
+  MSORT = {key: SHAPE === 'totals' ? (MCOLS[0] || 'spend') : 'spend', dir: -1};
+  MPAGE = 0; seriesControls(); renderTable(); noteFor();
+};
+const colWrap = document.getElementById('colwrap');
+document.getElementById('colBtn').onclick = e => {
+  e.stopPropagation();
+  const open = !colWrap.classList.contains('on');
+  colWrap.classList.toggle('on', open);
+  if(open) placeMenu(document.getElementById('colBtn'), document.getElementById('colMenu'));
+};
+document.getElementById('colMenu').onclick = e => e.stopPropagation();
+document.addEventListener('click', () => colWrap.classList.remove('on'));
 document.getElementById('sDim').onchange = () => {
   /* A new dimension has different columns to sort by, and "sort by 12 Aug" carried over
      from the last one would silently mean a different grid. */
@@ -5017,6 +5254,16 @@ document.getElementById('expBtn').onclick = e => {
    sits on the right of the header — once the header wrapped onto two rows the button
    moved to the left edge and the menu rendered off-screen. Measuring at open time works
    wherever the button has ended up. */
+/* Positioned against the viewport for both menus, for the reason below: a wrapper that
+   moves when the header wraps takes an absolutely-placed menu off-screen with it. */
+function placeMenu(btn, menu){
+  if(!btn || !menu) return;
+  const r = btn.getBoundingClientRect(), w = menu.offsetWidth || 282, pad = 10;
+  let left = Math.min(Math.max(r.right - w, pad), window.innerWidth - w - pad);
+  menu.style.left = Math.round(left) + 'px';
+  menu.style.top = Math.round(r.bottom + 7) + 'px';
+}
+
 function placeExpMenu(){
   const btn = document.getElementById('expBtn'), menu = document.getElementById('expMenu');
   if(!btn || !menu) return;
