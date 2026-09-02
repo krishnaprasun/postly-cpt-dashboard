@@ -855,7 +855,7 @@ _open_cache, _open_lock = {}, threading.Lock()
 
 
 def budget_open(brand, day):
-    """What the day's budget was when it started, from the first slot recorded.
+    """What that day's budget was when it started, from the first slot recorded.
 
     The live budget is the budget of what is switched on RIGHT NOW, and dividing a whole
     day's spend by it is not a percentage of anything: Postly spent Rs1.93L on 1 Sept
@@ -1166,7 +1166,7 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 # Every other stored artifact already carries a stamp (PRORATA_MODEL, SERIES_SHAPE,
 # row_cap); the payload was the one that did not, and adding video is what found it.
 #   2 - hook rate and ThruPlay (vv / tp / vimp) at every level
-PAYLOAD_SHAPE = 5
+PAYLOAD_SHAPE = 6
 
 
 def has_vid(r):
@@ -4353,12 +4353,15 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         "trials_as_of": _as_of_str(prov.get("branch_at")),
         "trials_age_sec": _age_of(prov.get("branch_at")),
         "all_stored": prov.get("meta_at") is None,
-        # What the day's budget was when the day started, so a whole day's spend has a
-        # denominator that was actually in force while it was being spent. Only for a
-        # window that IS today: over a longer window the tile shows a per-day average and
-        # this would answer a question nobody asked.
-        "budget_open": (budget_open(brand, until)
-                        if since == until == today_ist() else None),
+        # What the day's budget was when that day started, so a day's spend has a
+        # denominator that was in force while it was being spent. ANY single day, not just
+        # today: on a past day the live roster is a fact about this minute and has nothing
+        # to do with what was running then — Yesterday was reading today's budget, taken at
+        # 02:02 this morning, against yesterday's whole spend. Over a multi-day window the
+        # tile shows a per-day average and this would answer a question nobody asked.
+        "budget_open": budget_open(brand, until) if since == until else None,
+        "budget_day": until if since == until else None,
+        "budget_is_today": since == until == today_ist(),
         "budget_age_sec": budget_age,
         "budget_as_of": (datetime.fromtimestamp(time.time() - budget_age, IST)
                          .strftime("%H:%M") if budget_age is not None else ""),

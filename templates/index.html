@@ -1899,12 +1899,20 @@ function kpis(){
    <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend${srcBtn('meta')}</div>
      <div class="v">${rs(sp)}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
-       : !DATA.budgets_known ? 'budget unavailable — partial data'
        : paceOpen !== null
-             ? `${rs(bOpen.total)} budget at ${bOpen.at} · ${paceOpen.toFixed(0)}% used
-                · <span title="Budget of the ad sets switched on right now. Lower than the
-                  morning's whenever ad sets have been paused during the day."
-                  >${rs(c.budget)} live now</span>${budgetAge()}`
+             ? `${rs(bOpen.total)} budget at ${bOpen.at} · ${paceOpen.toFixed(0)}% used${
+                DATA.budget_is_today
+                  /* Only today has a "live now": on a past day the roster describes this
+                     minute and says nothing about what was running then. */
+                  ? ` · <span title="Budget of the ad sets switched on right now. Lower
+                       than the morning's whenever ad sets have been paused during the
+                       day.">${rs(c.budget)} live now</span>${budgetAge()}` : ''}`
+       /* A past day with no snapshot gets no budget line rather than today's. The live
+          roster was the only number to hand, and against yesterday's spend it produced a
+          percentage of the wrong thing. */
+       : (DATA.budget_day && !DATA.budget_is_today)
+             ? `no budget snapshot for ${DATA.budget_day}`
+       : !DATA.budgets_known ? 'budget unavailable — partial data'
              : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
    (trials ? `
    <div class="kpi"><div class="k">Trials${modLbl}${srcBtn('trials')}</div>
