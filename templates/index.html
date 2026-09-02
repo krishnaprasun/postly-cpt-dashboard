@@ -931,14 +931,7 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <option value="14">Last 14 days</option>
       <option value="30" selected>Last 30 days</option>
       <option value="60">Last 60 days</option>
-      <option value="custom">Custom range…</option>
     </select>
-    <span class="dtwrap" id="sCustom" style="display:none">
-      <input type="date" id="sSince" aria-label="Grid start date">
-      <span class="arw">→</span>
-      <input type="date" id="sUntil" aria-label="Grid end date">
-      <button class="btn sm go" id="sGo">Apply</button>
-    </span>
     <label class="chk">Dimension
       <select class="sel" id="sDim" style="margin-left:6px">
         <option value="script" selected data-c="meta">Script (ad name)</option>
@@ -2330,7 +2323,7 @@ const chanIsMeta = () => CHAN === 'meta';
 const CHAN_TABS = {
   meta: null,                                   // null = everything
   google: ['campaigns', 'adsets', 'trends', 'matrix'],  // adsets = "Ad groups"
-  blended: ['combined', 'campaigns', 'trends', 'matrix'],
+  blended: ['combined', 'campaigns'],
 };
 const CHAN_LABEL = {meta: 'Meta', google: 'Google', blended: 'Meta + Google'};
 const CHAN_CHIP = {
@@ -2584,17 +2577,7 @@ let TCH = null;                      // what the trend hover read-out needs
    window. Following the picker meant opening Trends on its default of "Today" and being
    shown a single point and a paragraph explaining why it was useless. */
 const sWin = () => document.getElementById('sWin').value;
-/* A typed range is passed as dates; anything else is a day count. Both go into the cache
-   key, so switching between them never serves one window's fold under another's heading. */
-const sRange = () => ({since: document.getElementById('sSince').value,
-                       until: document.getElementById('sUntil').value});
-function sWinQuery(){
-  if(sWin() !== 'custom') return `days=${sWin()}`;
-  const {since, until} = sRange();
-  return since && until ? `since=${since}&until=${until}` : `days=30`;
-}
-const seriesKey = () => `${CHAN}|${BRAND}|${sWin()}|${
-  sWin() === 'custom' ? sRange().since + '_' + sRange().until : ''}|${sDim()}`;
+const seriesKey = () => `${CHAN}|${BRAND}|${sWin()}|${sDim()}`;
 const seriesFresh = () => !!(SERIES && SERIESKEY === seriesKey());
 const sDim = () => document.getElementById('sDim').value;
 const sMetric = () => document.getElementById('sMetric').value;
@@ -2670,17 +2653,6 @@ function seriesRows(){
    the Google endpoint for a dimension it has never heard of. */
 function sDimAvail(){
   const sel = document.getElementById('sDim');
-  /* Blended is campaign-level and nothing finer: an ad set and an ad group are not the
-     same object, and offering either would promise a row the other channel cannot fill.
-     The picker is pinned rather than hidden so it still says what you are looking at. */
-  if(CHAN === 'blended'){
-    for(const o of sel.options){
-      const mine = o.value === 'campaign';
-      o.hidden = !mine; o.disabled = !mine;
-    }
-    sel.value = 'campaign';
-    return;
-  }
   const want = chanIsMeta() ? 'meta' : 'google';
   let ok = false;
   for(const o of sel.options){
@@ -2825,9 +2797,8 @@ async function loadSeries(force, quiet){
     /* Google's series is a different endpoint returning the SAME shape, so everything
        below this line -- the chart, the grid, paging, sorting, the hover read-out, the
        export -- is untouched by which channel is on screen. */
-    const path = CHAN === 'blended' ? '/api/blended/series'
-               : chanIsMeta() ? '/api/series' : '/api/google/series';
-    const r = await fetch(`${path}?brand=${BRAND}&${sWinQuery()}&dim=${sDim()}${
+    const path = chanIsMeta() ? '/api/series' : '/api/google/series';
+    const r = await fetch(`${path}?brand=${BRAND}&days=${sWin()}&dim=${sDim()}${
       force && !quiet ? '&force=1' : ''}${K}`);
     const j = await r.json();
     if(j.error){ document.getElementById('scount').textContent = 'failed: ' + j.error; return; }
@@ -3936,8 +3907,6 @@ function renderTable(){
   document.getElementById('gctl').style.display =
     (CHAN === 'google' && TAB !== 'combined') ? 'flex' : 'none';
   document.getElementById('sctl').style.display = isSeries ? 'flex' : 'none';
-  document.getElementById('sCustom').style.display =
-    (isSeries && sWin() === 'custom') ? 'inline-flex' : 'none';
   document.getElementById('trendsWrap').style.display = TAB==='trends' ? 'block' : 'none';
   document.getElementById('matrixWrap').style.display = TAB==='matrix' ? 'block' : 'none';
   document.getElementById('tblWrap').style.display = isSeries ? 'none' : 'block';
@@ -4917,27 +4886,7 @@ document.getElementById('tabs').onclick = e => {
 };
 /* Dimension changes the fold, so it re-fetches. Metric and the filters are pure
    re-renders of an answer already in hand. */
-document.getElementById('sWin').onchange = () => {
-  const custom = sWin() === 'custom';
-  document.getElementById('sCustom').style.display = custom ? 'inline-flex' : 'none';
-  if(custom){
-    // Seed the boxes with the window being left, so "custom" starts from what is on
-    // screen rather than from empty fields.
-    const si = document.getElementById('sSince'), ui = document.getElementById('sUntil');
-    if(!si.value || !ui.value){
-      si.value = (SERIES && SERIES.since) || ''; ui.value = (SERIES && SERIES.until) || '';
-    }
-    return;                       // nothing to fetch until Apply
-  }
-  MPAGE = 0; loadSeries(false);
-};
-document.getElementById('sGo').onclick = () => {
-  const {since, until} = sRange();
-  if(!since || !until) return;
-  if(since > until){ document.getElementById('scount').textContent =
-    'start date is after the end date'; return; }
-  MPAGE = 0; loadSeries(false);
-};
+document.getElementById('sWin').onchange = () => { MPAGE = 0; loadSeries(false); };
 document.getElementById('sDim').onchange = () => {
   /* A new dimension has different columns to sort by, and "sort by 12 Aug" carried over
      from the last one would silently mean a different grid. */
