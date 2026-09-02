@@ -1684,7 +1684,8 @@ function glide(sw){
   if(sw.id === 'chansw') g.dataset.c = on.dataset.c;
 }
 function glideAll(){
-  ['brandsw', 'chansw', 'segsw'].forEach(id => glide(document.getElementById(id)));
+  ['brandsw', 'chansw', 'segsw', 'shapesw'].forEach(
+    id => glide(document.getElementById(id)));
 }
 addEventListener('resize', glideAll);
 
@@ -2760,8 +2761,12 @@ function shapeControls(){
   mw.style.display = totals ? 'none' : '';
   document.getElementById('sCustom').style.display =
     sWin() === 'custom' ? 'inline-flex' : 'none';
-  for(const b of document.getElementById('shapesw').children)
-    b.classList.toggle('on', b.dataset.sh === SHAPE);
+  const sw = document.getElementById('shapesw');
+  for(const b of sw.children)
+    if(b.dataset.sh) b.classList.toggle('on', b.dataset.sh === SHAPE);
+  /* The pill is what carries the selected colour — `.segsw button.on` is transparent by
+     design, so a switch without one renders its active label white on a pale track. */
+  glide(sw);
   if(totals) fillColMenu();
 }
 
@@ -3315,7 +3320,7 @@ function renderTotals(){
          <div class="mwrap"><table class="mx"><tbody>${
            sklRows(['240px','58px','54px','76px','76px','76px'], 9)}</tbody></table></div>`
       : `<div class="panel"><p class="sub">No data for this window.</p></div>`;
-    document.getElementById('scount').textContent = SERIESBUSY ? CNT : '';
+    document.getElementById('scount').innerHTML = SERIESBUSY ? CNT : '';
     return;
   }
   const all = matrixRows(), pages = mPages(all.length);
