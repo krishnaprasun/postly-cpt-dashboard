@@ -570,6 +570,11 @@ table.coh tbody tr.prov td{background:var(--line2)}
 /* Legend chips that are also the control: click a day out of the chart to compare the
    rest. `out` keeps the day readable but plainly switched off, so nobody wonders whether
    the line is missing or hidden. */
+/* The day at the end of its own line. Halo so it stays readable where lines cross. */
+.chartbox .endlbl{font-size:9.5px;font-weight:700;paint-order:stroke;
+  stroke:var(--white);stroke-width:3px;stroke-linejoin:round}
+.chartbox.focus path.ln{stroke-opacity:.13;transition:stroke-opacity .15s ease}
+.chartbox.focus path.ln.hi{stroke-opacity:1;stroke-width:3}
 .legend button.hleg{display:inline-flex;align-items:center;gap:6px;max-width:100%;
   background:none;border:0;padding:2px 4px;border-radius:6px;font:inherit;color:inherit;
   cursor:pointer}
@@ -2978,7 +2983,7 @@ function renderHourly(){
     return cell.spend / dt;
   }
 
-  const W = 900, H = 260, L = 58, R = 14, T = 14, Bm = 26;
+  const W = 900, H = 260, L = 58, R = 54, T = 14, Bm = 26;
   let max = 0, any = false;
   for(const d of days){ if(off(d)) continue; for(let h = 0; h < 24; h++){
     const v = valueAt(d, h);
@@ -2995,27 +3000,51 @@ function renderHourly(){
   const x = h => L + (h * (W - L - R)) / 23;
   const y = v => T + (1 - v / top) * (H - T - Bm);
   let drawn = 0, seen = 0;
+  /* Catmull-Rom through the points, converted to cubic Béziers. Spend does not jump
+     between hours in straight lines, and the kinked polyline made every crossing look
+     like an event. The control points are clamped to the two hours they sit between, so a
+     smooth curve can never invent a peak that was not in the data or dip below zero. */
+  function curve(pts){
+    if(pts.length < 2) return '';
+    let d = `M${pts[0][0]},${pts[0][1]}`;
+    for(let i = 0; i < pts.length - 1; i++){
+      const p0 = pts[i - 1] || pts[i], p1 = pts[i], p2 = pts[i + 1],
+            p3 = pts[i + 2] || p2;
+      const lo = Math.min(p1[1], p2[1]), hi = Math.max(p1[1], p2[1]);
+      const c1y = Math.max(lo, Math.min(hi, p1[1] + (p2[1] - p0[1]) / 6));
+      const c2y = Math.max(lo, Math.min(hi, p2[1] - (p3[1] - p1[1]) / 6));
+      d += ` C${(p1[0] + (p2[0] - p0[0]) / 6).toFixed(1)},${c1y.toFixed(1)}` +
+           ` ${(p2[0] - (p3[0] - p1[0]) / 6).toFixed(1)},${c2y.toFixed(1)}` +
+           ` ${p2[0].toFixed(1)},${p2[1].toFixed(1)}`;
+    }
+    return d;
+  }
+
+  const ends = [];
   const line = (d, i) => {
     if(off(d)) return '';
     const pts = [];
     for(let h = 0; h < 24; h++){
       const v = valueAt(d, h);
       if(v === null) continue;               // an hour with no reading is a gap, not a zero
-      pts.push(`${x(h).toFixed(1)},${y(v).toFixed(1)}`);
+      pts.push([x(h), y(v)]);
     }
     seen += pts.length;
     /* One point is a day that has only just begun — a dot, not a line, because a line
        needs two hours and dropping it entirely makes today look like it never ran. */
     if(pts.length === 1){
       drawn++;
-      const [cx, cy] = pts[0].split(',');
-      return `<circle cx="${cx}" cy="${cy}" r="4" fill="${dayCol(i)}"/>`;
+      ends.push({d, i, x: pts[0][0], y: pts[0][1]});
+      return `<circle class="dot" cx="${pts[0][0].toFixed(1)}" cy="${pts[0][1].toFixed(1)}"
+        r="4" fill="${dayCol(i)}"/>`;
     }
     if(pts.length < 2) return '';
     drawn++;
     const last = i === days.length - 1;
-    return `<path class="ln" d="M${pts.join(' L')}" stroke="${dayCol(i)}"
-      stroke-width="${last ? 2.6 : 1.5}"${last ? '' : ' stroke-opacity=".85"'}/>`;
+    const e = pts[pts.length - 1];
+    ends.push({d, i, x: e[0], y: e[1]});
+    return `<path class="ln" data-day="${d}" d="${curve(pts)}" stroke="${dayCol(i)}"
+      stroke-width="${last ? 2.8 : 1.6}"${last ? '' : ' stroke-opacity=".9"'}/>`;
   };
   const gy = Array.from({length: 5}, (_, i) => {
     const v = top * i / 4;
@@ -3049,6 +3078,37 @@ function renderHourly(){
       i === days.length - 1 ? ' (today)' : ''} · ${dayTot(d)}</button>`;
   }).join('');
   const paths = days.map(line).join('');
+  /* The line says which day it is at the end of itself. Seven entries in a legend below
+     the chart means reading a colour, looking down, finding it, looking back — for every
+     line, every time. Six of the seven finish at 23:00 on the same x, so the labels are
+     pushed apart vertically just enough not to collide, which is a small lie about where
+     the line ended and a large gain in being able to read it at all. */
+  const GAP = 12;
+  /* Each label sits where its own line stops. Today's line ends at whatever hour it is
+     now, so parking every label against the right edge would put "today" at 23:00 and
+     claim a day that has not happened. Only labels that end at the SAME hour need pushing
+     apart from each other. */
+  for(const p of ends) p.lx = Math.min(p.x + 7, W - R + 6);
+  const cols = new Map();
+  for(const p of ends){
+    const bucket = Math.round(p.lx / 24);
+    if(!cols.has(bucket)) cols.set(bucket, []);
+    cols.get(bucket).push(p);
+  }
+  for(const group of cols.values()){
+    group.sort((a, b) => a.y - b.y);
+    for(let i = 1; i < group.length; i++)
+      if(group[i].y - group[i-1].y < GAP) group[i].y = group[i-1].y + GAP;
+    const over = group[group.length-1].y - (H - Bm);
+    if(over > 0) for(const p of group) p.y = Math.max(T + 4, p.y - over);
+  }
+  const endTags = ends.map(p => {
+    const dt = new Date(p.d + 'T00:00:00');
+    const lbl = p.i === days.length - 1 ? 'today'
+              : dt.toLocaleDateString(undefined, {weekday: 'short'});
+    return `<text class="endlbl" x="${p.lx.toFixed(1)}" y="${(p.y + 3).toFixed(1)}"
+      fill="${dayCol(p.i)}">${lbl}</text>`;
+  }).join('');
   /* Four lines that cross cannot be read by eye alone: "which of these is Sunday at 3pm"
      is a question the chart has to answer, not one the reader should have to guess. The
      guide follows the cursor and every day is listed for that hour, so the comparison is
@@ -3058,6 +3118,41 @@ function renderHourly(){
     const tip = document.getElementById('htip');
     const guide = document.getElementById('hguide');
     if(!boxEl || !tip || !guide) return;
+    /* Draw each line on rather than flashing seven finished curves at once: the eye
+       follows one line at a time as they arrive, which is most of what makes seven of
+       them separable. Staggered by day, oldest first, so today lands last and on top.
+       Skipped entirely for a reader who has asked for less motion. */
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    boxEl.querySelectorAll('path.ln').forEach((pth, i) => {
+      if(still) return;
+      const len = pth.getTotalLength();
+      pth.style.strokeDasharray = len;
+      pth.style.strokeDashoffset = len;
+      pth.getBoundingClientRect();                      // commit before transitioning
+      pth.style.transition = `stroke-dashoffset .85s cubic-bezier(.35,.7,.3,1) ${
+        (i * 0.07).toFixed(2)}s`;
+      pth.style.strokeDashoffset = '0';
+    });
+    boxEl.querySelectorAll('.endlbl, circle.dot').forEach((el, i) => {
+      if(still) return;
+      el.style.opacity = '0';
+      el.style.transition = `opacity .3s ease ${(0.5 + i * 0.05).toFixed(2)}s`;
+      requestAnimationFrame(() => { el.style.opacity = '1'; });
+    });
+    /* Pointing at a day in the legend pulls its line out of the pile. Cheaper than
+       clicking it out of the way when all you wanted was to look at it. */
+    document.querySelectorAll('.hleg[data-hd]').forEach(el => {
+      const d = el.dataset.hd;
+      el.onmouseenter = () => {
+        boxEl.classList.add('focus');
+        boxEl.querySelectorAll('path.ln').forEach(
+          p => p.classList.toggle('hi', p.dataset.day === d));
+      };
+      el.onmouseleave = () => {
+        boxEl.classList.remove('focus');
+        boxEl.querySelectorAll('path.ln.hi').forEach(p => p.classList.remove('hi'));
+      };
+    });
     boxEl.onmousemove = e => {
       const r = boxEl.getBoundingClientRect();
       const vx = ((e.clientX - r.left) / r.width) * W;
@@ -3102,7 +3197,7 @@ function renderHourly(){
            running total this app records hourly — blank wherever an hour was missed.`}</p>
     <div class="chartbox hb" id="hbox"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${gy}
       <line id="hguide" class="hguide" y1="${T}" y2="${H - Bm}" x1="-99" x2="-99"/>
-      ${paths}${gx}</svg><div class="htip" id="htip" hidden></div></div>
+      ${paths}${endTags}${gx}</svg><div class="htip" id="htip" hidden></div></div>
     <div class="legend hlegs">${legend}${HHIDE.size
       ? `<button class="it hleg all" data-hd="*">Show all ${days.length} days</button>` : ''}</div>
     ${drawn ? '' : `<p class="sub warn">Nothing plotted, and the figures arrived:
