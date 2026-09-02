@@ -2670,20 +2670,15 @@ function seriesRows(){
    the Google endpoint for a dimension it has never heard of. */
 function sDimAvail(){
   const sel = document.getElementById('sDim');
-  /* Campaign and ad set are the two rungs both platforms have — a Google ad group sits
-     where a Meta ad set does. Ad is offered too, because the ads are what people came to
-     look at, but Google reports nothing per ad and the grid says so above the rows
-     rather than passing Meta off as a blend. */
+  /* Blended is campaign-level and nothing finer: an ad set and an ad group are not the
+     same object, and offering either would promise a row the other channel cannot fill.
+     The picker is pinned rather than hidden so it still says what you are looking at. */
   if(CHAN === 'blended'){
-    const allow = ['campaign', 'adset', 'script'];
     for(const o of sel.options){
-      const mine = allow.includes(o.value) && o.dataset.c !== 'google';
+      const mine = o.value === 'campaign';
       o.hidden = !mine; o.disabled = !mine;
     }
-    /* Arriving at Blended on the Ad dimension would show Meta rows under a two-channel
-       heading, which is the wrong first thing to see. Land on Campaign; Ad is a
-       deliberate choice from there. */
-    if(!allow.includes(sel.value) || sel.value === 'script') sel.value = 'campaign';
+    sel.value = 'campaign';
     return;
   }
   const want = chanIsMeta() ? 'meta' : 'google';
@@ -3338,14 +3333,6 @@ function renderMatrix(){
       <h3 id="mxh">${(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim}-by-date matrix · ${m.label}</h3>
       <p class="sub">${num(all.length)} row(s)${SERIES.truncated
         ? ` (capped — the fold hit its ceiling)` : ''}, ${SERIES.since} to ${SERIES.until}.
-        ${SERIES.chan === 'blended' ? (SERIES.google_level
-          ? `<b>Both channels</b> — ${num(SERIES.google_rows)} Google
-             ${SERIES.google_level === 'gcampaign' ? 'campaign' : 'ad group'}(s) beside
-             Meta's, matched on nothing: each platform's own rows, its own spend, side by
-             side down the days.`
-          : `<b>Meta rows only.</b> Google Ads reports spend and conversions per campaign
-             and per ad group and nothing per ad, so there is no Google half at this
-             level — switch the dimension to Ad set or Campaign for the blend.`) + ' ' : ''}
         Click any column heading to sort by it, a day column included. Scroll sideways for
         the rest of the days; the first column stays put.
         Export CSV writes every row that matches the filter, not just this page.</p>

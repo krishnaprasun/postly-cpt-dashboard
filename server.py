@@ -1059,27 +1059,19 @@ def api_google():
 def api_blended_series():
     """Both channels, per day, in the one shape Trends and Matrix already read.
 
-    Campaign and ad set are the two rungs both platforms have — a Google ad group sits
-    where a Meta ad set does, which is why the tab is already relabelled "Ad groups" on
-    the Google channel. Below that they diverge: Google Ads reports spend and conversions
-    per campaign and per ad group and nothing per ad, so an ad-level blend is Meta rows
-    with a label that promises a second channel it cannot produce. That view is still
-    offered — the ads are what people want to look at — but it says what it is rather
-    than quietly showing half the money.
+    Campaign level and nothing finer: an ad set and an ad group are not the same object,
+    and stacking them in one grid would invent a hierarchy neither platform has. A
+    campaign is a campaign on both, which is why the blended tables have always stopped
+    there.
     """
     brand, err, full = _gate(request.args.get("k", ""),
                              request.args.get("brand", C.DEFAULT_BRAND))
     if err:
         return err
     since, until = _series_window_args()
-    dim = request.args.get("dim", "campaign")
-    if dim not in ("campaign", "adset", "script"):
-        dim = "campaign"
-    gdim = {"campaign": "gcampaign", "adset": "gadgroup"}.get(dim)
     try:
-        meta = P.series(brand, since, until, dim=dim, store_only=HOURLY_ONLY)
-        goog = (P.google_series(brand, since, until, dim=gdim) if gdim
-                else {"dates": [], "rows": []})
+        meta = P.series(brand, since, until, dim="campaign", store_only=HOURLY_ONLY)
+        goog = P.google_series(brand, since, until, dim="gcampaign")
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": _friendly(e)["text"]}), 502
@@ -1093,15 +1085,9 @@ def api_blended_series():
         # into one row and lose whichever was folded second.
         rows.append(dict(r, platform="Google", key="g\x1f" + str(r.get("key") or r.get("label"))))
     rows.sort(key=lambda r: -(r.get("total_spend") or 0))
-    return jsonify({"brand": brand, "since": since, "until": until, "dim": dim,
+    return jsonify({"brand": brand, "since": since, "until": until, "dim": "campaign",
                     "chan": "blended", "dates": dates, "rows": rows,
-                    "total_rows": len(rows),
-                    "dim_labels": {"campaign": "Campaign",
-                                   "adset": "Ad set / ad group", "script": "Ad"},
-                    # What Google could contribute at this level, so the page can say so
-                    # rather than leaving a reader to assume the blend is complete.
-                    "google_level": gdim,
-                    "google_rows": len(goog.get("rows") or []),
+                    "total_rows": len(rows), "dim_labels": {"campaign": "Campaign"},
                     "google_error": goog.get("trials_error"),
                     "generated_at": P.now_ist_str()})
 
