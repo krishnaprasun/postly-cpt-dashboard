@@ -247,14 +247,15 @@ def _restorable(brand, since, until):
     return saved
 
 
-def _payload_age(brand, day):
-    """Seconds since this brand's `today` payload was built, or None if there is none."""
-    key = (day, day, brand)
+def _payload_age(brand, since, until=None):
+    """Seconds since this brand's payload for one window was built, or None if none."""
+    until = until or since
+    key = (since, until, brand)
     with _lock:
         hit = _cache.get(key)
     if hit:
         return time.time() - hit["at"]
-    saved = _restorable(brand, day, day)
+    saved = _restorable(brand, since, until)
     if saved and saved.get("_saved_at"):
         return max(0.0, time.time() - saved["_saved_at"])
     return None
@@ -373,11 +374,17 @@ def resolve_range(rng, since, until):
     if rng == "yesterday":
         d = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
         return d, d
+    # Multi-day windows end YESTERDAY, not today. Today is a part-day: Meta reports its
+    # spend within minutes while Branch's trials arrive over the following hours, so the
+    # newest day always shows less trial volume than it will end up with. Folded into a
+    # 3-day window that part-day is a third of the total and it drags CPT up; a reader
+    # comparing this week to last was comparing two-and-a-bit days with three. "Today"
+    # and "Yesterday" still mean exactly what they say.
     back = {"3d": 2, "7d": 6, "14d": 13, "30d": 29, "60d": 59}.get(rng)
     if back is not None:
-        d = (datetime.strptime(today, "%Y-%m-%d")
-             - timedelta(days=back)).strftime("%Y-%m-%d")
-        return d, today
+        end = datetime.strptime(today, "%Y-%m-%d") - timedelta(days=1)
+        return ((end - timedelta(days=back)).strftime("%Y-%m-%d"),
+                end.strftime("%Y-%m-%d"))
     return today, today
 
 
@@ -876,12 +883,6 @@ def api_hour_snapshot():
     out = []
     for b in brands:
         try:
-            if floor_min:
-                age = _payload_age(b, today)
-                if age is not None and age < floor_min * 60:
-                    out.append({"brand": b, "skipped": "already fresh",
-                                "age_min": int(age // 60)})
-                    continue
             # This job IS the dashboard's refresh: it fetches once an hour and every
             # viewer reads what it leaves behind, instead of each of them triggering a
             # build of their own.
@@ -889,9 +890,16 @@ def api_hour_snapshot():
             # hour-old payload it is supposed to be replacing — and so the hourly point
             # it records is the figure it just fetched.
             data = None
-            built = []
+            built, skipped = [], []
             for w in windows:
                 w_since, w_until = resolve_range(w, None, None)
+                # Per window, not per brand: a job asked for the long windows must not
+                # decide they are fresh because today's payload happens to be.
+                if floor_min:
+                    age = _payload_age(b, w_since, w_until)
+                    if age is not None and age < floor_min * 60:
+                        skipped.append(f"{w} ({int(age // 60)}m)")
+                        continue
                 d = get_data(w_since, w_until, b, force=True, job=True)
                 built.append(w)
                 if w == "today":
@@ -899,7 +907,7 @@ def api_hour_snapshot():
             # The hourly point is recorded off today's figures; a job asked for other
             # windows only still refreshes them and records nothing.
             if data is None:
-                out.append({"brand": b, "refreshed": built})
+                out.append({"brand": b, "refreshed": built, "skipped": skipped})
                 continue
             ev = (data.get("events") or ["t101"])[0]
             pr = (data.get("prorata") or {}).get(ev) or {}
@@ -912,7 +920,8 @@ def api_hour_snapshot():
             ok = P.hour_snapshot(b, trials, comb.get("spend"),
                                  (data.get("installs") or {}).get("meta"))
             out.append({"brand": b, "stored": ok, "trials": trials,
-                        "spend": comb.get("spend"), "refreshed": built})
+                        "spend": comb.get("spend"), "refreshed": built,
+                        "skipped": skipped})
         except Exception as e:
             traceback.print_exc()
             out.append({"brand": b, "error": str(e)[:200]})
