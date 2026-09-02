@@ -367,6 +367,21 @@ def get_data(since, until, brand, force=False, hard=False, job=False):
     return dict(data, cached=False, age=0, stale=False)
 
 
+def _series_window_args():
+    """(since, until) for a series request: explicit dates win, else a days-long window.
+
+    Explicit dates are how the grid asks for a range somebody typed, and they are passed
+    through untouched — the caller has already decided what it wants to see.
+    """
+    if request.args.get("since") and request.args.get("until"):
+        return request.args["since"], request.args["until"]
+    try:
+        days = int(request.args.get("days", P.SERIES_DEFAULT_DAYS))
+    except ValueError:
+        days = P.SERIES_DEFAULT_DAYS
+    return P.series_window(days)
+
+
 def resolve_range(rng, since, until):
     today = P.today_ist()
     if since and until:
@@ -1037,6 +1052,44 @@ def api_google():
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)[:500]}), 500
+
+
+@app.route("/api/blended/series")
+@protected
+def api_blended_series():
+    """Both channels, per day, in the one shape Trends and Matrix already read.
+
+    Campaign level and nothing finer: an ad set and an ad group are not the same object,
+    and stacking them in one grid would invent a hierarchy neither platform has. A
+    campaign is a campaign on both, which is why the blended tables have always stopped
+    there.
+    """
+    brand, err, full = _gate(request.args.get("k", ""),
+                             request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    since, until = _series_window_args()
+    try:
+        meta = P.series(brand, since, until, dim="campaign", store_only=HOURLY_ONLY)
+        goog = P.google_series(brand, since, until, dim="gcampaign")
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": _friendly(e)["text"]}), 502
+    dates = sorted(set(meta.get("dates") or []) | set(goog.get("dates") or []))
+    rows = []
+    for r in (meta.get("rows") or []):
+        rows.append(dict(r, platform="Meta"))
+    for r in (goog.get("rows") or []):
+        # The two folds can carry the same campaign NAME on different platforms, so the
+        # key is namespaced rather than trusted — a collision would merge two campaigns
+        # into one row and lose whichever was folded second.
+        rows.append(dict(r, platform="Google", key="g\x1f" + str(r.get("key") or r.get("label"))))
+    rows.sort(key=lambda r: -(r.get("total_spend") or 0))
+    return jsonify({"brand": brand, "since": since, "until": until, "dim": "campaign",
+                    "chan": "blended", "dates": dates, "rows": rows,
+                    "total_rows": len(rows), "dim_labels": {"campaign": "Campaign"},
+                    "google_error": goog.get("trials_error"),
+                    "generated_at": P.now_ist_str()})
 
 
 @app.route("/api/google/series")
