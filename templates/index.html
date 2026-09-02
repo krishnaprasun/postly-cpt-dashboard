@@ -934,8 +934,8 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
          it change". Same rows, same range, same level — one toggle rather than two tabs
          that would drift apart. -->
     <div class="segsw shapesw" id="shapesw">
-      <button data-sh="totals" class="on">Totals</button>
-      <button data-sh="day">By day</button>
+      <button data-sh="day" class="on">Day on day</button>
+      <button data-sh="totals">Totals</button>
     </div>
     <select class="sel" id="sWin">
       <option value="7">Last 7 days</option>
@@ -2617,7 +2617,7 @@ const seriesKey = () => `${CHAN}|${BRAND}|${sWin()}|${
 
 /* Which shape the grid is in, and which metrics are columns in the totals shape. Spend,
    trials and CPT to begin with: the three every conversation here starts from. */
-let SHAPE = 'totals';
+let SHAPE = 'day';
 let MCOLS = ['spend', 't101', 'cpt'];
 const seriesFresh = () => !!(SERIES && SERIESKEY === seriesKey());
 const sDim = () => document.getElementById('sDim').value;
@@ -3369,7 +3369,7 @@ function renderTotals(){
       <p class="sub">${num(all.length)} row(s), each one totalled over the whole range.
         Rates are worked out from their own components over the range — CPT is the range's
         spend over the range's trials, not an average of daily CPTs. Click a column to sort
-        by it, or <b>By day</b> to see when a number moved.</p></div>
+        by it, or <b>Day on day</b> to see when a number moved.</p></div>
     <div class="mwrap"><table class="mx"><thead>${head}</thead>
       <tbody>${body || `<tr><td class="l" colspan="${cols.length+3}">No rows match.</td></tr>`}</tbody>
       <tfoot>${rows.length ? foot(rows, `THIS PAGE · ${rows.length} row(s)`) : ''}${
