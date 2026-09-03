@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"
+     role="img" aria-label="SuperPass">
+  <!-- The open-book mark: cyan leaf on the left, near-black on the right, meeting on the
+       centre line, on the rounded white tile the app icon uses. -->
+  <rect x="8" y="8" width="496" height="496" rx="116" fill="#FFFFFF"
+        stroke="#BDBCCB" stroke-width="12"/>
+  <path d="M256 68 L100 172 L100 414 L256 344 Z" fill="#00CFF0"/>
+  <path d="M256 68 L412 172 L412 414 L256 344 Z" fill="#16151F"/>
+</svg>

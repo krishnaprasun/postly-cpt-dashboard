@@ -48,6 +48,12 @@ def _read(path):
         return ""
 
 
+# The brands this dashboard knows about. Declared here rather than derived from BRANDS
+# because credentials are resolved before BRANDS is built, and a brand missing from this
+# list is one whose Branch key is never looked for.
+_BRAND_KEYS = ("postly", "speakeasy", "funda", "superpass", "prepshots")
+
+
 def _branch_creds():
     """{brand: (key, secret)} — one Branch app per brand, each with its own pair.
 
@@ -70,7 +76,9 @@ def _branch_creds():
         j = {}
     if j.get("branch_key"):                      # older flat file
         j = {"postly": j}
-    for brand in ("postly", "speakeasy", "funda"):
+    # Every brand defined below, not a list kept in step by hand: adding a brand and
+    # forgetting this line is a brand that silently has no trials.
+    for brand in _BRAND_KEYS:
         pre = "" if brand == "postly" else brand.upper() + "_"
         blk = j.get(brand) or {}
         key = (os.environ.get(pre + "BRANCH_KEY", "").strip()
@@ -244,6 +252,28 @@ BRANDS = {
         # The violet end of their play-button gradient; the orange end is too close to
         # the warn amber to use as chrome.
         "theme": {"accent": "#6A4BD8", "dark": "#4A32A6", "light": "#F1EDFD"},
+    },
+    "superpass": {
+        "label": "SuperPass",
+        "testing_re": TESTING_RE_DEFAULT,
+        "accounts": [{"id": "act_770689872091817", "name": "SuperPass"}],
+        # Branch records both `trial_transaction` and `super_trial_transaction`, two
+        # events apart over three days (4,508 vs 4,506) — the SuperPass-specific one is
+        # taken as the trial. Confirm with the owner before anything is judged on it.
+        "events": {"t101": "super_trial_transaction",
+                   "t10m": "superpasstrial_10min_not_cancelled"},
+        "labels": {"t101": "Trials", "t10m": "NC 10m"},
+        "event_note": {"t101": "super_trial_transaction",
+                       "t10m": "superpasstrial_10min_not_cancelled"},
+        # No agreed target yet, so CPT is shown uncoloured rather than judged against a
+        # number nobody set.
+        "cpt_target": None,
+        "classplus": False,
+        "logo": "brand/superpass.svg",
+        # Their cyan, deepened: the logo's #00CFF0 cannot carry white text on the
+        # selected pill, and the three colours already in use are green, gold and violet
+        # while good/warn/bad owns green, amber and red.
+        "theme": {"accent": "#0B93AE", "dark": "#07657A", "light": "#E4F7FB"},
     },
 }
 DEFAULT_BRAND = "postly"
