@@ -215,6 +215,45 @@ def trials_daily(app_id, since, until, events, install_key="inst", raw_until=Non
     return out
 
 
+GOOGLE_SOURCES = ("googleadwords_int", "google adwords", "google ads", "adwords")
+
+
+def google_trials_daily(app_id, since, until, events, install_key="inst"):
+    """{date: {event_key: {(campaign, ad_group): unique_users}}} for Google only.
+
+    One rung up from the ad, because that is the rung Google Ads reports spend against —
+    AppsFlyer's `Adset` IS Google's ad group. The aggregate API answers this: no raw
+    export is spent, and the Google channel is read over ranges rather than watched live,
+    so its lack of same-day data costs nothing here that it does not already cost.
+    """
+    out = {}
+    kpis = ",".join(["installs"] + [f"unique_users_{n}" for n in events.values() if n])
+    for day in _days(since, until):
+        rows = json.loads(_get(f"master-agg-data/v4/app/{app_id}",
+                               {"from": day, "to": day, "format": "json",
+                                "groupings": "pid,c,af_adset", "kpis": kpis}))
+        for r in rows:
+            src = (r.get("Media Source") or "").strip().lower()
+            if not any(g in src for g in GOOGLE_SOURCES):
+                continue
+            camp = (r.get("Campaign") or "").strip()
+            grp = (r.get("Adset") or "").strip()
+            if grp.lower() in ("none", "null", "n/a"):
+                grp = ""
+            pair = (camp, grp)
+            for key, name in events.items():
+                n = int(r.get(f"Unique Users - {name}") or 0)
+                if n:
+                    out.setdefault(day, {}).setdefault(key, {})[pair] = \
+                        out.setdefault(day, {}).setdefault(key, {}).get(pair, 0) + n
+            if install_key:
+                n = int(r.get("Installs") or 0)
+                if n:
+                    d = out.setdefault(day, {}).setdefault(install_key, {})
+                    d[pair] = d.get(pair, 0) + n
+    return out
+
+
 def events_seen(app_id, day):
     """Every event name the app recorded on one day, with counts. For wiring a new brand."""
     raw = _get(f"raw-data/export/app/{app_id}/in_app_events_report/v5",

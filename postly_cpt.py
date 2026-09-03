@@ -1936,6 +1936,16 @@ def is_google(partner):
 
 
 def google_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
+    """Google's own trials, from whichever vendor this brand measures on."""
+    if (B.get("provider") or "branch") == "appsflyer":
+        if not (B.get("af_app") and AF.available()):
+            return {}
+        return AF.google_trials_daily(B["af_app"], since, until, B["events"],
+                                      install_key=INSTALL_KEY)
+    return branch_google_trials_daily(since, until, B, tries=tries)
+
+
+def branch_google_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     """{date: {event_key: {(campaign, ad_group): unique_count}}} for Google only.
 
     Names, not ids, because names are all Branch carries -- the same join this dashboard
