@@ -1,8 +1,9 @@
 # Ads Performance — handoff
 
 **What it is.** One Flask app that answers *what is a trial costing us right now*, for
-three brands, across two ad platforms, at every level from the whole account down to the
-individual creative. Read-only: it never writes to Meta, Google or Branch.
+five brands, across two ad platforms and two attribution vendors, at every level from the
+whole account down to the individual creative. Read-only: it never writes to Meta, Google,
+Branch or AppsFlyer.
 
 **Live:** https://postly-cpt-dashboard.onrender.com
 **Repo:** https://github.com/krishnaprasun/postly-cpt-dashboard — **PUBLIC**
@@ -29,8 +30,16 @@ the reference manual — 1,400 lines, every mechanism explained; this is the map
 ```
 
 **Meta** gives spend, impressions, clicks, budgets and statuses. **Branch** gives trials
-and installs, attributed to an ad by name. **Google Ads** gives spend per campaign per ad
-group. **Classplus** (Postly only, optional) gives signups and trial mandates.
+and installs, attributed to an ad by name — except PrepShots, which measures on
+**AppsFlyer**. **Google Ads** gives spend per campaign per ad group. **Classplus** (Postly
+only, optional) gives signups and trial mandates.
+
+**Never hardcode the vendor's name on screen.** `config.attrib(brand)` returns "Branch" or
+"AppsFlyer" for that brand. A label naming the wrong vendor is worse than no label — it
+sends a reader to check a system that holds none of these numbers. The same mistake once
+lived in `BRAND_HAS_BRANCH`, which tested for a Branch key pair and so quietly emptied
+PrepShots: it built with spend and no trials at all. It asks the provider now, and the
+function keeps its historical name.
 
 Three things are worth understanding before you change anything:
 
@@ -58,23 +67,29 @@ figure was ₹191.
 
 Everything brand-specific lives in one table: `BRANDS` in `config.py`.
 
-| brand | Meta accounts | Branch headline event | CPT target | Classplus |
-|---|---|---|---:|---|
-| Postly | `act_964790132585820`, `act_2383113182218548` | `postly_trial_started_backend` | ₹150 | yes |
-| Speakeasy | `act_874500498817876`, `act_909676394829541` | `speakeasy_trial_started` | ₹275 | no |
-| Funda | `act_1415034359774559`, `act_1662727118397158`, `act_826851770432701` | `trial_started_backend` | ₹180 | no |
+| brand | Meta accounts | vendor | headline event | CPT target | Classplus |
+|---|---|---|---|---:|---|
+| Postly | `act_964790132585820`, `act_2383113182218548` | Branch | `postly_trial_started_backend` | ₹180 | yes |
+| Speakeasy | `act_874500498817876`, `act_909676394829541` | Branch | `speakeasy_trial_started` | ₹275 | no |
+| Funda | `act_1415034359774559`, `act_1662727118397158`, `act_826851770432701` | Branch | `trial_started_backend` | ₹180 | no |
+| PrepShots | `act_1361292779186355` | **AppsFlyer** | `prepshots_trial_started_backend` | none | no |
+| SuperPass | `act_770689872091817` | Branch | `super_trial_transaction` | none | no |
 
-One Meta token reaches all seven accounts. Branch is one app per brand, so one key/secret
-pair each. Google Ads is one OAuth credential reaching 18 customer accounts through the
-Testbook MCC.
+One Meta token reaches all nine accounts. Branch is one app per brand, so one key/secret
+pair each; PrepShots uses one AppsFlyer token instead. Google Ads is one OAuth credential
+reaching 18 customer accounts through the Testbook MCC.
+
+**A `cpt_target` of `none` is a real value meaning "show the number, do not colour it."**
+An unagreed target is worse than none, because a red cell reads as an instruction.
 
 **Ad-name match rates differ enormously by brand and must never be read as a data bug:**
 of each brand's *attributed* Branch trials, the share whose ad name exists in Meta is
 Funda 99.7%, Postly ~95%, Speakeasy 62%.
 
-Adding a fourth brand is: one entry in `BRANDS`, one Branch key pair, one `BRAND_LINK_*`
-env var. A brand with no Branch key is a supported state — its Meta side works in full and
-the trial and CPT columns are simply hidden.
+Adding a brand is: one entry in `BRANDS`, one vendor credential, one `BRAND_LINK_*` env
+var, and one scheduler job per family. A brand with no vendor credential is a supported
+state — its Meta side works in full and the trial and CPT columns are hidden rather than
+drawn as zeroes.
 
 ---
 
@@ -140,16 +155,26 @@ Not a bug. Use `/v1/have` as its liveness probe.
 
 ### Scheduled jobs
 
-21 `ads-*` jobs in Cloud Scheduler, `admanagementpostly` / asia-south1, all Asia/Kolkata.
-They authorize with `Authorization: Bearer <HISTORY_TOKEN>`.
+**54 `ads-*` jobs** in Cloud Scheduler, `admanagementpostly` / asia-south1, all
+Asia/Kolkata. They authorize with `Authorization: Bearer <HISTORY_TOKEN>`. Eight families
+run per brand, so adding a brand adds eight jobs.
 
-| jobs | schedule | what |
-|---|---|---|
-| `ads-history-{postly,speakeasy,funda}` | 03:40 / 03:50 / 04:00 | store settled days |
-| `ads-longevity-{3 brands}` | 04:15–04:35 and 13:15–13:35 | precompute the Lifespan tab |
-| `ads-budget-{3 brands}-{9,15,23}` | 09:xx, 15:xx, 23:xx | budget snapshots (forward-only) |
-| `ads-reach-backfill-{3 brands}` | every 10 min, 00–02 | **complete — delete these** |
-| `ads-google-backfill-{3 brands}` | every 20 min, 01–04 | Postly has 14 days left; then delete |
+| jobs | count | schedule | what |
+|---|---:|---|---|
+| `ads-history-{brand}` | 5 | 03:40–04:20 | store settled days |
+| `ads-longevity-{brand}` | 5 | 04:15–04:50 and 13:15–13:50 | precompute the Lifespan tab |
+| `ads-budget-{brand}-{9,15,23}` | 15 | 09:xx, 15:xx, 23:xx | budget snapshots (forward-only) |
+| `ads-cohorts-{brand}` | 5 | 04:50–05:10 | cohort rollups |
+| `ads-warm-adset-{brand}` | 5 | 04:20–04:50 | warm the ad-set caches |
+| `ads-warm-script-{brand}` | 5 | hourly | warm the script/creative caches |
+| `ads-reach-backfill-{brand}` | 5 | every 10 min, 00–02 | impressions/clicks into stored days |
+| `ads-google-backfill-{brand}` | 5 | every 20 min, 01–04 | Google trials into stored days |
+| `ads-hourly-{snapshot,retry,long}` | 3 | hourly | rolling snapshot, retry, longevity |
+| `ads-chat-hourly` | 1 | 09–23 hourly | the Google Chat update |
+
+Non-`ads-*` jobs in the same project belong to the separate content/build pipeline — see
+[[postly-pipeline-automation]]. Do not assume a job is this app's because it is in this
+project.
 
 ### Credentials
 
@@ -159,12 +184,13 @@ that order.
 
 | file | env var(s) | reaches |
 |---|---|---|
-| `meta_token` | `META_TOKEN` | all 7 Meta ad accounts (system user, non-expiring) |
-| `branch_creds.json` | `BRANCH_KEY/SECRET`, `SPEAKEASY_BRANCH_*`, `FUNDA_BRANCH_*` | one Branch app per brand |
+| `meta_token` | `META_TOKEN` | all 9 Meta ad accounts (system user, non-expiring) |
+| `branch_creds.json` | `BRANCH_KEY/SECRET`, `SPEAKEASY_BRANCH_*`, `FUNDA_BRANCH_*`, `SUPERPASS_BRANCH_*` | one Branch app per Branch brand |
+| — | `APPSFLYER_TOKEN` | PrepShots only; its `af_app` id is in `BRANDS` |
 | `google_ads.json` | `GOOGLE_ADS_{CLIENT_ID,CLIENT_SECRET,REFRESH_TOKEN,DEVELOPER_TOKEN,LOGIN_CUSTOMER_ID}` | 18 Google customers via MCC `3343252288` |
 | `classplus_creds.json` | `CLASSPLUS_QUERIES`, `CLASSPLUS_HOST` | Redash query 19695 (Postly only) |
 | `ads_history_token` | `HISTORY_TOKEN`, `HISTORY_URL` | the GCS store + every ops endpoint |
-| `brand_links.json` | `BRAND_LINK_{POSTLY,SPEAKEASY,FUNDA,ALL}` | per-team access links |
+| `brand_links.json` | `BRAND_LINK_{POSTLY,SPEAKEASY,FUNDA,PREPSHOTS,SUPERPASS,ALL}` | per-team access links |
 | `render_key` | — | the Render API |
 
 **macOS gotcha worth remembering beyond this project:** a process launched as a dev server
@@ -255,28 +281,37 @@ live and is the *slowest* view. 30- and 90-day windows are mostly stored and are
 
 ---
 
-## 7. Current state, verified 2026-08-27
+## 7. Current state, verified 2026-09-03
 
-- Google Ads is **fully live** — spend, impressions and clicks per campaign per ad group.
-  Last 7 days: Postly ₹1.59 L, SpeakEasy ₹14.2 L, Funda ₹1.99 Cr.
-- The Google channel shows **two CPTs**: Branch's count and Google Ads' own, side by side,
-  never averaged. 7-day gap: Speakeasy +2%, Funda −15%, **Postly −72%** — Branch attributes
-  only 129 of the 464 trials Google claims. See `DECISIONS.md`.
-- Reach backfill (impressions/clicks into stored days): **complete, all three brands.**
-- Google trials backfill: Speakeasy and Funda complete (97 days each); **Postly has 14
-  days left**, which its 01–04 IST schedule will finish on its own.
-- 21 scheduled jobs enabled, nothing failing.
-- `/healthz` 200 in 0.18s.
+- **Five brands live**: Postly, Speakeasy, Funda (Branch), PrepShots (AppsFlyer),
+  SuperPass (Branch). Nine Meta ad accounts.
+- **History store complete and self-maintaining** — every brand carries ~104 days with
+  **zero gaps**, currently 2026-05-19/20 → 2026-08-31. That end date is not staleness: it
+  is `settled_through(today)`, three days back, exactly as designed.
+- **Longevity artifacts fresh for all five brands**, regenerated today by the 04:xx and
+  13:xx jobs, both the 30- and 90-day windows.
+- **Google Ads live on v22**, two MCCs accessible, 18 customers discovered including
+  PrepShots and SuperPass. The Testing-mode consent-screen deadline that was flagged for
+  ~2026-09-02 did not bite — the credential still authenticates.
+- 54 `ads-*` scheduled jobs enabled; the ones that ran most recently all succeeded.
+- `/healthz` 200 in 0.36s. Bare `/` still 200 — `ROOT_OPEN` is still `1`.
 
 ### Open items — owner action required
 
 | item | why it matters | urgency |
 |---|---|---|
-| **Publish the Google OAuth consent screen** in project `734843757980` | a refresh token minted while the screen is in *Testing* dies after 7 days — this already happened once and took Google spend off the page | **before ~2026-09-02** |
-| **Rotate the Render API key** | it was pasted into a chat transcript against advice; a Render key grants access to every workspace the account belongs to and cannot be scoped down. **Update the `RENDER_API_KEY` repo secret in the same breath** or deploys break | soon |
-| Reconnect GitHub in the Render dashboard | optional now — it would let the Action be deleted, but the Action works and verifies more than Render's hook would | optional |
-| Delete `ads-reach-backfill-*` (3 jobs) | complete; they wake the free instance 3 h/night against a 750 h monthly pool | now |
-| Delete `ads-google-backfill-*` (3 jobs) | after Postly's last 14 days land tonight | tomorrow |
-| Rotate `HISTORY_TOKEN` | it was echoed into a transcript by a gcloud error message; carried by 9+ scheduler jobs, so rotation means updating each | optional |
-| Request Meta Standard Access | raises the rate limits that currently force degraded budget/status reads | optional |
-| Set `ROOT_OPEN=0` | closes the bare URL once every team holds its own link | when handover is done |
+| **Rotate the Render API key** | pasted into a chat transcript against advice; a Render key reaches every workspace the account belongs to and cannot be scoped down. **Update the `RENDER_API_KEY` repo secret in the same breath** or deploys start 401ing | soon |
+| **Delete `ads-reach-backfill-*` (5 jobs)** | the reach backfill completed; they still wake the free instance for 3 h a night against a 750 h monthly workspace pool shared with two other free services | now |
+| **Delete `ads-google-backfill-*` (5 jobs)** | same, once you have confirmed no brand still has days outstanding | check, then now |
+| Rotate `HISTORY_TOKEN` | echoed into a transcript by a gcloud error message; it is carried by ~54 scheduler jobs, so rotating means updating every one — script it | optional |
+| Set `ROOT_OPEN=0` | closes the bare URL once all five teams hold their own link. Until then the per-brand links restrict nothing, because the URL everyone already has still shows everything | when handover is done |
+| Rotate the per-brand links | all four original values were printed into a chat transcript at the owner's request. One env var each, no deploy | optional |
+| Request Meta Standard Access | raises the rate limits that still force degraded budget/status reads on the busiest accounts | optional |
+| Reconnect GitHub in the Render dashboard | optional — it would let `.github/workflows/deploy.yml` be deleted, but the Action verifies more than Render's own hook would | optional |
+
+### Reading the free-tier budget
+
+The Render workspace runs three free web services sharing **750 instance-hours a month**.
+Exhausting the pool suspends **all** of them, not just this one. That is the reason the
+temporary backfill jobs above matter, and the reason there is no 24/7 keep-alive pinger —
+one would cost 744 h by itself. See `DECISIONS.md`.

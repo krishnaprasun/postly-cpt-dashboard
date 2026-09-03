@@ -231,11 +231,12 @@ footer{
 
 <header class="mast">
   <div class="mast-in">
-    <div class="eyebrow">Handoff pack · verified 27 Aug 2026</div>
+    <div class="eyebrow">Handoff pack · verified 3 Sep 2026</div>
     <h1>Ads Performance</h1>
     <p class="standfirst">One Flask app that answers <em>what is a trial costing us right
-    now</em> — three brands, two ad platforms, from the whole account down to the
-    individual creative. Read-only: it never writes to Meta, Google or Branch.</p>
+    now</em> — five brands, two ad platforms, two attribution vendors, from the whole
+    account down to the individual creative. Read-only: it never writes to Meta, Google,
+    Branch or AppsFlyer.</p>
     <dl class="factbar">
       <div class="fact"><dt>Live</dt><dd><a href="https://postly-cpt-dashboard.onrender.com">postly-cpt-dashboard.onrender.com</a></dd></div>
       <div class="fact"><dt>Repo</dt><dd>krishnaprasun/postly-cpt-dashboard <span class="pill now">public</span></dd></div>
@@ -292,9 +293,9 @@ mechanism explained. This page is the map to it, and mirrors
 <h3 id="system">The system</h3>
 <div class="flow">
   <div class="node"><div class="t">Source</div><div class="n">Meta v21.0</div>
-    <div class="d">Spend, impressions, clicks, budgets, statuses. 7 ad accounts, one token.</div></div>
-  <div class="node"><div class="t">Source</div><div class="n">Branch Query API</div>
-    <div class="d">Trials and installs, attributed to an ad by name. One app per brand.</div></div>
+    <div class="d">Spend, impressions, clicks, budgets, statuses. 9 ad accounts, one token.</div></div>
+  <div class="node"><div class="t">Source</div><div class="n">Branch &amp; AppsFlyer</div>
+    <div class="d">Trials and installs, attributed to an ad by name. Branch for four brands, AppsFlyer for PrepShots.</div></div>
   <div class="node"><div class="t">Source</div><div class="n">Google Ads v22</div>
     <div class="d">Spend per campaign per ad group, through the Testbook MCC.</div></div>
   <div class="node"><div class="t">Source</div><div class="n">Classplus Redash</div>
@@ -348,15 +349,27 @@ its own copy.</p>
 <p>Everything brand-specific lives in one table: <code>BRANDS</code> in
 <code>config.py</code>.</p>
 <div class="tw"><table>
-<thead><tr><th>Brand</th><th>Meta accounts</th><th>Branch headline event</th><th class="mono">CPT target</th><th>Classplus</th></tr></thead>
+<thead><tr><th>Brand</th><th>Meta accounts</th><th>Vendor</th><th>Headline event</th><th class="mono">CPT target</th><th>Classplus</th></tr></thead>
 <tbody>
-<tr><td>Postly</td><td class="mono">act_964790132585820<br>act_2383113182218548</td><td class="mono">postly_trial_started_backend</td><td class="num">₹150</td><td>yes</td></tr>
-<tr><td>Speakeasy</td><td class="mono">act_874500498817876<br>act_909676394829541</td><td class="mono">speakeasy_trial_started</td><td class="num">₹275</td><td>no</td></tr>
-<tr><td>Funda</td><td class="mono">act_1415034359774559<br>act_1662727118397158<br>act_826851770432701</td><td class="mono">trial_started_backend</td><td class="num">₹180</td><td>no</td></tr>
+<tr><td>Postly</td><td class="mono">act_964790132585820<br>act_2383113182218548</td><td>Branch</td><td class="mono">postly_trial_started_backend</td><td class="num">₹180</td><td>yes</td></tr>
+<tr><td>Speakeasy</td><td class="mono">act_874500498817876<br>act_909676394829541</td><td>Branch</td><td class="mono">speakeasy_trial_started</td><td class="num">₹275</td><td>no</td></tr>
+<tr><td>Funda</td><td class="mono">act_1415034359774559<br>act_1662727118397158<br>act_826851770432701</td><td>Branch</td><td class="mono">trial_started_backend</td><td class="num">₹180</td><td>no</td></tr>
+<tr><td>PrepShots</td><td class="mono">act_1361292779186355</td><td><strong>AppsFlyer</strong></td><td class="mono">prepshots_trial_started_backend</td><td class="num">none</td><td>no</td></tr>
+<tr><td>SuperPass</td><td class="mono">act_770689872091817</td><td>Branch</td><td class="mono">super_trial_transaction</td><td class="num">none</td><td>no</td></tr>
 </tbody></table></div>
 
-<p>One Meta token reaches all seven accounts. Branch is one app per brand. Google Ads is
-one OAuth credential reaching 18 customer accounts through MCC <code>3343252288</code>.</p>
+<p>One Meta token reaches all nine accounts. Branch is one app per Branch brand; PrepShots
+uses one AppsFlyer token instead. Google Ads is one OAuth credential reaching 18 customer
+accounts through MCC <code>3343252288</code>.</p>
+
+<div class="note crit">
+  <span class="lbl">Never hardcode the vendor's name</span>
+  <p><code>config.attrib(brand)</code> returns "Branch" or "AppsFlyer". A label naming the
+  wrong vendor is worse than no label — it sends a reader to check a system holding none of
+  these numbers. The same mistake lived in <code>BRAND_HAS_BRANCH</code>, which tested for a
+  Branch key pair and so quietly emptied PrepShots: it built with spend and no trials at
+  all. It asks the provider now, and keeps its historical name.</p>
+</div>
 
 <div class="note">
   <span class="lbl">Not a data bug</span>
@@ -365,9 +378,11 @@ one OAuth credential reaching 18 customer accounts through MCC <code>3343252288<
   Speakeasy 62%. This is a property of how each brand names its ads, not a fault to fix.</p>
 </div>
 
-<p>Adding a fourth brand is: one entry in <code>BRANDS</code>, one Branch key pair, one
-<code>BRAND_LINK_*</code> env var. A brand with no Branch key is a supported state — its
-Meta side works in full and the trial and CPT columns are simply hidden.</p>
+<p>Adding a brand is: one entry in <code>BRANDS</code>, one vendor credential, one
+<code>BRAND_LINK_*</code> env var, and one scheduler job per family. A brand with no vendor
+credential is a supported state — its Meta side works in full and the trial and CPT columns
+are hidden rather than drawn as zeroes. <code>cpt_target: none</code> is also a real value,
+meaning <em>show the number, do not colour it</em>.</p>
 
 <h3 id="where">Where everything lives</h3>
 
@@ -411,17 +426,25 @@ intercepted at Google's edge. Not a bug — use <code>/v1/have</code> as its liv
 probe.</p>
 
 <h4>Scheduled jobs</h4>
-<p>21 <code>ads-*</code> jobs in Cloud Scheduler, <code>admanagementpostly</code> /
-asia-south1, all Asia/Kolkata, authorizing with the history bearer token.</p>
+<p><strong>54 <code>ads-*</code> jobs</strong> in Cloud Scheduler,
+<code>admanagementpostly</code> / asia-south1, all Asia/Kolkata, authorizing with the
+history bearer token. Eight families run per brand, so adding a brand adds eight jobs.</p>
 <div class="tw"><table>
-<thead><tr><th>Jobs</th><th>Schedule</th><th>What</th></tr></thead>
+<thead><tr><th>Jobs</th><th class="mono">#</th><th>Schedule</th><th>What</th></tr></thead>
 <tbody>
-<tr><td class="mono">ads-history-*</td><td class="mono">03:40 / 03:50 / 04:00</td><td>store settled days</td></tr>
-<tr><td class="mono">ads-longevity-*</td><td class="mono">04:15–04:35, 13:15–13:35</td><td>precompute the Lifespan tab</td></tr>
-<tr><td class="mono">ads-budget-*</td><td class="mono">09:xx, 15:xx, 23:xx</td><td>budget snapshots, forward-only</td></tr>
-<tr><td class="mono">ads-reach-backfill-*</td><td class="mono">every 10 min, 00–02</td><td><span class="pill ok">complete</span> delete these</td></tr>
-<tr><td class="mono">ads-google-backfill-*</td><td class="mono">every 20 min, 01–04</td><td>Postly has 14 days left, then delete</td></tr>
+<tr><td class="mono">ads-history-*</td><td class="num">5</td><td class="mono">03:40–04:20</td><td>store settled days</td></tr>
+<tr><td class="mono">ads-longevity-*</td><td class="num">5</td><td class="mono">04:15–04:50, 13:15–13:50</td><td>precompute the Lifespan tab</td></tr>
+<tr><td class="mono">ads-budget-*-{9,15,23}</td><td class="num">15</td><td class="mono">09:xx, 15:xx, 23:xx</td><td>budget snapshots, forward-only</td></tr>
+<tr><td class="mono">ads-cohorts-*</td><td class="num">5</td><td class="mono">04:50–05:10</td><td>cohort rollups</td></tr>
+<tr><td class="mono">ads-warm-adset-*</td><td class="num">5</td><td class="mono">04:20–04:50</td><td>warm the ad-set caches</td></tr>
+<tr><td class="mono">ads-warm-script-*</td><td class="num">5</td><td class="mono">hourly</td><td>warm the script caches</td></tr>
+<tr><td class="mono">ads-reach-backfill-*</td><td class="num">5</td><td class="mono">every 10 min, 00–02</td><td><span class="pill ok">complete</span> delete these</td></tr>
+<tr><td class="mono">ads-google-backfill-*</td><td class="num">5</td><td class="mono">every 20 min, 01–04</td><td>check, then delete</td></tr>
+<tr><td class="mono">ads-hourly-{snapshot,retry,long}</td><td class="num">3</td><td class="mono">hourly</td><td>rolling snapshot, retry, longevity</td></tr>
+<tr><td class="mono">ads-chat-hourly</td><td class="num">1</td><td class="mono">09–23 hourly</td><td>the Google Chat update</td></tr>
 </tbody></table></div>
+<p>Non-<code>ads-*</code> jobs in the same project belong to the separate content and build
+pipeline. Do not assume a job is this app's because it shares the project.</p>
 
 <h4>Credentials</h4>
 <p>Each is a Render env var or a <code>chmod 600</code> file under
@@ -430,8 +453,9 @@ asia-south1, all Asia/Kolkata, authorizing with the history bearer token.</p>
 <div class="tw"><table>
 <thead><tr><th>File</th><th>Env var(s)</th><th>Reaches</th></tr></thead>
 <tbody>
-<tr><td class="mono">meta_token</td><td class="mono">META_TOKEN</td><td>all 7 Meta accounts — system user, non-expiring</td></tr>
-<tr><td class="mono">branch_creds.json</td><td class="mono">BRANCH_KEY/SECRET, SPEAKEASY_BRANCH_*, FUNDA_BRANCH_*</td><td>one Branch app per brand</td></tr>
+<tr><td class="mono">meta_token</td><td class="mono">META_TOKEN</td><td>all 9 Meta accounts — system user, non-expiring</td></tr>
+<tr><td class="mono">branch_creds.json</td><td class="mono">BRANCH_KEY/SECRET, SPEAKEASY_BRANCH_*, FUNDA_BRANCH_*, SUPERPASS_BRANCH_*</td><td>one Branch app per Branch brand</td></tr>
+<tr><td class="mono">—</td><td class="mono">APPSFLYER_TOKEN</td><td>PrepShots only; its <code>af_app</code> id lives in <code>BRANDS</code></td></tr>
 <tr><td class="mono">google_ads.json</td><td class="mono">GOOGLE_ADS_*</td><td>18 Google customers via the MCC</td></tr>
 <tr><td class="mono">classplus_creds.json</td><td class="mono">CLASSPLUS_QUERIES, CLASSPLUS_HOST</td><td>Redash query 19695, Postly only</td></tr>
 <tr><td class="mono">ads_history_token</td><td class="mono">HISTORY_TOKEN, HISTORY_URL</td><td>the GCS store and every ops endpoint</td></tr>
@@ -521,46 +545,61 @@ upstream API.</p>
 window, so it is 100% live and is the <em>slowest</em> view. 30- and 90-day windows are
 mostly stored, and faster.</p>
 
-<h3 id="state">Current state, verified 27 Aug 2026</h3>
+<h3 id="state">Current state, verified 3 Sep 2026</h3>
 <ul>
-  <li>Google Ads is <strong>fully live</strong> — spend, impressions and clicks per
-  campaign per ad group. Last 7 days: Postly ₹1.59 L, SpeakEasy ₹14.2 L, Funda ₹1.99 Cr.</li>
-  <li>The Google channel shows <strong>two CPTs</strong> — Branch's count and Google Ads'
-  own, side by side, never averaged. 7-day gap: Speakeasy +2%, Funda −15%,
-  <strong>Postly −72%</strong>.</li>
-  <li>Reach backfill (impressions/clicks into stored days): <strong>complete, all three
-  brands</strong>.</li>
-  <li>Google trials backfill: Speakeasy and Funda complete at 97 days each;
-  <strong>Postly has 14 days left</strong>, which its 01–04 IST schedule finishes on its own.</li>
-  <li>21 scheduled jobs enabled, nothing failing. <code>/healthz</code> 200 in 0.18 s.</li>
+  <li><strong>Five brands live</strong> — Postly, Speakeasy, Funda and SuperPass on Branch,
+  PrepShots on AppsFlyer. Nine Meta ad accounts.</li>
+  <li><strong>The history store is complete and self-maintaining.</strong> Every brand
+  carries ~104 days with <strong>zero gaps</strong>, currently 19/20 May → 31 Aug. That end
+  date is not staleness — it is <code>settled_through(today)</code>, three days back,
+  exactly as designed.</li>
+  <li><strong>Longevity artifacts fresh for all five brands</strong>, both the 30- and
+  90-day windows, regenerated today by the 04:xx and 13:xx jobs.</li>
+  <li><strong>Google Ads live on v22</strong> — two MCCs accessible, 18 customers
+  discovered including PrepShots and SuperPass. The Testing-mode consent-screen deadline
+  flagged for ~2 Sep did not bite; the credential still authenticates.</li>
+  <li>54 <code>ads-*</code> scheduled jobs enabled; the most recent runs all succeeded.
+  <code>/healthz</code> 200 in 0.36 s. Bare <code>/</code> still 200 —
+  <code>ROOT_OPEN</code> is still <code>1</code>.</li>
 </ul>
 
 <h4>Open items — owner action required</h4>
 <div class="tw"><table>
 <thead><tr><th>Item</th><th>Why it matters</th><th>When</th></tr></thead>
 <tbody>
-<tr><td>Publish the Google OAuth consent screen<br><span class="mono" style="font-weight:400;color:var(--muted)">project 734843757980</span></td>
-    <td>a refresh token minted while the screen is in <em>Testing</em> dies after 7 days — this already happened once and took Google spend off the page</td>
-    <td><span class="pill now">by 2 Sep</span></td></tr>
 <tr><td>Rotate the Render API key</td>
-    <td>it was pasted into a chat transcript against advice; a Render key reaches every workspace the account belongs to and cannot be scoped down. <strong>Update the <code>RENDER_API_KEY</code> repo secret in the same breath</strong> or deploys break</td>
+    <td>pasted into a chat transcript against advice; a Render key reaches every workspace the account belongs to and cannot be scoped down. <strong>Update the <code>RENDER_API_KEY</code> repo secret in the same breath</strong> or deploys start 401ing</td>
     <td><span class="pill soon">soon</span></td></tr>
-<tr><td>Delete <code>ads-reach-backfill-*</code></td>
-    <td>complete; they wake the free instance 3 h a night against a 750 h monthly pool</td>
-    <td><span class="pill soon">now</span></td></tr>
-<tr><td>Delete <code>ads-google-backfill-*</code></td>
-    <td>after Postly's last 14 days land tonight</td>
-    <td><span class="pill later">tomorrow</span></td></tr>
+<tr><td>Delete <code>ads-reach-backfill-*</code><br><span class="mono" style="font-weight:400;color:var(--muted)">5 jobs</span></td>
+    <td>the reach backfill completed; they still wake the free instance 3 h a night against a 750 h monthly pool <em>shared with two other free services</em></td>
+    <td><span class="pill now">now</span></td></tr>
+<tr><td>Delete <code>ads-google-backfill-*</code><br><span class="mono" style="font-weight:400;color:var(--muted)">5 jobs</span></td>
+    <td>same, once you have confirmed no brand still has days outstanding — <code>/api/backfill/google?brand=X&amp;budget=10&amp;dry=1</code>, <code>pending_after: 0</code> everywhere means done</td>
+    <td><span class="pill now">check, then now</span></td></tr>
+<tr><td>Set <code>ROOT_OPEN=0</code></td>
+    <td>closes the bare URL once all five teams hold their own link. <strong>Until then the per-brand links restrict nothing</strong>, because the URL everyone already has still shows every brand</td>
+    <td><span class="pill soon">at handover</span></td></tr>
+<tr><td>Rotate the per-brand links</td>
+    <td>the four original values were printed into a chat transcript at the owner's request. One env var each, no deploy</td>
+    <td><span class="pill later">optional</span></td></tr>
 <tr><td>Rotate <code>HISTORY_TOKEN</code></td>
-    <td>echoed into a transcript by a gcloud error; carried by 9+ scheduler jobs, so rotation means updating each</td>
+    <td>echoed into a transcript by a gcloud error; carried by ~54 scheduler jobs, so rotating means updating every one — script it</td>
     <td><span class="pill later">optional</span></td></tr>
 <tr><td>Request Meta Standard Access</td>
-    <td>raises the rate limits that currently force degraded budget and status reads</td>
+    <td>raises the rate limits that still force degraded budget and status reads on the busiest accounts</td>
     <td><span class="pill later">optional</span></td></tr>
-<tr><td>Set <code>ROOT_OPEN=0</code></td>
-    <td>closes the bare URL once every team holds its own link</td>
-    <td><span class="pill later">at handover</span></td></tr>
+<tr><td>Reconnect GitHub in the Render dashboard</td>
+    <td>optional — it would let the deploy Action be deleted, but the Action verifies more than Render's own hook would</td>
+    <td><span class="pill later">optional</span></td></tr>
 </tbody></table></div>
+
+<div class="note crit">
+  <span class="lbl">Read the free-tier budget before adding anything scheduled</span>
+  <p>The Render workspace runs three free web services sharing <strong>750 instance-hours a
+  month</strong>. Exhausting the pool suspends <strong>all</strong> of them, not just this
+  one. That is why the finished backfill jobs above matter, and why there is no 24/7
+  keep-alive pinger — one would cost 744 h by itself.</p>
+</div>
 
 <!-- ══════════════════ THE RUNBOOK ══════════════════ -->
 <div class="doc-head">
@@ -722,7 +761,7 @@ Reverse any of them if there is a reason — but know what you are reversing.</p
 <div class="dec">
   <h4>No login</h4>
   <p>The owner was told plainly that a public URL exposes live spend, budgets and every ad
-  name for seven accounts, and chose no login anyway. <strong>Do not re-litigate this
+  name for nine accounts, and chose no login anyway. <strong>Do not re-litigate this
   unprompted.</strong> <code>ADMIN_PASS</code> switches HTTP basic auth on with no code
   change — path already tested. Offer it if the exposure becomes a real problem; not
   otherwise.</p>
@@ -820,7 +859,7 @@ Reverse any of them if there is a reason — but know what you are reversing.</p
 
 <footer>
   <span>Ads Performance · handoff pack</span>
-  <span>docs/ in krishnaprasun/postly-cpt-dashboard · 27 Aug 2026</span>
+  <span>docs/ in krishnaprasun/postly-cpt-dashboard · 3 Sep 2026</span>
 </footer>
 
 </main>
