@@ -1957,14 +1957,25 @@ const CP_SRC = 'From the Classplus product database (Redash), not from Meta or B
 
 function cpKpis(c, sp){
   const p = DATA.classplus, m = c.cp_mandates, su = c.cp_signups;
+  /* Spend is minutes old and the product DB can be hours old — that ratio then reads as a
+     collapse in conversion when it is only two clocks. On 3 Sept the DB had not re-run
+     since 02:35 while spend was current to noon, and cost per mandate showed Rs4,249
+     against a real Rs240. Anything past an hour and a half says so on the tile itself. */
+  const stale = p && p.age_min !== null && p.age_min > 90;
+  const staleNote = stale
+    ? `<br><span class="warn">Product DB last ran ${p.retrieved_at} · ${
+        p.age_min > 120 ? Math.round(p.age_min/60) + 'h' : p.age_min + ' min'} old</span>
+       — spend below is current, so this reads high` : '';
   return `
    <div class="kpi" title="${CP_SRC}"><div class="k">Cost / mandate</div>
-     <div class="v ${cls(cpt(sp,m))}">${cptTxt(sp,m)}</div>
+     <div class="v ${stale ? '' : cls(cpt(sp,m))}">${cptTxt(sp,m)}</div>
      <div class="s">${num(m)} mandates <em>from the product DB</em> ·
-       Branch says ${num(c[EV])} trials</div></div>
+       Branch says ${num(c[EV])} trials${staleNote}</div></div>
    <div class="kpi" title="${CP_SRC}"><div class="k">Signups</div><div class="v">${num(su)}</div>
      <div class="s">${cptTxt(sp,su)} each · ${pct(m,su)} take a mandate ·
-       <em>product DB</em></div></div>
+       <em>product DB</em>${stale ? ` · <span class="warn">${
+         p.age_min > 120 ? Math.round(p.age_min/60) + 'h' : p.age_min + ' min'} old</span>`
+         : ''}</div></div>
    <div class="kpi" title="${CP_SRC}"><div class="k">Day-0</div><div class="v">${pct(c.cp_d0a,m)}</div>
      <div class="s">active on day 0 · ${pct(c.cp_d0c,m)} cancelled ·
        Classplus ${p.age_min===null?'':p.age_min+' min old'}</div></div>`;
