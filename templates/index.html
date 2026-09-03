@@ -3702,6 +3702,47 @@ function renderMatrix(){
   MXSIG = sig;
 }
 
+/* In the totals shape the file carries BOTH: every chosen metric's total for the range,
+   then that same metric day by day. Exporting a totals view and getting only dates back
+   meant re-deriving in a spreadsheet the very numbers that were on screen — and exporting
+   only totals would throw away the shape of the month. One row per thing, so a pivot can
+   go either way. */
+function totalsCsv(){
+  if(!SERIES) return;
+  const dates = SERIES.dates, cols = MCOLS.filter(k => METRICS[k]);
+  const rows = matrixRows();
+  const head = [(SERIES.dim_labels||{})[SERIES.dim] || SERIES.dim, 'platform', 'stage']
+    .concat(cols.map(k => 'total_' + k))
+    .concat(...cols.map(k => dates.map(d => k + '_' + d)));
+  const line = a => a.join(',');
+  const out = [line(head.map(csvCell))];
+  for(const r of rows){
+    const cells = [csvCell(r.label), csvCell(r.platform), csvCell(r.stage)];
+    for(const k of cols){
+      const v = metricTotal(r, k);
+      cells.push(v === null || v === undefined || !isFinite(v) ? '' : round2(v));
+    }
+    for(const k of cols)
+      for(const d of dates){
+        const v = METRICS[k].of(r.days[d]);
+        cells.push(v === null || !isFinite(v) ? '' : round2(v));
+      }
+    out.push(line(cells));
+  }
+  const md = proOn() ? ' Trials and any cost-per figure here are MODELLED (pro rata).' : '';
+  out.push('', line([csvCell(
+    `${SERIES.brand_label} · ${SERIES.dim} · totals and day by day · ` +
+    `${cols.map(k => METRICS[k].label).join(', ')} · ${SERIES.since} to ${SERIES.until}` +
+    ` · exported ${new Date(Date.now()+330*60000).toISOString().slice(0,16).replace('T',' ')} IST.` + md)]));
+  download(`${SERIES.brand}_${proOn() ? 'prorata_' : ''}${SERIES.dim}_totals_and_by_date_${
+    SERIES.since}_to_${SERIES.until}.csv`, out.join('\r\n') + '\r\n');
+}
+
+function seriesCsv(){
+  if(TAB === 'matrix' && SHAPE === 'totals') return totalsCsv();
+  return matrixCsv();
+}
+
 function matrixCsv(){
   if(!SERIES) return;
   const m = metricOf(), dates = SERIES.dates;
@@ -5334,7 +5375,7 @@ document.getElementById('sLines').onchange = () => {
   MLINES = parseInt(document.getElementById('sLines').value, 10) || 0;
   renderTable(); noteFor();
 };
-if(CAN_EXPORT) document.getElementById('sCsv').onclick = matrixCsv;
+if(CAN_EXPORT) document.getElementById('sCsv').onclick = seriesCsv;
 if(CAN_ACT) document.getElementById('lGo').onclick = () => loadLongevity(true);
 document.getElementById('lWin').onchange = () => loadLongevity(false);
 for(const id of ['lq','lFrom','lTo','lActive'])
