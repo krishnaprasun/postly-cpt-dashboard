@@ -253,6 +253,28 @@ BRANDS = {
         # the warn amber to use as chrome.
         "theme": {"accent": "#6A4BD8", "dark": "#4A32A6", "light": "#F1EDFD"},
     },
+    "prepshots": {
+        "label": "PrepShots",
+        "testing_re": TESTING_RE_DEFAULT,
+        "accounts": [{"id": "act_1361292779186355", "name": "PrepShots"}],
+        # AppsFlyer, not Branch — the only brand of the five that does. `af_app` is the
+        # Android package AppsFlyer keys the app by.
+        "provider": "appsflyer",
+        "af_app": "com.getmyprepshots.app",
+        # Named exactly like Postly's, which is why they read as the same two columns.
+        # The app also records nc_after30min, nc_30to60min and nc_1hrto24hr; the 10-minute
+        # one is used so the column means the same thing on every brand.
+        "events": {"t101": "prepshots_trial_started_backend",
+                   "t10m": "prepshots_trial_nc_after10min_backend"},
+        "labels": {"t101": "Trials", "t10m": "NC 10m"},
+        "event_note": {"t101": "prepshots_trial_started_backend",
+                       "t10m": "prepshots_trial_nc_after10min_backend"},
+        "cpt_target": None,
+        "classplus": False,
+        "logo": "brand/prepshots.svg",
+        # Warm coral, distinct from the four already in use and from the good/warn/bad set.
+        "theme": {"accent": "#C2455E", "dark": "#8E2C41", "light": "#FDECEF"},
+    },
     "superpass": {
         "label": "SuperPass",
         "testing_re": TESTING_RE_DEFAULT,
@@ -344,16 +366,42 @@ def brands_for(key):
 
 
 def brand(name):
-    """One brand's config, with its Branch pair resolved. Unknown name -> default."""
+    """One brand's config, with its attribution credentials resolved.
+
+    A brand whose vendor cannot answer has its events blanked, which is how the rest of
+    the app knows to hide the trial columns rather than draw zeroes. That test used to be
+    "has a Branch pair" — which quietly emptied PrepShots, whose vendor is AppsFlyer, so
+    it built with spend and no trials at all. It asks the provider now.
+    """
     b = dict(BRANDS.get(name) or BRANDS[DEFAULT_BRAND])
     b["key"] = name if name in BRANDS else DEFAULT_BRAND
     b["branch"] = BRANCH.get(b["key"])
-    if not b["branch"]:
+    if not BRAND_HAS_BRANCH(b["key"]):
         b["events"], b["labels"], b["event_note"] = {}, {}, {}
     return b
 
 
 def BRAND_HAS_BRANCH(name):
     """Whether this brand can produce trial counts at all — used by the page to decide
-    what to promise while loading, before any data has come back."""
-    return bool(BRANCH.get(name) and BRANDS.get(name, {}).get("events"))
+    what to promise while loading, before any data has come back.
+
+    "Branch" in the name is now a historical accident: PrepShots measures on AppsFlyer.
+    What the caller wants to know is whether SOME attribution vendor can answer, so the
+    provider decides which credential to look for.
+    """
+    b = BRANDS.get(name, {})
+    if not b.get("events"):
+        return False
+    if b.get("provider") == "appsflyer":
+        return bool(b.get("af_app") and APPSFLYER_TOKEN)
+    return bool(BRANCH.get(name))
+
+
+def _af_token():
+    t = os.environ.get("APPSFLYER_TOKEN", "").strip()
+    if t:
+        return t
+    return (_read("~/.anthropic/appsflyer_token") or "").strip()
+
+
+APPSFLYER_TOKEN = _af_token()

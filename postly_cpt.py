@@ -24,6 +24,7 @@ import json, os, re, sys, threading, time, urllib.error, urllib.parse, urllib.re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
+import appsflyer as AF
 import config as C
 import google_ads as GA
 import history as H
@@ -1779,6 +1780,27 @@ BRANCH_LIVE_TRIES = int(os.environ.get("BRANCH_LIVE_TRIES", "2"))
 BRANCH_BACKFILL_TRIES = int(os.environ.get("BRANCH_BACKFILL_TRIES", "5"))
 
 
+def trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
+    """Per-day trials by ad name, from whichever vendor this brand measures on.
+
+    One shape in, one shape out — {date: {event_key: {ad_name: unique users}}} — so the
+    pro-rata split, the ad-name join, the day store and every view stay ignorant of which
+    vendor answered. A brand whose vendor is not configured returns nothing rather than
+    raising: its Meta side works regardless and the trial columns simply stay empty.
+    """
+    if (B.get("provider") or "branch") == "appsflyer":
+        if not (B.get("af_app") and AF.available()):
+            return {}
+        # Settled days may spend a raw export — they are written once and never asked for
+        # again. Today and the unsettled tail are re-read hourly and take the aggregate.
+        out = AF.trials_daily(B["af_app"], since, until, B["events"],
+                              install_key=INSTALL_KEY,
+                              raw_until=H.settled_through(today_ist()))
+        out.pop("_sources", None)
+        return out
+    return branch_trials_daily(since, until, B, tries=tries)
+
+
 def branch_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     """{date: {event_key: {ad_name: unique_count}}}, 7-day chunked and fully paged.
 
@@ -2822,7 +2844,7 @@ def window_data(since, until, B, today=None, only=None):
                 prov["branch_at"] = _live_cache.get(lk, {}).get("branch_at")
                 prov["trials_reused"] = True
             else:
-                daily = branch_trials_daily(live_since, live_until, B)
+                daily = trials_daily(live_since, live_until, B)
                 prov["branch_at"] = time.time()
                 _live_put(lk, "branch", daily)
                 with _live_lock:
@@ -2852,7 +2874,7 @@ def snapshot(brand, date):
     if date > H.settled_through(today_ist()):
         return {"ok": False, "date": date, "reason": "not settled yet"}
     meta = {a["id"]: meta_insights_daily(a["id"], date, date) for a in B["accounts"]}
-    daily = branch_trials_daily(date, date, B, tries=BRANCH_BACKFILL_TRIES)
+    daily = trials_daily(date, date, B, tries=BRANCH_BACKFILL_TRIES)
     branch = {ev: dict(by_name) for ev, by_name in (daily.get(date) or {}).items()}
 
     # A day where BOTH sources return nothing is refused, never stored. "No spend that
@@ -3271,7 +3293,7 @@ def series(brand, since, until, dim="script", force=False, store_only=False):
                 by_day.setdefault(r.get("date_start"), {}).setdefault(
                     a["id"], []).append(r)
         try:
-            bd = branch_trials_daily(lo, hi, B)
+            bd = trials_daily(lo, hi, B)
         except Exception:
             bd = {}
         for day in run:
@@ -3439,7 +3461,7 @@ def longevity(brand, since, until, force=False):
             for r in meta_insights_daily(a["id"], lo, hi):
                 by_day.setdefault(r.get("date_start"), {}).setdefault(a["id"], []).append(r)
         try:
-            btrials = branch_trials_daily(lo, hi, B)
+            btrials = trials_daily(lo, hi, B)
         except Exception:
             btrials = {}
         for day in run:
@@ -3595,7 +3617,7 @@ def _tail_days(brand, B, after, today):
         for r in meta_insights_daily(a["id"], lo, hi):
             by_day.setdefault(r.get("date_start"), {}).setdefault(a["id"], []).append(r)
     try:
-        btrials = branch_trials_daily(lo, hi, B)
+        btrials = trials_daily(lo, hi, B)
     except Exception:
         btrials = {}
     return {day: _adset_day(by_day.get(day, {}), btrials.get(day, {}), B["events"])

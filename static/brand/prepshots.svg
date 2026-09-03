@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"
+     role="img" aria-label="PrepShots">
+  <!-- Placeholder mark until the real logo arrives: the initial on the brand colour, so
+       the switcher and the tab icon read correctly rather than showing a broken image. -->
+  <defs>
+    <linearGradient id="psG" gradientUnits="userSpaceOnUse" x1="60" y1="40" x2="460" y2="480">
+      <stop offset="0" stop-color="#D9556D"/><stop offset="1" stop-color="#8E2C41"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#psG)"/>
+  <path d="M170 150 h96 a84 84 0 0 1 0 168 h-42 v76 h-54 Z M224 202 v64 h42
+           a32 32 0 0 0 0-64 Z" fill="#FFFFFF" fill-opacity=".96"/>
+</svg>
