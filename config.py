@@ -272,8 +272,8 @@ BRANDS = {
         "cpt_target": None,
         "classplus": False,
         "logo": "brand/prepshots.svg",
-        # Warm coral, distinct from the four already in use and from the good/warn/bad set.
-        "theme": {"accent": "#C2455E", "dark": "#8E2C41", "light": "#FDECEF"},
+        # Their own blue, from the logo.
+        "theme": {"accent": "#2B6CF6", "dark": "#1B49B0", "light": "#EAF1FE"},
     },
     "superpass": {
         "label": "SuperPass",

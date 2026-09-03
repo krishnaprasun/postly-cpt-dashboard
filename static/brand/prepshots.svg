@@ -1,13 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512"
      role="img" aria-label="PrepShots">
-  <!-- Placeholder mark until the real logo arrives: the initial on the brand colour, so
-       the switcher and the tab icon read correctly rather than showing a broken image. -->
+  <!-- Their P with the play cut out of its bowl. Wordmark left off: at 30px in the brand
+       switcher it would be a smudge, and the name is already beside it. -->
   <defs>
-    <linearGradient id="psG" gradientUnits="userSpaceOnUse" x1="60" y1="40" x2="460" y2="480">
-      <stop offset="0" stop-color="#D9556D"/><stop offset="1" stop-color="#8E2C41"/>
+    <linearGradient id="psG" gradientUnits="userSpaceOnUse" x1="150" y1="60" x2="380" y2="330">
+      <stop offset="0" stop-color="#4A83F7"/>
+      <stop offset="1" stop-color="#1B49E0"/>
     </linearGradient>
   </defs>
-  <rect x="16" y="16" width="480" height="480" rx="112" fill="url(#psG)"/>
-  <path d="M170 150 h96 a84 84 0 0 1 0 168 h-42 v76 h-54 Z M224 202 v64 h42
-           a32 32 0 0 0 0-64 Z" fill="#FFFFFF" fill-opacity=".96"/>
+  <path fill="url(#psG)" d="M178 58 h108 a136 136 0 0 1 0 272 h-52 v96
+        a30 30 0 0 1 -30 30 h-26 a30 30 0 0 1 -30 -30 V88 a30 30 0 0 1 30 -30 Z"/>
+  <path fill="#FFFFFF" d="M234 128 L330 190 a8 8 0 0 1 0 13 L234 265 Z"/>
 </svg>

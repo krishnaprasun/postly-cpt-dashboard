@@ -1780,6 +1780,72 @@ BRANCH_LIVE_TRIES = int(os.environ.get("BRANCH_LIVE_TRIES", "2"))
 BRANCH_BACKFILL_TRIES = int(os.environ.get("BRANCH_BACKFILL_TRIES", "5"))
 
 
+# How long a raw pull of an unsettled day is reused before another is spent. AppsFlyer
+# caps raw exports per app per day; four hours means six at most, and the alternative is
+# either an hourly job that exhausts the allowance by lunchtime or a Today tile that reads
+# zero trials against real spend.
+AF_UNSETTLED_TTL = int(os.environ.get("AF_UNSETTLED_TTL", "14400"))
+
+
+def _af_day_ns(brand):
+    return f"{brand}afday"
+
+
+def _af_unsettled(B, day):
+    """One unsettled day's trials, from a raw pull reused for a few hours.
+
+    The aggregate API cannot answer this: it carries nothing at all for the current day
+    (measured 2026-09-03 — zero rows while raw had the day's events), so the choice is a
+    rationed raw pull or no trials on the view people actually watch. The last good pull
+    is kept in the store and served while it is young, and served STALE rather than
+    dropped when the allowance is gone: an hours-old count against live spend is a
+    legible thing, a zero is a lie.
+    """
+    ns = _af_day_ns(B["key"])
+    blob, ok = (H.get_day_raw(ns, day) if H.available() else (None, False))
+    if ok and isinstance(blob, dict) and time.time() - (blob.get("at") or 0) < AF_UNSETTLED_TTL:
+        return blob.get("data") or {}
+    try:
+        got = AF.trials_daily(B["af_app"], day, day, B["events"],
+                              install_key=INSTALL_KEY, source="raw")
+        got.pop("_sources", None)
+        data = got.get(day) or {}
+        if H.available():
+            H.put_agg(ns, day, {"at": time.time(), "data": data})
+        return data
+    except Exception:
+        if isinstance(blob, dict) and blob.get("data"):
+            return blob["data"]                      # stale, and better than nothing
+        # No pull to be had and nothing kept: fall back to the aggregate, which will be
+        # empty for today and correct for yesterday.
+        try:
+            got = AF.trials_daily(B["af_app"], day, day, B["events"],
+                                  install_key=INSTALL_KEY, source="agg")
+            got.pop("_sources", None)
+            return got.get(day) or {}
+        except Exception:
+            return {}
+
+
+def _af_trials(since, until, B):
+    """Settled days from the raw export, unsettled ones from the rationed pull above."""
+    settled = H.settled_through(today_ist())
+    out = {}
+    old = [d for d in date_range(since, until) if d <= settled]
+    if old:
+        got = AF.trials_daily(B["af_app"], old[0], old[-1], B["events"],
+                              install_key=INSTALL_KEY, raw_until=settled)
+        got.pop("_sources", None)
+        out.update(got)
+    for d in date_range(since, until):
+        if d <= settled:
+            continue
+        per = _af_unsettled(B, d)
+        if per:
+            out[d] = per
+    return out
+
+
 def trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     """Per-day trials by ad name, from whichever vendor this brand measures on.
 
@@ -1791,13 +1857,7 @@ def trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     if (B.get("provider") or "branch") == "appsflyer":
         if not (B.get("af_app") and AF.available()):
             return {}
-        # Settled days may spend a raw export — they are written once and never asked for
-        # again. Today and the unsettled tail are re-read hourly and take the aggregate.
-        out = AF.trials_daily(B["af_app"], since, until, B["events"],
-                              install_key=INSTALL_KEY,
-                              raw_until=H.settled_through(today_ist()))
-        out.pop("_sources", None)
-        return out
+        return _af_trials(since, until, B)
     return branch_trials_daily(since, until, B, tries=tries)
 
 
