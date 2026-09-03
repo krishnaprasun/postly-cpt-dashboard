@@ -381,6 +381,18 @@ def brand(name):
     return b
 
 
+# What to call the attribution source on screen. The page used to say "Branch" in a
+# dozen places because Branch was the only one; PrepShots measures on AppsFlyer, and a
+# label that names the wrong vendor is worse than no label — it tells a reader to go and
+# check a system that has none of these numbers in it.
+ATTRIB_LABEL = {"branch": "Branch", "appsflyer": "AppsFlyer"}
+
+
+def attrib(name):
+    b = BRANDS.get(name) or {}
+    return ATTRIB_LABEL.get(b.get("provider") or "branch", "Branch")
+
+
 def BRAND_HAS_BRANCH(name):
     """Whether this brand can produce trial counts at all — used by the page to decide
     what to promise while loading, before any data has come back.

@@ -713,7 +713,8 @@ def index(key=None):
                         "branch": bool(C.BRAND_HAS_BRANCH(k)),
                         "classplus": bool(C.BRANDS[k]["classplus"]),
                         "logo": C.BRANDS[k]["logo"],
-                        "graduation": bool(C.BRANDS[k].get("graduation", True))}
+                        "graduation": bool(C.BRANDS[k].get("graduation", True)),
+                        "attrib": C.attrib(k)}
                     for k in allowed})
 
 

@@ -1150,6 +1150,11 @@ const rangeLabel = () => CUSTOM
   ? (CUSTOM.since===CUSTOM.until ? CUSTOM.since : `${CUSTOM.since} → ${CUSTOM.until}`)
   : document.getElementById('range').selectedOptions[0].textContent;
 
+/* Which attribution vendor this brand measures on. Four are Branch, PrepShots is
+   AppsFlyer, and naming the wrong one sends a reader to a system that has none of these
+   numbers in it. */
+const ATTRIB = () => (BRANDS[BRAND] || {}).attrib || 'Branch';
+
 const rs = n => '₹' + Math.round(n).toLocaleString('en-IN');
 const num = n => Math.round(n).toLocaleString('en-IN');
 /* No target -> no verdict. Every cost-per cell renders plain, which is the honest
@@ -1217,7 +1222,7 @@ function googAge(){
    under it untouched and look broken -- which is exactly what the first version did. */
 const SRCS = {
   meta:   {age: () => pullAge('meta_age_sec'),   what: 'Meta spend'},
-  trials: {age: () => pullAge('trials_age_sec'), what: 'Branch trials'},
+  trials: {age: () => pullAge('trials_age_sec'), what: ATTRIB() + ' trials'},
   google: {age: googAge,                          what: 'Google Ads'},
   both:   {age: () => { const a = pullAge('meta_age_sec'), b = googAge();
                         return (a === null || b === null) ? (a === null ? b : a)
@@ -1319,7 +1324,7 @@ function stampNow(){
           .replace(' ago','')}</b>${due !== null && secs < 5400
           ? ` · next in ${Math.round(due/60)} min` : ''}`;
     el.title = `Meta spend pulled ${DATA.meta_as_of || '—'} IST`
-      + (DATA.trials_as_of ? `\nBranch trials pulled ${DATA.trials_as_of} IST` : '')
+      + (DATA.trials_as_of ? `\n${ATTRIB()} trials pulled ${DATA.trials_as_of} IST` : '')
       + (DATA.budget_as_of ? `\nBudgets and statuses as of ${DATA.budget_as_of} IST` : '')
       + `\nA scheduled job fetches once an hour; the page reads what it stored.`;
     return;
@@ -1344,7 +1349,7 @@ function stampNow(){
   /* The assembly time is not useless -- it is what the server cache and the browser
      cache are keyed on -- it just is not the headline. */
   el.title = `Meta spend pulled ${DATA.meta_as_of || '—'} IST`
-    + (DATA.trials_as_of ? `\nBranch trials pulled ${DATA.trials_as_of} IST` : '')
+    + (DATA.trials_as_of ? `\n${ATTRIB()} trials pulled ${DATA.trials_as_of} IST` : '')
     + (DATA.budget_as_of ? `\nBudgets and statuses as of ${DATA.budget_as_of} IST` : '')
     + `\nPayload assembled ${DATA.generated_at}`
     + (DATA.from_cache ? '\nServed from this browser\'s cache' : '');
@@ -1379,7 +1384,7 @@ function veil(on){
   const B = BRANDS[BRAND] || {};
   document.getElementById('veilSrc').innerHTML =
     [`Meta — spend, budgets and statuses, ${B.accounts||'all'} ad account${B.accounts===1?'':'s'}`]
-    .concat(B.branch ? ['Branch — trials by ad name'] : [])
+    .concat(B.branch ? [`${B.attrib || 'Branch'} — trials by ad name`] : [])
     .concat(B.classplus ? ['Classplus — signups and trial mandates'] : [])
     .map(t => `<div><span class="vdot"></span>${t}</div>`).join('');
   veilAt = Date.now();
@@ -1797,7 +1802,7 @@ function kpis(){
       const cnt = (a, b) => (a === null || b === null || !b) ? null : 100 * (a - b) / b;
       const cGap = cnt(gc, tr);
       document.getElementById('kpis').innerHTML = `
-       <div class="kpi hero pairA"><div class="k">CPT<span class="src branch">Branch</span></div>
+       <div class="kpi hero pairA"><div class="k">CPT<span class="src branch">${ATTRIB()}</span></div>
          <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
          <div class="s">${waiting ? '<span class="spin"></span>loading Google'
            : T===null ? `no target set · ${tr===null?'—':num(tr)} trials`
@@ -1811,7 +1816,7 @@ function kpis(){
        <div class="kpi"><div class="k">Spend${srcBtn('google')}</div>
          <div class="v">${sp ? rs(sp) : dash}</div>
          <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
-       <div class="kpi"><div class="k">Trials<span class="src branch">Branch</span>${srcBtn('google')}</div>
+       <div class="kpi"><div class="k">Trials<span class="src branch">${ATTRIB()}</span>${srcBtn('google')}</div>
          <div class="v">${(waiting || tr === null) ? dash : num(tr)}</div>
          <div class="s">${waiting ? '<span class="spin"></span>loading Google'
            : tr === null ? `unavailable — ${(gt && gt.why) || 'Branch did not answer'}`
@@ -1821,7 +1826,7 @@ function kpis(){
          <div class="s">${gc===null ? 'unavailable, not zero'
            : cGap===null ? (gt.convEvent || 'the trial event')
            : `${cGap>0?'+':''}${cGap.toFixed(0)}% vs Branch's count`}</div></div>
-       <div class="kpi"><div class="k">Installs<span class="src branch">Branch</span>${srcBtn('google')}</div>
+       <div class="kpi"><div class="k">Installs<span class="src branch">${ATTRIB()}</span>${srcBtn('google')}</div>
          <div class="v">${(waiting || ins === null) ? dash : num(ins)}</div>
          <div class="s">${ins && sp ? `${rs(sp/ins)} each`
            : ins === null ? 'unavailable, not zero' : 'no CPI yet'}</div></div>`;
@@ -1921,7 +1926,7 @@ function kpis(){
        ? `${num(MT.rows)} sit on the ad rows below · <span class="warn">${num(MT.off)}</span>
           name an ad with no spend in this window`
        : (DATA.event_note[EV]||EV)}${SEG==='blended' ? ''
-       : ` · ${segLbl} campaigns only`}</div></div>`
+       : ` · ${segLbl} campaigns only`} · via <b>${ATTRIB()}</b></div></div>`
    : `
    <div class="kpi"><div class="k">Budget/day${srcBtn('meta')}</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) +
@@ -1952,7 +1957,8 @@ function budgetAge(){
    "cost per mandate" sitting beside CPT looks like another number Meta or Branch reported,
    and it is not: it is the product database's own count of who actually put a mandate in
    place. Which of the two you trust decides what gets killed. */
-const CP_SRC = 'From the Classplus product database (Redash), not from Meta or Branch — '
+const CP_SRC = 'From the Classplus product database (Redash), not from Meta or the '
+             + 'attribution SDK — '
              + 'the product\u2019s own count of signups and mandates, joined to ads by ad name.';
 
 function cpKpis(c, sp){
@@ -1970,7 +1976,7 @@ function cpKpis(c, sp){
    <div class="kpi" title="${CP_SRC}"><div class="k">Cost / mandate</div>
      <div class="v ${stale ? '' : cls(cpt(sp,m))}">${cptTxt(sp,m)}</div>
      <div class="s">${num(m)} mandates <em>from the product DB</em> ·
-       Branch says ${num(c[EV])} trials${staleNote}</div></div>
+       ${ATTRIB()} says ${num(c[EV])} trials${staleNote}</div></div>
    <div class="kpi" title="${CP_SRC}"><div class="k">Signups</div><div class="v">${num(su)}</div>
      <div class="s">${cptTxt(sp,su)} each · ${pct(m,su)} take a mandate ·
        <em>product DB</em>${stale ? ` · <span class="warn">${
@@ -2528,7 +2534,7 @@ function renderGoogle(){
     const bar = w => `<div class="skl" style="width:${w}"></div>`;
     tbl.querySelector('thead').innerHTML =
       `<tr class="grp"><th colspan="2"></th><th>Cost</th>
-        <th class="gA gsep" colspan="4">Branch attribution</th>
+        <th class="gA gsep" colspan="4">${ATTRIB()} attribution</th>
         <th class="gsep" colspan="2">Google attribution</th>
         <th class="gsep">Running now</th></tr>
        <tr><th class="l">Campaign</th><th class="l">Ad group</th><th>Spend</th>
@@ -2550,7 +2556,7 @@ function renderGoogle(){
   const nameCols = byCamp ? 1 : 2;
   tbl.querySelector('thead').innerHTML =
     `<tr class="grp"><th colspan="${nameCols}"></th><th>Cost</th>
-      <th class="gA gsep" colspan="4">Branch attribution</th>
+      <th class="gA gsep" colspan="4">${ATTRIB()} attribution</th>
       <th class="gsep" colspan="2">Google attribution</th>
       <th class="gsep">Running now</th></tr>` +
     '<tr>' + `<th class="l">Campaign</th>` + (byCamp ? '' : `<th class="l">Ad group</th>`) +
