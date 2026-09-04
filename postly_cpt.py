@@ -25,6 +25,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
 import appsflyer as AF
+import redash as RD
 import config as C
 import google_ads as GA
 import history as H
@@ -1858,6 +1859,15 @@ def trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
         if not (B.get("af_app") and AF.available()):
             return {}
         return _af_trials(since, until, B)
+    if (B.get("provider") or "branch") == "redash":
+        # No settled/unsettled split and no rationing: one query answers the whole range,
+        # today included, and costs nothing to ask twice. The store still serves settled
+        # days ahead of this, so days already written from AppsFlyer keep their numbers —
+        # the two sources are 8-20% apart and rewriting them would move history.
+        if not B.get("trials_query"):
+            return {}
+        return RD.trials_daily(C.CLASSPLUS_HOST, B["trials_query"], since, until,
+                               B["events"])
     return branch_trials_daily(since, until, B, tries=tries)
 
 
@@ -1937,6 +1947,11 @@ def is_google(partner):
 
 def google_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     """Google's own trials, from whichever vendor this brand measures on."""
+    if (B.get("provider") or "branch") == "redash":
+        # The Redash query attributes a mandate to a campaign, never to an ad group, and
+        # this join needs the ad group because that is the rung Google Ads reports spend
+        # against. Nothing rather than a join at the wrong grain.
+        return {}
     if (B.get("provider") or "branch") == "appsflyer":
         if not (B.get("af_app") and AF.available()):
             return {}

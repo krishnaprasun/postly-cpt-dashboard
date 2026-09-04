@@ -163,6 +163,37 @@ CLASSPLUS_HOST, CLASSPLUS_QUERIES = _classplus()
 CLASSPLUS_ON = bool(CLASSPLUS_QUERIES)
 
 
+def _redash_trials():
+    """{brand: (query_id, api_key)} — one Redash query per brand whose trials come from
+    the product DB rather than from an attribution vendor.
+
+    Shaped like CLASSPLUS_QUERIES because it is the same Redash and the same kind of
+    secret; kept separate because it answers a different question. Classplus queries
+    carry brand-level signups and mandates, this one carries trials by ad name, and a
+    reader that confused the two would put mandates in the Trials column.
+
+      env   REDASH_TRIALS_PREPSHOTS   "19795:key"
+      file  ~/.anthropic/redash_trials.json   {"prepshots": {"id": ..., "key": ...}}
+    """
+    out = {}
+    try:
+        j = json.loads(_read("~/.anthropic/redash_trials.json") or "{}")
+    except ValueError:
+        j = {}
+    for b in _BRAND_KEYS:
+        blk = j.get(b) or {}
+        pair = os.environ.get("REDASH_TRIALS_" + b.upper(), "").strip()
+        qid, _, key = pair.partition(":")
+        qid = (qid or str(blk.get("id") or "")).strip()
+        key = (key or str(blk.get("key") or "")).strip()
+        if qid and key:
+            out[b] = (qid, key)
+    return out
+
+
+REDASH_TRIALS = _redash_trials()
+
+
 # ------------------------------------------------------------- brands ------
 # Three brands share this dashboard because they share everything that is hard about
 # it: Meta's rate limits, the roster caching, the ad-name join, the degradation rules.
@@ -257,18 +288,19 @@ BRANDS = {
         "label": "PrepShots",
         "testing_re": TESTING_RE_DEFAULT,
         "accounts": [{"id": "act_1361292779186355", "name": "PrepShots"}],
-        # AppsFlyer, not Branch — the only brand of the five that does. `af_app` is the
-        # Android package AppsFlyer keys the app by.
-        "provider": "appsflyer",
-        "af_app": "com.getmyprepshots.app",
-        # Named exactly like Postly's, which is why they read as the same two columns.
-        # The app also records nc_after30min, nc_30to60min and nc_1hrto24hr; the 10-minute
-        # one is used so the column means the same thing on every brand.
-        "events": {"t101": "prepshots_trial_started_backend",
-                   "t10m": "prepshots_trial_nc_after10min_backend"},
-        "labels": {"t101": "Trials", "t10m": "NC 10m"},
-        "event_note": {"t101": "prepshots_trial_started_backend",
-                       "t10m": "prepshots_trial_nc_after10min_backend"},
+        # The product DB through Redash, not an attribution vendor — the only brand of
+        # the five that measures this way. AppsFlyer answers the current day only from a
+        # raw export capped per app per day, and three unsettled days re-read every few
+        # hours spent that allowance before noon, leaving today's trials at zero. The
+        # product DB has no cap and knows today. `events` maps to CSV COLUMN names here,
+        # where a vendor brand maps to event names.
+        "provider": "redash",
+        # One column, so one trial figure. AppsFlyer's NC 10m has no equivalent in this
+        # query; the column is dropped for this brand rather than filled with something
+        # that means something else. It comes back if the query grows the column.
+        "events": {"t101": "Mandates"},
+        "labels": {"t101": "Trials"},
+        "event_note": {"t101": "Mandates (product DB)"},
         "cpt_target": None,
         "classplus": False,
         "logo": "brand/prepshots.svg",
@@ -376,6 +408,7 @@ def brand(name):
     b = dict(BRANDS.get(name) or BRANDS[DEFAULT_BRAND])
     b["key"] = name if name in BRANDS else DEFAULT_BRAND
     b["branch"] = BRANCH.get(b["key"])
+    b["trials_query"] = REDASH_TRIALS.get(b["key"])
     if not BRAND_HAS_BRANCH(b["key"]):
         b["events"], b["labels"], b["event_note"] = {}, {}, {}
     return b
@@ -385,7 +418,7 @@ def brand(name):
 # dozen places because Branch was the only one; PrepShots measures on AppsFlyer, and a
 # label that names the wrong vendor is worse than no label — it tells a reader to go and
 # check a system that has none of these numbers in it.
-ATTRIB_LABEL = {"branch": "Branch", "appsflyer": "AppsFlyer"}
+ATTRIB_LABEL = {"branch": "Branch", "appsflyer": "AppsFlyer", "redash": "Classplus"}
 
 
 def attrib(name):
@@ -406,6 +439,8 @@ def BRAND_HAS_BRANCH(name):
         return False
     if b.get("provider") == "appsflyer":
         return bool(b.get("af_app") and APPSFLYER_TOKEN)
+    if b.get("provider") == "redash":
+        return bool(REDASH_TRIALS.get(name))
     return bool(BRANCH.get(name))
 
 
