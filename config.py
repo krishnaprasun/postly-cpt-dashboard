@@ -234,6 +234,16 @@ BRANDS = {
                        "t10m": "postly_trial_nc_after10min_backend"},
         # Raised from 150 on 2026-08-31 at the owner's instruction.
         "cpt_target": 180,
+        # Postly names every AD for the creator in it, and Meta has no field for that, so
+        # the name is the only record. Measured 2026-09-07: 1,051 of 1,136 ad names carry
+        # one of these, against 2 of 333 ad SET names — the ad is the rung that knows,
+        # which is why the page groups ads and not ad sets.
+        # ORDER MATTERS: "Aftab_competitor" is tested before "Aftab", because the second
+        # is a substring of the first and matching the other way round would file every
+        # competitor ad under Aftab. Matching is case-insensitive, first hit wins, and an
+        # ad naming none of these lands in Unassigned rather than being dropped, so the
+        # creator rows still sum to the brand.
+        "creators": ["Aftab_competitor", "Aftab", "Shubham"],
         # Postly stopped running testing campaigns on 2026-08-15 — every ad set now
         # launches straight into a trial campaign — so there is no testing-to-trial
         # funnel to show and the Graduation view is hidden rather than left empty.

@@ -4395,6 +4395,12 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         "events": list(EVENTS),
         "event_labels": B["labels"],
         "event_note": B["event_note"],
+        # The creator tokens this brand names its ad sets after, in match order. Absent
+        # or empty for every brand but Postly, and the page hides the view when it is.
+        # The grouping itself happens in the browser off the ad set rows that are already
+        # on the page: it costs no payload, and it inherits the segment filter, the
+        # account and campaign scopes and the pro-rata uplift for free.
+        "creators": B.get("creators") or [],
         # None means "show the number, do not colour it": a target nobody has agreed
         # on is worse than none, because a red cell reads as an instruction.
         "cpt_target": B["cpt_target"],
