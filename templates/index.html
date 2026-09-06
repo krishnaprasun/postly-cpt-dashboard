@@ -1618,7 +1618,7 @@ function editorRows(){
   for(const a of (DATA.ads || []).filter(inSeg)){
     const c = editorOf(a.name);
     let r = out.get(c);
-    if(!r){ r = {name: c, ads: 0, active_ads: 0, _sets: new Set()};
+    if(!r){ r = {name: c, ads: 0, active_ads: 0};
             SUM.forEach(k => r[k] = 0); out.set(c, r); }
     for(const k of SUM) r[k] += (a[k] || 0);
     /* Both counts, spelled out. Everywhere else on this page a column headed "Ads"
@@ -1627,14 +1627,12 @@ function editorRows(){
        the reader guessing which of the two it meant. */
     r.ads += 1;
     if(a.active) r.active_ads += 1;
-    if(a.adset_id) r._sets.add(a.adset_id);
   }
   /* Unassigned is a warning, not a editor: it sits last however the table is sorted so
      it never reads as the top performer, and its presence means an ad was named off
      convention. */
-  return [...out.values()].map(r => {
-    r.active_adsets = r._sets.size; delete r._sets; return r;
-  }).sort((a, b) => (a.name === EDITOR_NONE) - (b.name === EDITOR_NONE) || b.spend - a.spend);
+  return [...out.values()].sort((a, b) =>
+    (a.name === EDITOR_NONE) - (b.name === EDITOR_NONE) || b.spend - a.spend);
 }
 /* Campaign, ad set and ad rows carry their own tag and are filtered, not recomputed. */
 const inSeg = o => SEG === 'blended' || !o.seg || o.seg === SEG;
@@ -4073,7 +4071,6 @@ const COLS = {
     {k:'cpmille', t:'CPM', kind:'rs'},
     {k:'hook', t:'Hook', kind:'ctr'},
     {k:'thru', t:'ThruPlay', kind:'ctr'},
-    {k:'active_adsets', t:'Ad sets', kind:'num'},
     {k:'active_ads', t:'Live ads', kind:'num'},
     {k:'ads', t:'Total ads', kind:'num'}],
   ads: [
