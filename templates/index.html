@@ -910,8 +910,8 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <button data-t="campaigns" title="One row per campaign">Campaigns <i id="n-campaigns"></i></button>
     <button data-t="adsets" title="One row per ad set">Ad sets <i id="n-adsets"></i></button>
     <button data-t="ads" title="One row per ad — click a name to see the creative">Ads <i id="n-ads"></i></button>
-    <button data-t="creators"
-            title="One row per creator, grouped from the ad name">Creators <i id="n-creators"></i></button>
+    <button data-t="editors"
+            title="One row per editor, grouped from the ad name">Editors <i id="n-editors"></i></button>
     <button data-t="longevity"
             title="How long each ad set has kept spending: when it went live, days spent, whether it stopped">Lifespan <i id="n-longevity"></i></button>
     <button data-t="trends" title="One line per row, day by day">Daily trend</button>
@@ -1586,8 +1586,8 @@ const totals = () => (SEG === 'blended' || !DATA.segments)
 const acctRows = () => (SEG === 'blended' || !DATA.accounts_by_seg)
   ? DATA.accounts : DATA.accounts_by_seg[SEG];
 
-/* ---------- creators ----------
-   Postly records the creator in the AD name -- measured 2026-09-07: 1,051 of 1,136 ads
+/* ---------- editors ----------
+   Postly records the editor in the AD name -- measured 2026-09-07: 1,051 of 1,136 ads
    carry one of the tokens, against 2 of 333 ad SET names, so the ad is the rung that
    knows. Meta has no field for it; the name is the only record.
 
@@ -1598,25 +1598,25 @@ const acctRows = () => (SEG === 'blended' || !DATA.accounts_by_seg)
 
    First hit wins and the order comes from the server: "Aftab_competitor" is tested before
    "Aftab" because the second is a substring of the first. An ad matching none of them
-   lands in Unassigned rather than vanishing -- creator rows have to sum to the brand, or
+   lands in Unassigned rather than vanishing -- editor rows have to sum to the brand, or
    the table is quietly lying about the total. */
-const CREATOR_NONE = 'Unassigned';
-function creatorOf(name){
+const EDITOR_NONE = 'Unassigned';
+function editorOf(name){
   const n = (name || '').toLowerCase();
-  for(const c of (DATA.creators || [])) if(n.includes(c.toLowerCase())) return c;
-  return CREATOR_NONE;
+  for(const c of (DATA.editors || [])) if(n.includes(c.toLowerCase())) return c;
+  return EDITOR_NONE;
 }
-function creatorRows(){
-  if(!(DATA.creators || []).length) return [];
+function editorRows(){
+  if(!(DATA.editors || []).length) return [];
   /* No budget column, deliberately. Budget is set on the AD SET and 20 of 326 ad sets
-     run more than one creator's ads, so a per-creator budget can only ever be a split of
+     run more than one editor's ads, so a per-editor budget can only ever be a split of
      someone else's number -- and a budget column reads as a figure somebody set, not as a
      model. Every other metric here is summed from measured ad rows. */
   const SUM = ['spend','t101','t10m','inst','imp','clk','imp_spend','vv','tp','vimp',
                'cp_signups','cp_mandates','cp_d0a','cp_d0c'];
   const out = new Map();
   for(const a of (DATA.ads || []).filter(inSeg)){
-    const c = creatorOf(a.name);
+    const c = editorOf(a.name);
     let r = out.get(c);
     if(!r){ r = {name: c, active_ads: 0, _sets: new Set()};
             SUM.forEach(k => r[k] = 0); out.set(c, r); }
@@ -1624,12 +1624,12 @@ function creatorRows(){
     if(a.active) r.active_ads += 1;
     if(a.adset_id) r._sets.add(a.adset_id);
   }
-  /* Unassigned is a warning, not a creator: it sits last however the table is sorted so
+  /* Unassigned is a warning, not a editor: it sits last however the table is sorted so
      it never reads as the top performer, and its presence means an ad was named off
      convention. */
   return [...out.values()].map(r => {
     r.active_adsets = r._sets.size; delete r._sets; return r;
-  }).sort((a, b) => (a.name === CREATOR_NONE) - (b.name === CREATOR_NONE) || b.spend - a.spend);
+  }).sort((a, b) => (a.name === EDITOR_NONE) - (b.name === EDITOR_NONE) || b.spend - a.spend);
 }
 /* Campaign, ad set and ad rows carry their own tag and are filtered, not recomputed. */
 const inSeg = o => SEG === 'blended' || !o.seg || o.seg === SEG;
@@ -2459,10 +2459,10 @@ function chanTabsAvail(){
      on Google that was six of the eight. What the channel does not have does not need
      explaining every time you look at it -- the info panel says it once. */
   for(const b of document.getElementById('tabs').children){
-    /* Only Postly records the creator in the ad set name, so on every other brand this
+    /* Only Postly records the editor in the ad set name, so on every other brand this
        would be one row called Unassigned holding the whole account. */
     let on = !allow || allow.includes(b.dataset.t);
-    if(b.dataset.t === 'creators') on = on && !!(DATA.creators || []).length
+    if(b.dataset.t === 'editors') on = on && !!(DATA.editors || []).length
                                          && chanIsMeta();
     b.style.display = on ? '' : 'none';
     b.disabled = !on;
@@ -4059,8 +4059,8 @@ const COLS = {
     {k:'hook', t:'Hook', kind:'ctr'},
     {k:'thru', t:'ThruPlay', kind:'ctr'},
     {k:'active_ads', t:'Ads', kind:'num'}],
-  creators: [
-    {k:'name', t:'Creator', kind:'name'},
+  editors: [
+    {k:'name', t:'Editor', kind:'name'},
     {k:'spend', t:'Spend', kind:'rs'},
     {k:'trials', t:'Trials', kind:'num'},
     {k:'cpt', t:'CPT', kind:'cpt'},
@@ -4144,7 +4144,7 @@ function rows(tab, filtered){
   filtered = filtered !== false;
   if(tab==='combined') return [];
   const base = tab === 'accounts' ? acctRows()
-             : tab === 'creators' ? creatorRows() : DATA[tab];
+             : tab === 'editors' ? editorRows() : DATA[tab];
   const inScope = base.filter(inSeg);
   if(filtered && tab === TAB) fillScopes(inScope);
   let r = inScope.map(o => Object.assign({}, o, {
@@ -4573,7 +4573,7 @@ function render(){
   /* The count on a tab is a promise about the table you will get, so it counts what the
      CURRENT filters leave -- not the unfiltered total. "Ads 400" over a table of 675 rows
      filtered to 311 invites a double-take every time. */
-  for(const t of ['accounts','campaigns','adsets','ads','creators']){
+  for(const t of ['accounts','campaigns','adsets','ads','editors']){
     const el = document.getElementById('n-'+t);
     if(el) el.textContent = rows(t).length;
   }
