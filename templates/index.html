@@ -1618,14 +1618,12 @@ function editorRows(){
   for(const a of (DATA.ads || []).filter(inSeg)){
     const c = editorOf(a.name);
     let r = out.get(c);
-    if(!r){ r = {name: c, ads: 0, active_ads: 0};
+    if(!r){ r = {name: c, active_ads: 0};
             SUM.forEach(k => r[k] = 0); out.set(c, r); }
     for(const k of SUM) r[k] += (a[k] || 0);
-    /* Both counts, spelled out. Everywhere else on this page a column headed "Ads"
-       counts the LIVE ones, which is fine beside an ad set that is itself live or
-       paused -- but an editor row has no status of its own, so "Ads 565" would leave
-       the reader guessing which of the two it meant. */
-    r.ads += 1;
+    /* Live only. Ads that spent inside the window and have since been switched off keep
+       their spend, trials and rates in every figure on the row -- that money went out and
+       those trials happened -- but they are not what "Live ads" is answering. */
     if(a.active) r.active_ads += 1;
   }
   /* Unassigned is a warning, not a editor: it sits last however the table is sorted so
@@ -4074,8 +4072,7 @@ const COLS = {
     {k:'ctr', t:'CTR', kind:'ctr'},
     {k:'cpmille', t:'CPM', kind:'rs'},
     {k:'hook', t:'Hook', kind:'ctr'},
-    {k:'thru', t:'ThruPlay', kind:'ctr'},
-    {k:'ads', t:'Total ads', kind:'num'}],
+    {k:'thru', t:'ThruPlay', kind:'ctr'}],
   ads: [
     {k:'name', t:'Ad', kind:'name'},
     {k:'adset', t:'Ad set', kind:'sub'},
