@@ -1618,9 +1618,14 @@ function editorRows(){
   for(const a of (DATA.ads || []).filter(inSeg)){
     const c = editorOf(a.name);
     let r = out.get(c);
-    if(!r){ r = {name: c, active_ads: 0, _sets: new Set()};
+    if(!r){ r = {name: c, ads: 0, active_ads: 0, _sets: new Set()};
             SUM.forEach(k => r[k] = 0); out.set(c, r); }
     for(const k of SUM) r[k] += (a[k] || 0);
+    /* Both counts, spelled out. Everywhere else on this page a column headed "Ads"
+       counts the LIVE ones, which is fine beside an ad set that is itself live or
+       paused -- but an editor row has no status of its own, so "Ads 565" would leave
+       the reader guessing which of the two it meant. */
+    r.ads += 1;
     if(a.active) r.active_ads += 1;
     if(a.adset_id) r._sets.add(a.adset_id);
   }
@@ -4069,7 +4074,8 @@ const COLS = {
     {k:'hook', t:'Hook', kind:'ctr'},
     {k:'thru', t:'ThruPlay', kind:'ctr'},
     {k:'active_adsets', t:'Ad sets', kind:'num'},
-    {k:'active_ads', t:'Ads', kind:'num'}],
+    {k:'active_ads', t:'Live ads', kind:'num'},
+    {k:'ads', t:'Total ads', kind:'num'}],
   ads: [
     {k:'name', t:'Ad', kind:'name'},
     {k:'adset', t:'Ad set', kind:'sub'},
@@ -4239,7 +4245,10 @@ function cell(o, c){
          title="Open the creative">${o.name||'—'}</a>` : (o.name||'—')) +
       (mgr ? ` <a class="mgr" href="${mgr}" target="_blank" rel="noopener noreferrer"
          title="Open in Meta Ads Manager">&#8599;</a>` : '') +
-      (TAB!=='accounts' && !live ? `<span class="pill">paused</span>`:'') +
+      /* Accounts and editors are not things that can be paused: an account is always
+         there, and an editor is a person whose ads have their own statuses. The pill on
+         an editor row was reading the absence of a status field as "off". */
+      (TAB!=='accounts' && TAB!=='editors' && !live ? `<span class="pill">paused</span>`:'') +
       (o.shared_name ? `<span class="pill">shared name</span>`:'') + `</td>`;
   }
   if(c.kind==='sub') return `<td class="sub" title="${o[c.k]||''}">${o[c.k]||'—'}</td>`;
