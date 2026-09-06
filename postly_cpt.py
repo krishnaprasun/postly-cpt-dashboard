@@ -1168,7 +1168,11 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 # Every other stored artifact already carries a stamp (PRORATA_MODEL, SERIES_SHAPE,
 # row_cap); the payload was the one that did not, and adding video is what found it.
 #   2 - hook rate and ThruPlay (vv / tp / vimp) at every level
-PAYLOAD_SHAPE = 6
+#   7 - `editors`, the tokens the Editors tab groups ad names by. Without the bump the
+#       tab stayed hidden on a restored payload, which is precisely the failure this
+#       stamp exists to prevent -- the field is read to decide whether to SHOW the tab,
+#       so an old payload does not render it blank, it renders nothing at all.
+PAYLOAD_SHAPE = 7
 
 
 def has_vid(r):
