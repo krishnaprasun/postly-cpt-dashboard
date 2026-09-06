@@ -4063,7 +4063,11 @@ const COLS = {
     {k:'thru', t:'ThruPlay', kind:'ctr'},
     {k:'active_ads', t:'Ads', kind:'num'}],
   editors: [
+    /* Live ads leads, ahead of spend: it is the question asked of this table first --
+       how much is each editor actually running right now. The name column stays where
+       it is because it carries the row's share bar and is the row's label. */
     {k:'name', t:'Editor', kind:'name'},
+    {k:'active_ads', t:'Live ads', kind:'num'},
     {k:'spend', t:'Spend', kind:'rs'},
     {k:'trials', t:'Trials', kind:'num'},
     {k:'cpt', t:'CPT', kind:'cpt'},
@@ -4071,7 +4075,6 @@ const COLS = {
     {k:'cpmille', t:'CPM', kind:'rs'},
     {k:'hook', t:'Hook', kind:'ctr'},
     {k:'thru', t:'ThruPlay', kind:'ctr'},
-    {k:'active_ads', t:'Live ads', kind:'num'},
     {k:'ads', t:'Total ads', kind:'num'}],
   ads: [
     {k:'name', t:'Ad', kind:'name'},
