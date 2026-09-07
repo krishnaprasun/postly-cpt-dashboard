@@ -2010,13 +2010,13 @@ function budgetAge(){
 
 /* Classplus reads the product DB rather than the attribution SDK, so it answers a
    different question than Branch does: of the people who signed up through this ad,
-   how many put a mandate in place. Cost/mandate is the same rupees-per-trial unit as
-   CPT and is coloured against the same target, deliberately — it is the second opinion
-   on the number every decision here is made on. */
+   how many put a mandate in place. The COUNT is kept and the cost-per is not — it was
+   removed on 2026-09-08 as a number nobody was acting on, and a spend-derived figure
+   over a hours-old DB count was the one most likely to mislead. */
 /* Said in one place and shown on every tile and column that carries one of these, because
-   "cost per mandate" sitting beside CPT looks like another number Meta or Branch reported,
-   and it is not: it is the product database's own count of who actually put a mandate in
-   place. Which of the two you trust decides what gets killed. */
+   a mandate count sitting beside trials looks like another number Meta or Branch
+   reported, and it is not: it is the product database's own count of who actually put a
+   mandate in place. Which of the two you trust decides what gets killed. */
 const CP_SRC = 'From the Classplus product database (Redash), not from Meta or the '
              + 'attribution SDK — '
              + 'the product\u2019s own count of signups and mandates, joined to ads by ad name.';
@@ -2033,9 +2033,9 @@ function cpKpis(c, sp){
         p.age_min > 120 ? Math.round(p.age_min/60) + 'h' : p.age_min + ' min'} old</span>
        — spend below is current, so this reads high` : '';
   return `
-   <div class="kpi" title="${CP_SRC}"><div class="k">Cost / mandate</div>
-     <div class="v ${stale ? '' : cls(cpt(sp,m))}">${cptTxt(sp,m)}</div>
-     <div class="s">${num(m)} mandates <em>from the product DB</em> ·
+   <div class="kpi" title="${CP_SRC}"><div class="k">Mandates</div>
+     <div class="v">${num(m)}</div>
+     <div class="s"><em>from the product DB</em> ·
        ${ATTRIB()} says ${num(c[EV])} trials${staleNote}</div></div>
    <div class="kpi" title="${CP_SRC}"><div class="k">Signups</div><div class="v">${num(su)}</div>
      <div class="s">${cptTxt(sp,su)} each · ${pct(m,su)} take a mandate ·
@@ -4136,7 +4136,6 @@ const CP_COLS = [
   {k:'cp_signups', t:'Signups', kind:'num', src:1},
   {k:'cps', t:'Cost/signup', kind:'rs', src:1},
   {k:'cp_mandates', t:'Mandates', kind:'num', src:1},
-  {k:'cpm', t:'Cost/mandate', kind:'cpm', src:1},
   {k:'d0a', t:'D0 active', kind:'pct', src:1},
   {k:'d0c', t:'D0 cancel', kind:'pct', src:1},
 ];
@@ -4231,7 +4230,7 @@ function rows(tab, filtered){
       d1e:   o.rt_base ? 100 * o.rt_d1e   / o.rt_base : null,
       d0can: o.rt_base ? 100 * o.rt_d0c   / o.rt_base : null,
       canc:  o.rt_base ? 100 * o.rt_canc  / o.rt_base : null,
-      cps: cpt(o.spend, o.cp_signups), cpm: cpt(o.spend, o.cp_mandates),
+      cps: cpt(o.spend, o.cp_signups),
       d0a: o.cp_mandates > 0 ? 100*o.cp_d0a/o.cp_mandates : null,
       d0c: o.cp_mandates > 0 ? 100*o.cp_d0c/o.cp_mandates : null}));
   if(filtered){
@@ -4322,7 +4321,6 @@ function cell(o, c){
      question this table exists to answer — which of these is expensive. Only the cost
      columns get it: tinting everything would be wallpaper. */
   if(c.kind==='cpt') return `<td class="heat ${cls(o.cpt)}">${cptTxt(o.spend, o.trials)}</td>`;
-  if(c.kind==='cpm') return `<td class="heat ${cls(o.cpm)}">${cptTxt(o.spend, o.cp_mandates)}</td>`;
   if(c.kind==='pct') return `<td>${o[c.k]===null ? '<span class="dimtxt">—</span>'
                                                  : o[c.k].toFixed(0)+'%'}</td>`;
   /* A dash, never 0.00%. No impressions recorded is not a click-through rate of nothing;
@@ -4538,7 +4536,7 @@ function renderTable(){
     tbl.querySelector('thead').innerHTML =
       `<tr><th>Level</th><th>Spend</th>` +
       (tr_ ? `<th>Trials</th><th>CPT</th>` : `<th>Budget/day</th>`) +
-      (on ? `<th>Signups</th><th>Mandates</th><th>Cost/mandate</th>` : '') +
+      (on ? `<th>Signups</th><th>Mandates</th>` : '') +
       `<th>Share of spend</th>` + (tr_ ? `<th>Share of trials</th>` : '') + `</tr>`;
     const c = totals();
     const cTot = c.spend || 0;
@@ -4551,8 +4549,7 @@ function renderTable(){
       <td>${rs(sp)}</td>` +
       (tr_ ? `<td>${num(tr)}</td><td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`
            : `<td>${rs(o.budget||0)}</td>`) +
-      (on ? `<td>${num(o.cp_signups)}</td><td>${num(o.cp_mandates)}</td>
-             <td class="${cls(cpt(sp,o.cp_mandates))}">${cptTxt(sp,o.cp_mandates)}</td>` : '') +
+      (on ? `<td>${num(o.cp_signups)}</td><td>${num(o.cp_mandates)}</td>` : '') +
       `<td>${c.spend?(100*sp/c.spend).toFixed(1):0}%</td>` +
       (tr_ ? `<td>${c[EV]?(100*tr/c[EV]).toFixed(1):0}%</td>` : '') + `</tr>`; };
     let h = '';
@@ -4570,8 +4567,7 @@ function renderTable(){
       (tr_ ? `<td>${num(c[EV])}</td>
               <td class="${cls(cpt(c.spend,c[EV]))}">${cptTxt(c.spend,c[EV])}</td>`
            : `<td>${rs(c.budget||0)}</td>`) +
-      (on ? `<td>${num(c.cp_signups)}</td><td>${num(c.cp_mandates)}</td>
-             <td class="${cls(cpt(c.spend,c.cp_mandates))}">${cptTxt(c.spend,c.cp_mandates)}</td>` : '') +
+      (on ? `<td>${num(c.cp_signups)}</td><td>${num(c.cp_mandates)}</td>` : '') +
       `<td>100%</td>` + (tr_ ? `<td>100%</td>` : '') + `</tr>`;
     document.getElementById('rowcount').textContent='';
     return;
@@ -4612,7 +4608,6 @@ function renderTable(){
     if(c.k==='trials') return `<td>${num(tr)}</td>`;
     if(c.kind==='cpt') return `<td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`;
     if(c.k==='cps') return `<td>${cptTxt(sp,su)}</td>`;
-    if(c.kind==='cpm') return `<td class="${cls(cpt(sp,md))}">${cptTxt(sp,md)}</td>`;
     if(c.k==='hook') return `<td>${vi ? (100*vv/vi).toFixed(2)+'%'
                                       : '<span class="dimtxt">—</span>'}</td>`;
     if(c.k==='thru') return `<td>${vi ? (100*tp/vi).toFixed(2)+'%'
@@ -5276,7 +5271,7 @@ function expCols(level){
   if(level!=='ads') c.push(['active_ads', o=>o.active_ads]);
   if(DATA && DATA.classplus && DATA.classplus.available)
     c.push(['signups', o=>o.cp_signups], ['cost_per_signup', o=>o.cps],
-           ['mandates', o=>o.cp_mandates], ['cost_per_mandate', o=>o.cpm],
+           ['mandates', o=>o.cp_mandates],
            ['d0_active_pct', o=>o.d0a], ['d0_cancel_pct', o=>o.d0c]);
   return c;
 }
