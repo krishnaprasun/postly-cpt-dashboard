@@ -134,14 +134,19 @@ td.sparkcell{padding:4px 13px;width:126px}
 .meta b{color:var(--ink);font-weight:600}
 
 main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:13px;margin-bottom:20px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(168px,1fr));gap:13px;
+  margin-bottom:20px;align-items:start}
 .kpi{background:var(--white);border:1px solid var(--line);border-radius:14px;
   padding:14px 16px 30px;box-shadow:var(--shadow);position:relative}
 .kpi .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);
   font-weight:650}
 .kpi .v{font-size:28px;font-weight:680;margin-top:6px;letter-spacing:-.9px;
   font-variant-numeric:tabular-nums;line-height:1.05}
-.kpi .s{font-size:11.5px;color:var(--muted);margin-top:5px}
+.kpi .s{font-size:11.5px;color:var(--muted);margin-top:5px;
+  /* Event names are single unbroken tokens -- `postly_trial_started_backend` has
+     nowhere to break and ran past the tile edge. Break inside a word only when
+     there is no other option, so ordinary prose still wraps at spaces. */
+  overflow-wrap:anywhere;min-width:0}
 .kpi.hero{background:linear-gradient(150deg,var(--accent-lt) 0%,var(--white) 62%);
   /* plain fallback first; browsers that understand color-mix take the tinted edge */
   border-color:var(--line);
@@ -1994,9 +1999,13 @@ function kpis(){
             beats printing "107.3% of trials", which reads as a broken join. */
          if(!(mc[EV] > 0)) return '';
          const r = 100 * mc.t10m / mc[EV];
+         /* Short on purpose: this sits in a row of one-line tiles, and the explanation
+            belongs in the tooltip rather than three lines of prose that stretch the
+            whole row to fit it. */
          return r > 100
-           ? ` · <span class="warn">more than today's trials so far</span> — these carry
-              last night's, and settle as the day fills in`
+           ? ` · <span class="warn" title="A trial started at 23:55 fires its ten-minute
+                event at 00:05, so early in the day this count carries last night's
+                trials. It settles as the day fills in.">includes last night's</span>`
            : ` · ${r.toFixed(1)}% of trials`;
        })()}</div></div>` : '')
    : `
