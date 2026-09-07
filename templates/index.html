@@ -2493,8 +2493,18 @@ function googTotals(){
   /* Google's own count of the same event, under Google's own attribution. Same rule as
      everything else: no day answered means UNKNOWN, which is a dash, not a zero. */
   const gKnown = !!GOOG.conv_ok;
+  /* Pro rata applies to Google too. Blended used to add Meta's MODELLED total to
+     Google's MEASURED one -- PrepShots on 2026-09-06 read 121 + 546 = 667 against a
+     brand total of 747, dropping Google's 80.5 share of the unclaimed pool and agreeing
+     with neither model. Scaled rather than replaced by p.google, so whatever the Google
+     series actually measured stays the basis and only the model is applied on top; the
+     factor is the same 1 + pool/attributed that lifts Meta. */
+  const pr = RAW && RAW.prorata && RAW.prorata[ev];
+  const chG = RAW && RAW.channels && RAW.channels[ev] && RAW.channels[ev].google;
+  const gUp = (proOn() && pr && typeof pr.google === 'number' && chG > 0)
+    ? pr.google / chG : 1;
   return {spend: t.spend || 0, ok: !!GOOG.spend_ok,
-          trials: known ? (t[ev] || 0) : null,
+          trials: known ? (t[ev] || 0) * gUp : null,
           inst: known ? (t.inst || 0) : null,
           gconv: gKnown ? (t.gconv || 0) : null,
           gconvKnown: gKnown, gwhy: GOOG.conv_error || '',
