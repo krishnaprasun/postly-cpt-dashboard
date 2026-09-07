@@ -2211,30 +2211,66 @@ def _google_series_build(brand, since, until, dim="gadgroup", force=False):
                 day_of(r, d)[k] += n
                 r["total_" + k] += n
 
-    # ---- spend, straight from Google Ads, already per day ---------------------
+    # ---- spend: the store for settled days, Google Ads for the rest -----------
+    # Settled days never change, so re-reading them from the Ads API on every view was
+    # paying for the same answer repeatedly -- the exact thing the day store exists to
+    # stop for Meta. A day at or before the settle line is served from GCS if it is
+    # there; everything after it is always live, because today moves.
     spend_days, spend_err = set(), None
     conv_days, conv_err = set(), None
     cust, how = ([], "no credentials")
-    if GA.available():
+
+    def _put(d, camp, group, spend, imp, clk):
+        r = cell(camp, group)
+        rec = day_of(r, d)
+        rec["spend"] += spend
+        rec["imp"] = rec.get("imp", 0) + imp
+        rec["clk"] = rec.get("clk", 0) + clk
+        rec["isp"] = round(rec.get("isp", 0) + spend, 2)
+        r["total_spend"] += spend
+        r["total_imp"] = (r.get("total_imp") or 0) + imp
+        r["total_clk"] = (r.get("total_clk") or 0) + clk
+        r["total_isp"] = round((r.get("total_isp") or 0) + spend, 2)
+        spend_days.add(d)
+
+    settled = H.settled_through(today_ist()) if H.available() else ""
+    old_days = [d for d in dates if settled and d <= settled]
+    stored_spend = google_spend_read(brand, old_days) if old_days else {}
+    for d, per_key in stored_spend.items():
+        for (camp, group), v in per_key.items():
+            _put(d, camp, group, v.get("spend") or 0,
+                 v.get("imp") or 0, v.get("clk") or 0)
+
+    live = [d for d in dates if d not in stored_spend]
+    if GA.available() and live:
         cust, how = google_customers(brand)
+        keep = set(live)
+        fresh = {}
         for cid in cust:
-            for x in GA.spend_daily(cid, dates[0], dates[-1]):
+            for x in GA.spend_daily(cid, live[0], live[-1]):
                 d = x["date"]
-                if d not in r_dates_set(dates):
+                if d not in keep:
                     continue
-                r = cell(x["campaign"], x["ad_group"])
-                rec = day_of(r, d)
-                rec["spend"] += x["spend"]
-                rec["imp"] = rec.get("imp", 0) + x["imp"]
-                rec["clk"] = rec.get("clk", 0) + x["clk"]
-                rec["isp"] = round(rec.get("isp", 0) + x["spend"], 2)
-                r["total_spend"] += x["spend"]
-                r["total_imp"] = (r.get("total_imp") or 0) + x["imp"]
-                r["total_clk"] = (r.get("total_clk") or 0) + x["clk"]
-                r["total_isp"] = round((r.get("total_isp") or 0) + x["spend"], 2)
-                spend_days.add(d)
+                _put(d, x["campaign"], x["ad_group"], x["spend"], x["imp"], x["clk"])
+                slot = fresh.setdefault(d, {}).setdefault(
+                    (x["campaign"], x["ad_group"]), {"spend": 0.0, "imp": 0, "clk": 0})
+                slot["spend"] = round(slot["spend"] + x["spend"], 4)
+                slot["imp"] += x["imp"]
+                slot["clk"] += x["clk"]
         spend_err = GA.last_error() or (None if cust else
                                         "no Google Ads account is mapped to this brand")
+        # Write back only days that are now final, and only when the pull succeeded --
+        # storing a throttled day would freeze a partial figure as history.
+        if not spend_err and H.available():
+            for d, per_key in fresh.items():
+                if settled and d <= settled:
+                    try:
+                        google_spend_store(brand, d, per_key)
+                    except Exception:
+                        traceback.print_exc()
+    elif GA.available():
+        cust, how = google_customers(brand)
+        spend_err = None if cust else "no Google Ads account is mapped to this brand"
         # Google's own count of the same event, per day, so the trend and the grid can
         # show both attributions rather than only the Branch one the Overview compares.
         ev_name = B["events"].get(ev_keys[0]) if ev_keys else None
@@ -2413,6 +2449,31 @@ def prior_window(brand, since, until):
 
 def google_ns(brand):
     return f"{brand}gtri"
+
+
+def google_spend_ns(brand):
+    """Its own namespace, alongside the trials one. Alphanumeric, as the store requires."""
+    return f"{brand}gspend"
+
+
+def google_spend_store(brand, day, rows):
+    """Persist one day's Google spend by (campaign, ad group).
+
+    Same shape and the same tab-joined key as the trials store beside it, because the
+    series builder folds both into one cell and a second key convention would be a second
+    thing to get wrong.
+    """
+    flat = {"\t".join(k): v for k, v in (rows or {}).items()}
+    return H.put_agg(google_spend_ns(brand), day, {"date": day, "spend": flat})
+
+
+def google_spend_read(brand, dates):
+    """{date: {(campaign, ad_group): {spend, imp, clk}}} for whichever days are stored."""
+    out = {}
+    for day, art in (H.fetch_raw(google_spend_ns(brand), list(dates)) or {}).items():
+        out[day] = {tuple(k.split("\t", 1)): v
+                    for k, v in ((art or {}).get("spend") or {}).items()}
+    return out
 
 
 def google_trials_store(brand, day, per_ev):
