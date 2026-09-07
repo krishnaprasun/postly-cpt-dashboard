@@ -29,6 +29,7 @@ Two honest differences from the vendor readers:
 import csv
 import io
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -60,7 +61,25 @@ def _ad(raw, src):
     return ad if ad and ad.lower() not in ("none", "null", "n/a") else _slug(src)
 
 
+# One build asks this module twice -- once for trials by ad name, once for Google's by
+# campaign -- and it is the same CSV both times. Held briefly rather than pulled twice.
+_CACHE_TTL = int(os.environ.get("REDASH_CACHE_TTL", "300"))
+_cache = {}
+_lock = threading.Lock()
+
+
 def _fetch(host, qid, key):
+    with _lock:
+        hit = _cache.get((host, qid))
+        if hit and time.time() - hit[0] < _CACHE_TTL:
+            return hit[1]
+    body = _fetch_live(host, qid, key)
+    with _lock:
+        _cache[(host, qid)] = (time.time(), body)
+    return body
+
+
+def _fetch_live(host, qid, key):
     url = f"https://{host}/api/queries/{qid}/results.csv?api_key={key}"
     last = None
     for n in range(TRIES):
@@ -109,4 +128,45 @@ def trials_daily(host, query, since, until, events):
             if n:
                 dst = out.setdefault(day, {}).setdefault(ek, {})
                 dst[ad] = dst.get(ad, 0) + n
+    return out
+
+
+GOOGLE_SOURCES = ("googleadwords_int", "google adwords", "google ads", "adwords")
+
+
+def google_trials_daily(host, query, since, until, events):
+    """{date: {event_key: {(campaign, ad_group): count}}} for Google only.
+
+    The ad group is always empty, and that is a property of the source rather than an
+    omission: the query attributes a mandate to a campaign, while Google reports its own
+    spend per ad group. At campaign grain the two join exactly. At ad-group grain these
+    land on the "(no ad group)" row _google_series_build already draws, beside the ad
+    groups carrying the spend -- visible and clearly not joined, which is the honest
+    reading. Nothing is invented to fill the missing rung.
+    """
+    qid, key = query
+    rows = csv.DictReader(io.StringIO(
+        _fetch(host, qid, key).decode("utf-8", "replace")))
+    out = {}
+    for r in rows:
+        day = (r.get(DATE_COL) or "")[:10]
+        if not (since <= day <= until):
+            continue
+        src = (r.get(SRC_COL) or "").strip().lower()
+        if not any(g in src for g in GOOGLE_SOURCES):
+            continue
+        camp = (r.get("Campaign Name") or "").strip()
+        if not camp:
+            continue
+        for ek, col in events.items():
+            raw = (r.get(col) or "").strip()
+            if not raw:
+                continue
+            try:
+                n = int(float(raw))
+            except ValueError:
+                continue
+            if n:
+                dst = out.setdefault(day, {}).setdefault(ek, {})
+                dst[(camp, "")] = dst.get((camp, ""), 0) + n
     return out

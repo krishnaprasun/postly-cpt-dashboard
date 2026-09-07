@@ -1952,10 +1952,15 @@ def is_google(partner):
 def google_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
     """Google's own trials, from whichever vendor this brand measures on."""
     if (B.get("provider") or "branch") == "redash":
-        # The Redash query attributes a mandate to a campaign, never to an ad group, and
-        # this join needs the ad group because that is the rung Google Ads reports spend
-        # against. Nothing rather than a join at the wrong grain.
-        return {}
+        # The query attributes a mandate to a campaign, never to an ad group, so these
+        # come back with an empty ad group. Campaign grain joins Google's spend exactly;
+        # ad-group grain shows them on the "(no ad group)" row. Returning nothing at all
+        # was worse: Google earned 546 of PrepShots' 747 mandates on 2026-09-06 and the
+        # page showed none of them.
+        if not B.get("trials_query"):
+            return {}
+        return RD.google_trials_daily(C.CLASSPLUS_HOST, B["trials_query"],
+                                      since, until, B["events"])
     if (B.get("provider") or "branch") == "appsflyer":
         if not (B.get("af_app") and AF.available()):
             return {}
