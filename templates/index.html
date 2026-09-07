@@ -1978,6 +1978,15 @@ function kpis(){
           name an ad with no spend in this window`
        : (DATA.event_note[EV]||EV)}${SEG==='blended' ? ''
        : ` · ${segLbl} campaigns only`} · via <b>${ATTRIB()}</b></div></div>`
+   + /* The second event, beside the first rather than instead of it. Meta only: no
+        vendor reports a Google NC 10m, and putting Meta's count under a blended heading
+        would overstate it by whatever Google earned. */
+     (ncOn() && chanIsMeta() && typeof mc.t10m === 'number' ? `
+   <div class="kpi"><div class="k">NC 10m${modLbl}</div>
+     <div class="v">${num(mc.t10m)}</div>
+     <div class="s">${mc.t10m > 0 ? rs(sp / mc.t10m) + ' per NC 10m · ' : ''}still running
+       ten minutes in · ${(mc[EV] > 0 ? (100 * mc.t10m / mc[EV]).toFixed(1) : '—')}% of
+       trials</div></div>` : '')
    : `
    <div class="kpi"><div class="k">Budget/day${srcBtn('meta')}</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) +
@@ -4102,9 +4111,20 @@ const COLS = {
    on whichever table is showing -- ad, ad set, campaign, account, editor -- rather than
    being a view of its own. Hidden entirely when the feed did not carry it: 0% and "not
    reported" are different claims. */
+/* The second trial event, for the brands that report one. Its own columns rather than a
+   switch: the page pins EV to t101, so every one of these counts was being fetched,
+   stored and rolled up without ever reaching the screen. */
+const NC_COLS = [
+  {k:'nc10', t:'NC 10m', kind:'num'},
+  {k:'cpnc', t:'Cost/NC 10m', kind:'rs'},
+];
+const ncOn = () => !!(DATA && (DATA.events || []).includes('t10m'));
+
 const RET_COLS = [
   {k:'rt_signups', t:'Signups', kind:'num'},
   {k:'cpsg', t:'Cost/signup', kind:'rs'},
+  {k:'sg_inst', t:'Signup/install', kind:'pct'},
+  {k:'sg_tr', t:'Trial/signup', kind:'pct'},
   {k:'d0can', t:'D0 cancel', kind:'pct'},
   {k:'canc', t:'Cancelled', kind:'pct'},
   {k:'d1e', t:'D1 engaged', kind:'pct'},
@@ -4127,7 +4147,8 @@ const CP_COLS = [
 function colsFor(tab){
   const base = hasTrials() ? COLS[tab]
                            : COLS[tab].filter(c => c.k!=='trials' && c.k!=='cpt');
-  const withCp = cpOn() ? base.concat(CP_COLS) : base;
+  const withNc = ncOn() ? base.concat(NC_COLS) : base;
+  const withCp = cpOn() ? withNc.concat(CP_COLS) : withNc;
   return retOn() ? withCp.concat(RET_COLS) : withCp;
 }
 
@@ -4197,6 +4218,15 @@ function rows(tab, filtered){
          while its numerator was measured is a rate of nothing. */
       /* Signups is a count, so it needs no denominator -- only a cost beside it. */
       cpsg:  cpt(o.spend, o.rt_signups),
+      /* The funnel, step by step: of the installs this ad bought, how many signed up;
+         of those signups, how many started a trial. Both divide by MEASURED counts --
+         rt_base, not the trial figure -- so neither moves when pro rata is applied. */
+      sg_inst: o.inst ? 100 * o.rt_signups / o.inst : null,
+      sg_tr:   o.rt_signups ? 100 * o.rt_base / o.rt_signups : null,
+      /* NC 10m: trials still alive ten minutes in. Carried on every row for the brands
+         whose feed reports it, and never shown until now because EV is pinned to t101. */
+      nc10: (typeof o.t10m === 'number') ? o.t10m : null,
+      cpnc: cpt(o.spend, o.t10m),
       renew: o.rt_base ? 100 * o.rt_renew / o.rt_base : null,
       d1e:   o.rt_base ? 100 * o.rt_d1e   / o.rt_base : null,
       d0can: o.rt_base ? 100 * o.rt_d0c   / o.rt_base : null,
