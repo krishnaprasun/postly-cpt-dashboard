@@ -920,9 +920,25 @@ def api_hour_snapshot():
             trials = pr.get("meta", ch.get("meta"))
             ok = P.hour_snapshot(b, trials, comb.get("spend"),
                                  (data.get("installs") or {}).get("meta"))
+            # Warm Google too. Its series lived only in the gunicorn process, so the
+            # first person to open the Google tab after any restart paid a full Google
+            # Ads pull -- and on a free instance that is every wake. Building it here
+            # persists it (see google_series), so the click is served from the store.
+            # Only for a brand that HAS Google accounts: the rest would spend a lookup
+            # to discover they have nothing.
+            gwarm = []
+            try:
+                cust, _how = P.google_customers(b)
+                if cust:
+                    for w in windows:
+                        w_since, w_until = resolve_range(w, None, None)
+                        P.google_series(b, w_since, w_until, dim="gadgroup", force=True)
+                        gwarm.append(w)
+            except Exception as ex:
+                gwarm = [f"error: {str(ex)[:80]}"]
             out.append({"brand": b, "stored": ok, "trials": trials,
                         "spend": comb.get("spend"), "refreshed": built,
-                        "skipped": skipped})
+                        "skipped": skipped, "google": gwarm})
         except Exception as e:
             traceback.print_exc()
             out.append({"brand": b, "error": str(e)[:200]})

@@ -2085,15 +2085,75 @@ def google_trials_window(brand, dates, force=False):
     return out
 
 
+# Google's built series, persisted. Trials were already stored per day; spend was re-read
+# from the Google Ads API on every build and the assembled result lived only in the
+# gunicorn process, so a free instance that had slept -- or a deploy, of which there are
+# many -- meant a full rebuild on the next click, every time. Meta has had this since
+# _persist/put_payload; Google was the half that never got it.
+#
+# One document per brand holding the last few windows, mirroring the channel index rather
+# than a document per window: namespaces must be alphanumeric, and a window is not.
+GSER_NS = "gser"
+GSER_KEEP = int(os.environ.get("GSER_KEEP", "6"))
+# How stale a stored build may be before it is rebuilt instead of served. The hourly job
+# refreshes it, so this only has to outlive the gap between two runs.
+GSER_MAX_AGE = int(os.environ.get("GSER_MAX_AGE", "5400"))
+
+
+def _gser_key(since, until, dim):
+    return f"{since}|{until}|{dim}"
+
+
+def _gser_load(brand):
+    """({key: {at, v}}, ok). `ok` is False only when the store could not be READ -- a
+    writer that cannot tell empty from unreachable overwrites every other window."""
+    got, ok = H.get_agg_raw(H.agg_ns(brand, GSER_NS, 0))
+    if not ok:
+        return {}, False
+    return {k: v for k, v in (got or {}).items() if not k.startswith("_")}, True
+
+
+def _gser_save(brand, key, art):
+    cur, ok = _gser_load(brand)
+    if not ok:
+        return False
+    cur[key] = {"at": time.time(), "v": art}
+    for k in sorted(cur, key=lambda k: (cur[k] or {}).get("at", 0))[:max(0, len(cur) - GSER_KEEP)]:
+        cur.pop(k, None)
+    return H.put_agg(H.agg_ns(brand, GSER_NS, 0), today_ist(), cur)
+
+
 def google_series(brand, since, until, dim="gadgroup", force=False):
     """See _google_series_build. Wrapped so a repeat view is free."""
     key = (brand, since, until, dim)
+    skey = _gser_key(since, until, dim)
     if not force:
         hit, age = _gcache_get(_gseries_cache, key, GSERIES_TTL)
         if hit is not None:
             return dict(hit, cached=True, age_min=age)
+        # Nothing in this process -- but the last build may still be in the store, which
+        # survives the restart that emptied the process.
+        if H.available():
+            try:
+                saved, ok = _gser_load(brand)
+            except Exception:
+                saved, ok = {}, False
+            rec = saved.get(skey) if ok else None
+            v = (rec or {}).get("v")
+            at = (rec or {}).get("at") or 0
+            if v and time.time() - at < GSER_MAX_AGE:
+                _gcache_put(_gseries_cache, key, v, err=bool(v.get("trials_error")))
+                return dict(v, cached=True, stored=True,
+                            age_min=int((time.time() - at) // 60))
     out = _google_series_build(brand, since, until, dim=dim, force=force)
     _gcache_put(_gseries_cache, key, out, err=bool(out.get("trials_error")))
+    # A build that could not reach Google is not worth keeping: it would be served from
+    # the store for the next ninety minutes and make a blip look permanent.
+    if H.available() and not out.get("trials_error") and not out.get("spend_error"):
+        try:
+            _gser_save(brand, skey, out)
+        except Exception:
+            traceback.print_exc()
     return dict(out, cached=False, age_min=0)
 
 
