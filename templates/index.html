@@ -2055,6 +2055,24 @@ function budgetAge(){
    a mandate count sitting beside trials looks like another number Meta or Branch
    reported, and it is not: it is the product database's own count of who actually put a
    mandate in place. Which of the two you trust decides what gets killed. */
+/* Where each column's number comes from. Hovering a header says it, because "Signups"
+   beside "Trials" looks like two facts from one system and is not: one is the product
+   database's own count, the other is what an attribution SDK inferred, and which you
+   trust decides what gets killed. {VENDOR} is filled in per brand at render time --
+   Branch, AppsFlyer or Classplus, whichever that brand measures on. */
+const SRC_META = 'From Meta Ads — what Meta itself reported for this ad.';
+const SRC_ROSTER = 'From Meta Ads — the ad set roster, not the insights call, so it '
+                 + 'describes right now and can be up to an hour old.';
+const SRC_VENDOR = 'From {VENDOR} — attributed to this ad by {VENDOR}, not by Meta.';
+const SRC_DB = 'From the Classplus product database (Redash) — the product\u2019s own '
+             + 'count, joined to ads by ad name.';
+const SRC_MIX = 'Derived: Meta spend over the {VENDOR} count beside it. Two systems, '
+              + 'two clocks — spend is minutes old, the count can be hours behind.';
+const SRC_DBMIX = 'Derived: Meta spend over the product database\u2019s count.';
+const SRC_FUNNEL = 'Derived: one product-database step over the one before it. Both are '
+                 + 'measured counts, so pro rata does not move either.';
+const SRC_INSTMIX = 'Derived: product-database signups over Meta-attributed installs. '
+                  + 'Meta installs exclude Google and organic.';
 const CP_SRC = 'From the Classplus product database (Redash), not from Meta or the '
              + 'attribution SDK — '
              + 'the product\u2019s own count of signups and mandates, joined to ads by ad name.';
@@ -4042,7 +4060,8 @@ function renderLongevity(){
     const cl = [c.kind==='name'||c.kind==='sub'||c.kind==='live'||c.kind==='date' ? 'l' : '',
                 c.kind==='sub' ? 'grow' : '', SORT.key===c.k ? 'sorted' : ''
                ].filter(Boolean).join(' ');
-    return `<th data-k="${c.k}" class="${cl}"${c.src ? ` title="${CP_SRC}"` : ''}>${c.t}${
+    return `<th data-k="${c.k}" class="${cl}"${c.src
+      ? ` title="${c.src.split('{VENDOR}').join(ATTRIB())}"` : ''}>${c.t}${
       SORT.key===c.k?(SORT.dir<0?' ↓':' ↑'):''}</th>`; }).join('') + '</tr>';
   tbl.querySelector('thead').querySelectorAll('th').forEach(th => th.onclick = () => {
     const k = th.dataset.k;
@@ -4078,64 +4097,64 @@ function renderLongevity(){
 const COLS = {
   accounts: [
     {k:'name', t:'Ad account', kind:'name'},
-    {k:'spend', t:'Spend', kind:'rs'},
-    {k:'budget', t:'Budget/day', kind:'rs'},
-    {k:'trials', t:'Trials', kind:'num'},
-    {k:'cpt', t:'CPT', kind:'cpt'},
-    {k:'ctr', t:'CTR', kind:'ctr'},
-    {k:'cpmille', t:'CPM', kind:'rs'},
-    {k:'hook', t:'Hook', kind:'ctr'},
-    {k:'thru', t:'ThruPlay', kind:'ctr'},
-    {k:'active_adsets', t:'Ad sets', kind:'num'},
-    {k:'active_ads', t:'Ads', kind:'num'}],
+    {k:'spend', t:'Spend', kind:'rs', src:SRC_META},
+    {k:'budget', t:'Budget/day', kind:'rs', src:SRC_ROSTER},
+    {k:'trials', t:'Trials', kind:'num', src:SRC_VENDOR},
+    {k:'cpt', t:'CPT', kind:'cpt', src:SRC_MIX},
+    {k:'ctr', t:'CTR', kind:'ctr', src:SRC_META},
+    {k:'cpmille', t:'CPM', kind:'rs', src:SRC_META},
+    {k:'hook', t:'Hook', kind:'ctr', src:SRC_META},
+    {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META},
+    {k:'active_adsets', t:'Ad sets', kind:'num', src:SRC_ROSTER},
+    {k:'active_ads', t:'Ads', kind:'num', src:SRC_ROSTER}],
   campaigns: [
     {k:'name', t:'Campaign', kind:'name'},
     {k:'account', t:'Account', kind:'sub'},
-    {k:'spend', t:'Spend', kind:'rs'},
-    {k:'budget', t:'Budget/day', kind:'rs'},
-    {k:'trials', t:'Trials', kind:'num'},
-    {k:'cpt', t:'CPT', kind:'cpt'},
-    {k:'ctr', t:'CTR', kind:'ctr'},
-    {k:'cpmille', t:'CPM', kind:'rs'},
-    {k:'hook', t:'Hook', kind:'ctr'},
-    {k:'thru', t:'ThruPlay', kind:'ctr'},
-    {k:'active_adsets', t:'Ad sets', kind:'num'},
-    {k:'active_ads', t:'Ads', kind:'num'}],
+    {k:'spend', t:'Spend', kind:'rs', src:SRC_META},
+    {k:'budget', t:'Budget/day', kind:'rs', src:SRC_ROSTER},
+    {k:'trials', t:'Trials', kind:'num', src:SRC_VENDOR},
+    {k:'cpt', t:'CPT', kind:'cpt', src:SRC_MIX},
+    {k:'ctr', t:'CTR', kind:'ctr', src:SRC_META},
+    {k:'cpmille', t:'CPM', kind:'rs', src:SRC_META},
+    {k:'hook', t:'Hook', kind:'ctr', src:SRC_META},
+    {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META},
+    {k:'active_adsets', t:'Ad sets', kind:'num', src:SRC_ROSTER},
+    {k:'active_ads', t:'Ads', kind:'num', src:SRC_ROSTER}],
   adsets: [
     {k:'name', t:'Ad set', kind:'name'},
     {k:'campaign', t:'Campaign', kind:'sub'},
-    {k:'spend', t:'Spend', kind:'rs'},
-    {k:'budget', t:'Budget', kind:'rs'},
-    {k:'trials', t:'Trials', kind:'num'},
-    {k:'cpt', t:'CPT', kind:'cpt'},
-    {k:'ctr', t:'CTR', kind:'ctr'},
-    {k:'cpmille', t:'CPM', kind:'rs'},
-    {k:'hook', t:'Hook', kind:'ctr'},
-    {k:'thru', t:'ThruPlay', kind:'ctr'},
-    {k:'active_ads', t:'Ads', kind:'num'}],
+    {k:'spend', t:'Spend', kind:'rs', src:SRC_META},
+    {k:'budget', t:'Budget', kind:'rs', src:SRC_ROSTER},
+    {k:'trials', t:'Trials', kind:'num', src:SRC_VENDOR},
+    {k:'cpt', t:'CPT', kind:'cpt', src:SRC_MIX},
+    {k:'ctr', t:'CTR', kind:'ctr', src:SRC_META},
+    {k:'cpmille', t:'CPM', kind:'rs', src:SRC_META},
+    {k:'hook', t:'Hook', kind:'ctr', src:SRC_META},
+    {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META},
+    {k:'active_ads', t:'Ads', kind:'num', src:SRC_ROSTER}],
   editors: [
     /* Live ads leads, ahead of spend: it is the question asked of this table first --
        how much is each editor actually running right now. The name column stays where
        it is because it carries the row's share bar and is the row's label. */
     {k:'name', t:'Editor', kind:'name'},
-    {k:'active_ads', t:'Live ads', kind:'num'},
-    {k:'spend', t:'Spend', kind:'rs'},
-    {k:'trials', t:'Trials', kind:'num'},
-    {k:'cpt', t:'CPT', kind:'cpt'},
-    {k:'ctr', t:'CTR', kind:'ctr'},
-    {k:'cpmille', t:'CPM', kind:'rs'},
-    {k:'hook', t:'Hook', kind:'ctr'},
-    {k:'thru', t:'ThruPlay', kind:'ctr'}],
+    {k:'active_ads', t:'Live ads', kind:'num', src:SRC_ROSTER},
+    {k:'spend', t:'Spend', kind:'rs', src:SRC_META},
+    {k:'trials', t:'Trials', kind:'num', src:SRC_VENDOR},
+    {k:'cpt', t:'CPT', kind:'cpt', src:SRC_MIX},
+    {k:'ctr', t:'CTR', kind:'ctr', src:SRC_META},
+    {k:'cpmille', t:'CPM', kind:'rs', src:SRC_META},
+    {k:'hook', t:'Hook', kind:'ctr', src:SRC_META},
+    {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META}],
   ads: [
     {k:'name', t:'Ad', kind:'name'},
     {k:'adset', t:'Ad set', kind:'sub'},
-    {k:'spend', t:'Spend', kind:'rs'},
-    {k:'trials', t:'Trials', kind:'num'},
-    {k:'cpt', t:'CPT', kind:'cpt'},
-    {k:'ctr', t:'CTR', kind:'ctr'},
-    {k:'cpmille', t:'CPM', kind:'rs'},
-    {k:'hook', t:'Hook', kind:'ctr'},
-    {k:'thru', t:'ThruPlay', kind:'ctr'}],
+    {k:'spend', t:'Spend', kind:'rs', src:SRC_META},
+    {k:'trials', t:'Trials', kind:'num', src:SRC_VENDOR},
+    {k:'cpt', t:'CPT', kind:'cpt', src:SRC_MIX},
+    {k:'ctr', t:'CTR', kind:'ctr', src:SRC_META},
+    {k:'cpmille', t:'CPM', kind:'rs', src:SRC_META},
+    {k:'hook', t:'Hook', kind:'ctr', src:SRC_META},
+    {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META}],
 };
 
 /* Appended to whichever tab is showing, so signups and mandates sit on the same row as
@@ -4148,28 +4167,33 @@ const COLS = {
    switch: the page pins EV to t101, so every one of these counts was being fetched,
    stored and rolled up without ever reaching the screen. */
 const NC_COLS = [
-  {k:'nc10', t:'NC 10m', kind:'num'},
-  {k:'cpnc', t:'Cost/NC 10m', kind:'rs'},
+  {k:'nc10', t:'NC 10m', kind:'num', src:SRC_VENDOR},
+  {k:'cpnc', t:'Cost/NC 10m', kind:'rs', src:SRC_MIX},
 ];
 const ncOn = () => !!(DATA && (DATA.events || []).includes('t10m'));
 
 const RET_COLS = [
-  {k:'rt_signups', t:'Signups', kind:'num'},
-  {k:'cpsg', t:'Cost/signup', kind:'rs'},
-  {k:'sg_inst', t:'Signup/install', kind:'pct'},
-  {k:'sg_tr', t:'Trial/signup', kind:'pct'},
-  {k:'d0can', t:'D0 cancel', kind:'pct'},
-  {k:'canc', t:'Cancelled', kind:'pct'},
-  {k:'d1e', t:'D1 engaged', kind:'pct'},
-  {k:'renew', t:'Renewal', kind:'pct'},
+  {k:'rt_signups', t:'Signups', kind:'num', src:SRC_DB},
+  {k:'cpsg', t:'Cost/signup', kind:'rs', src:SRC_DBMIX},
+  {k:'sg_inst', t:'Signup/install', kind:'pct', src:SRC_INSTMIX},
+  {k:'sg_tr', t:'Trial/signup', kind:'pct', src:SRC_FUNNEL},
+  {k:'d0can', t:'D0 cancel', kind:'pct', src:SRC_DB},
+  {k:'canc', t:'Cancelled', kind:'pct', src:SRC_DB},
+  {k:'d1e', t:'D1 engaged', kind:'pct', src:SRC_DB},
+  {k:'renew', t:'Renewal', kind:'pct', src:SRC_DB},
 ];
 const retOn = () => !!(DATA && DATA.retention);
 
 const CP_COLS = [
-  {k:'cp_signups', t:'Signups', kind:'num', src:1},
-  {k:'cps', t:'Cost/signup', kind:'rs', src:1},
-  {k:'d0a', t:'D0 active', kind:'pct', src:1},
-  {k:'d0c', t:'D0 cancel', kind:'pct', src:1},
+  {k:'cp_signups', t:'Signups', kind:'num', src:CP_SRC},
+  {k:'cps', t:'Cost/signup', kind:'rs', src:SRC_DBMIX},
+  /* Both are a share of MANDATES, which is no longer a column but is still the
+     denominator -- said here because a percentage with an invisible base invites the
+     reader to assume it is a share of signups, which it is not. */
+  {k:'d0a', t:'D0 active', kind:'pct', src:'Share of that day\u2019s mandates, from the '
+    + 'Classplus product database. Not a share of signups.'},
+  {k:'d0c', t:'D0 cancel', kind:'pct', src:'Share of that day\u2019s mandates, from the '
+    + 'Classplus product database. Not a share of signups.'},
 ];
 
 /* The trial and CPT columns exist only for a brand that has a Branch feed. Dropping
@@ -4611,7 +4635,8 @@ function renderTable(){
     const cls = [c.kind==='name'||c.kind==='sub' ? 'l' : '',
                  c.kind==='sub' ? 'grow' : '',
                  SORT.key===c.k ? 'sorted' : ''].filter(Boolean).join(' ');
-    return `<th data-k="${c.k}" class="${cls}"${c.src ? ` title="${CP_SRC}"` : ''}>${c.t}${
+    return `<th data-k="${c.k}" class="${cls}"${c.src
+      ? ` title="${c.src.split('{VENDOR}').join(ATTRIB())}"` : ''}>${c.t}${
       SORT.key===c.k?(SORT.dir<0?' ↓':' ↑'):''}</th>`; }).join('') + '</tr>';
   tbl.querySelector('thead').querySelectorAll('th').forEach(th => th.onclick = () => {
     const k = th.dataset.k;
