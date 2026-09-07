@@ -1985,8 +1985,20 @@ function kpis(){
    <div class="kpi"><div class="k">NC 10m${modLbl}</div>
      <div class="v">${num(mc.t10m)}</div>
      <div class="s">${mc.t10m > 0 ? rs(sp / mc.t10m) + ' per NC 10m · ' : ''}still running
-       ten minutes in · ${(mc[EV] > 0 ? (100 * mc.t10m / mc[EV]).toFixed(1) : '—')}% of
-       trials</div></div>` : '')
+       ten minutes in${(() => {
+         /* The two are separate events, each stamped with its OWN time: a trial started
+            at 23:55 fires its ten-minute event at 00:05 the NEXT day. So in the first
+            hours of a day NC 10m arrives from last night's trials while barely any of
+            today's have started, and the ratio can exceed 100%. Measured on Postly:
+            86% on a full day, 104% at 01:00. It settles as the day fills in -- saying so
+            beats printing "107.3% of trials", which reads as a broken join. */
+         if(!(mc[EV] > 0)) return '';
+         const r = 100 * mc.t10m / mc[EV];
+         return r > 100
+           ? ` · <span class="warn">more than today's trials so far</span> — these carry
+              last night's, and settle as the day fills in`
+           : ` · ${r.toFixed(1)}% of trials`;
+       })()}</div></div>` : '')
    : `
    <div class="kpi"><div class="k">Budget/day${srcBtn('meta')}</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) +
