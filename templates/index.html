@@ -138,7 +138,11 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    sub-lines of wildly different lengths, and a grid that stretched all of them to the
    height of whichever had the most to say. The row read as eight equal claims with no
    answer to "which number am I here for". */
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(152px,1fr));gap:12px;
+/* 140px, not 152: with eight tiles the row needs nine columns once the hero takes two,
+   and at a 1400px viewport 152 only fits eight -- so Day-0 wrapped onto a line of its
+   own. auto-fit counts columns at the MINIMUM, so the minimum is what decides whether
+   the row breaks. */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;
   margin-bottom:20px}
 .kpi{background:var(--white);border:1px solid var(--line);border-radius:14px;
   padding:13px 15px 28px;box-shadow:var(--shadow);position:relative;
@@ -150,7 +154,13 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* CPT is the number this dashboard exists to report, so it gets the width and the size.
    Only above 900px: below that the row is already stacking and a double-width tile would
    push the rest into a single cramped column. */
-@media (min-width:900px){
+/* The double-width hero costs a column, and a column is exactly what was missing. It
+   waits for 1600px, where there is room for nine; below that CPT keeps the larger type
+   but only one slot, so the whole row stays on one line. */
+@media (min-width:1000px){
+  .kpi.hero .v{font-size:30px;letter-spacing:-1px}
+}
+@media (min-width:1600px){
   .kpi.hero{grid-column:span 2}
   .kpi.hero .v{font-size:34px;letter-spacing:-1.1px}
 }
