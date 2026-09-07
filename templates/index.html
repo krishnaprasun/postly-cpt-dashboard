@@ -2071,15 +2071,10 @@ function cpKpis(c, sp){
         p.age_min > 120 ? Math.round(p.age_min/60) + 'h' : p.age_min + ' min'} old</span>
        — spend below is current, so this reads high` : '';
   return `
-   <div class="kpi" title="${CP_SRC}"><div class="k">Mandates</div>
-     <div class="v">${num(m)}</div>
-     <div class="s"><em>from the product DB</em> ·
-       ${ATTRIB()} says ${num(c[EV])} trials${staleNote}</div></div>
    <div class="kpi" title="${CP_SRC}"><div class="k">Signups</div><div class="v">${num(su)}</div>
-     <div class="s">${cptTxt(sp,su)} each · ${pct(m,su)} take a mandate ·
-       <em>product DB</em>${stale ? ` · <span class="warn">${
-         p.age_min > 120 ? Math.round(p.age_min/60) + 'h' : p.age_min + ' min'} old</span>`
-         : ''}</div></div>
+     <div class="s">${cptTxt(sp,su)} each · <em>product DB</em>${stale ? ` ·
+       <span class="warn">${p.age_min > 120 ? Math.round(p.age_min/60) + 'h'
+         : p.age_min + ' min'} old</span>` : ''}</div></div>
    <div class="kpi" title="${CP_SRC}"><div class="k">Day-0</div><div class="v">${pct(c.cp_d0a,m)}</div>
      <div class="s">active on day 0 · ${pct(c.cp_d0c,m)} cancelled ·
        Classplus ${p.age_min===null?'':p.age_min+' min old'}</div></div>`;
@@ -4173,7 +4168,6 @@ const retOn = () => !!(DATA && DATA.retention);
 const CP_COLS = [
   {k:'cp_signups', t:'Signups', kind:'num', src:1},
   {k:'cps', t:'Cost/signup', kind:'rs', src:1},
-  {k:'cp_mandates', t:'Mandates', kind:'num', src:1},
   {k:'d0a', t:'D0 active', kind:'pct', src:1},
   {k:'d0c', t:'D0 cancel', kind:'pct', src:1},
 ];
@@ -4574,7 +4568,7 @@ function renderTable(){
     tbl.querySelector('thead').innerHTML =
       `<tr><th>Level</th><th>Spend</th>` +
       (tr_ ? `<th>Trials</th><th>CPT</th>` : `<th>Budget/day</th>`) +
-      (on ? `<th>Signups</th><th>Mandates</th>` : '') +
+      (on ? `<th>Signups</th>` : '') +
       `<th>Share of spend</th>` + (tr_ ? `<th>Share of trials</th>` : '') + `</tr>`;
     const c = totals();
     const cTot = c.spend || 0;
@@ -4587,7 +4581,7 @@ function renderTable(){
       <td>${rs(sp)}</td>` +
       (tr_ ? `<td>${num(tr)}</td><td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`
            : `<td>${rs(o.budget||0)}</td>`) +
-      (on ? `<td>${num(o.cp_signups)}</td><td>${num(o.cp_mandates)}</td>` : '') +
+      (on ? `<td>${num(o.cp_signups)}</td>` : '') +
       `<td>${c.spend?(100*sp/c.spend).toFixed(1):0}%</td>` +
       (tr_ ? `<td>${c[EV]?(100*tr/c[EV]).toFixed(1):0}%</td>` : '') + `</tr>`; };
     let h = '';
@@ -4605,7 +4599,7 @@ function renderTable(){
       (tr_ ? `<td>${num(c[EV])}</td>
               <td class="${cls(cpt(c.spend,c[EV]))}">${cptTxt(c.spend,c[EV])}</td>`
            : `<td>${rs(c.budget||0)}</td>`) +
-      (on ? `<td>${num(c.cp_signups)}</td><td>${num(c.cp_mandates)}</td>` : '') +
+      (on ? `<td>${num(c.cp_signups)}</td>` : '') +
       `<td>100%</td>` + (tr_ ? `<td>100%</td>` : '') + `</tr>`;
     document.getElementById('rowcount').textContent='';
     return;
@@ -4635,6 +4629,8 @@ function renderTable(){
   // produce a cost-per that no row actually implies.
   const sum = k => r.reduce((s,o)=>s+(o[k]||0),0);
   const sp = sum('spend'), tr = sum('trials'),
+        /* `md` still feeds the Day-0 footer cells below: those percentages are a share
+           of MANDATES, which the page no longer shows as a column but still divides by. */
         su = sum('cp_signups'), md = sum('cp_mandates');
   /* Derived from the SUMS, never the mean of the rows' rates: an average CTR across ad
      sets of wildly different size is a number no impression actually experienced. */
@@ -5258,17 +5254,16 @@ function cpNote(){
   if(!p.available) return p.note ? `<span class="dimtxt">${p.note}</span><br><br>` : '';
   if(!cpOn()) return '';                 // columns switched off — the checkbox says why
   const u = p.unmatched;
-  return `<b>Signups &amp; mandates.</b> These come from the Classplus DB (query
+  return `<b>Signups.</b> These come from the Classplus DB (query
      ${p.window[0]}${p.window[1]!==p.window[0]?' → '+p.window[1]:''}, read
      ${p.retrieved_at}), joined on the same <b>ad name</b> Branch uses.
-     A mandate is counted against the ad the user <i>signed up</i> through, so it is a
-     signup-cohort figure: someone who signed up yesterday and started a trial today
-     counts for Branch but not here. That, not a data problem, is why
-     ${num(DATA.combined.cp_mandates)} mandates and ${num(DATA.combined[EV])} Branch
-     trials differ slightly.
-     ${u.cp_signups>0 ? `${num(u.cp_signups)} signups and ${num(u.cp_mandates)} mandates
-       carry no matching live ad name (organic, or an ad since deleted) and sit outside
-       every row.`:''}<br><br>`;
+     A signup is counted against the ad the user signed up through, so it is a
+     signup-cohort figure and will not line up exactly with a Branch trial count.
+     The Day-0 percentages below are still measured against mandates, which the page
+     no longer shows as a column: they are the share of that day's mandates active or
+     cancelled, not a share of signups.
+     ${u.cp_signups>0 ? `${num(u.cp_signups)} signups carry no matching live ad name
+       (organic, or an ad since deleted) and sit outside every row.`:''}<br><br>`;
 }
 
 /* ---------- export ---------- */
@@ -5309,7 +5304,6 @@ function expCols(level){
   if(level!=='ads') c.push(['active_ads', o=>o.active_ads]);
   if(DATA && DATA.classplus && DATA.classplus.available)
     c.push(['signups', o=>o.cp_signups], ['cost_per_signup', o=>o.cps],
-           ['mandates', o=>o.cp_mandates],
            ['d0_active_pct', o=>o.d0a], ['d0_cancel_pct', o=>o.d0c]);
   return c;
 }
