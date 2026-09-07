@@ -1172,7 +1172,8 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 #       tab stayed hidden on a restored payload, which is precisely the failure this
 #       stamp exists to prevent -- the field is read to decide whether to SHOW the tab,
 #       so an old payload does not render it blank, it renders nothing at all.
-PAYLOAD_SHAPE = 7
+#   8 - retention counts (rt_*) and the `retention` flag, for a product-DB trial feed
+PAYLOAD_SHAPE = 8
 
 
 def has_vid(r):
@@ -1493,6 +1494,10 @@ def branch_trials_by_ad(since, until, B):
 CP_TTL = int(os.environ.get("CP_TTL", "600"))            # insist the result is this fresh
 CP_POLL_BUDGET = int(os.environ.get("CP_POLL_BUDGET", "20"))
 CP_KEYS = ("cp_signups", "cp_mandates", "cp_d0a", "cp_d0c")
+# Retention, for a brand whose trial feed carries it (PrepShots, from the product DB).
+# Counts, not rates -- see redash.RETENTION for why -- so they roll up like any other
+# number and the percentage is divided out at the level being displayed.
+RET_KEYS = RD.RET_KEYS
 
 
 def _cp_url(path, key):
@@ -4145,7 +4150,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
 
     for coll in (ads, adsets, campaigns, accounts):
         for o in coll.values():
-            for k in CP_KEYS + (INSTALL_KEY,):
+            for k in CP_KEYS + RET_KEYS + (INSTALL_KEY,):
                 o[k] = 0.0
 
     # ---- attach Branch trials to ads by NAME -------------------------------
@@ -4217,6 +4222,31 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         for g in group:
             g[INSTALL_KEY] += n * (g["spend"] / tot) if tot else n / len(group)
 
+    # ---- attach retention to ads by the SAME name key ----------------------
+    # Only a brand whose trials come from the product DB has these; everyone else keeps
+    # the zeros set above and the page hides the columns rather than drawing 0%.
+    retention_on = False
+    if (B.get("provider") or "branch") == "redash" and B.get("trials_query"):
+        try:
+            ret = RD.retention_by_ad(C.CLASSPLUS_HOST, B["trials_query"], since, until)
+        except Exception:
+            traceback.print_exc()
+            ret = {}
+        retention_on = bool(ret)
+        for name, rec in ret.items():
+            group = by_name.get(name)
+            if not group:
+                continue
+            # Split across ads sharing a name by spend, exactly as installs and Classplus
+            # are: the product DB knows the name, not which of two identically named ads
+            # earned it.
+            tot = sum(g["spend"] for g in group)
+            for g in group:
+                share = 1.0 if len(group) == 1 else (
+                    (g["spend"] / tot) if tot else 1 / len(group))
+                for k in RET_KEYS:
+                    g[k] += rec[k] * share
+
     # ---- attach Classplus signups/mandates to ads by the SAME name key ------
     cp, cp_note = classplus(since, until) if B["classplus"] else (None, None)
     cp_matched = {k: 0.0 for k in CP_KEYS}
@@ -4244,7 +4274,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         if s:
             s["spend"] += x["spend"]; s["t101"] += x["t101"]; s["t10m"] += x["t10m"]
             s[INSTALL_KEY] += x[INSTALL_KEY]
-            for k in CP_KEYS:
+            for k in CP_KEYS + RET_KEYS:
                 s[k] += x[k]
             for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp"):
                 s[k] += x[k]
@@ -4255,7 +4285,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         if c:
             c["spend"] += s["spend"]; c["t101"] += s["t101"]; c["t10m"] += s["t10m"]
             c[INSTALL_KEY] += s[INSTALL_KEY]
-            for k in CP_KEYS:
+            for k in CP_KEYS + RET_KEYS:
                 c[k] += s[k]
             for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp"):
                 c[k] += s[k]
@@ -4267,7 +4297,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         if a:
             a["spend"] += c["spend"]; a["t101"] += c["t101"]; a["t10m"] += c["t10m"]
             a[INSTALL_KEY] += c[INSTALL_KEY]
-            for k in CP_KEYS:
+            for k in CP_KEYS + RET_KEYS:
                 a[k] += c[k]
             for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp"):
                 a[k] += c[k]
@@ -4286,7 +4316,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                 "vimp": sum(a["vimp"] for a in accounts.values()),
                 "active_adsets": sum(a["active_adsets"] for a in accounts.values()),
                 "active_ads": sum(a["active_ads"] for a in accounts.values())}
-    for k in CP_KEYS:
+    for k in CP_KEYS + RET_KEYS:
         combined[k] = sum(a[k] for a in accounts.values())
 
     # Per-segment account and combined rows. Campaigns already carry everything rolled up
@@ -4296,7 +4326,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
     # already and shipping three copies of them would treble the payload.
     NUM = (("spend", "budget", "t101", "t10m", INSTALL_KEY,
             "imp", "clk", "imp_spend", "vv", "tp", "vimp",
-            "active_adsets", "active_ads") + CP_KEYS)
+            "active_adsets", "active_ads") + CP_KEYS + RET_KEYS)
 
     def _acct_rows(seg):
         out = {}
@@ -4410,6 +4440,11 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         # on the page: it costs no payload, and it inherits the segment filter, the
         # account and campaign scopes and the pro-rata uplift for free.
         "editors": B.get("editors") or [],
+        # Whether this brand's trial feed carried retention rates this build. A flag
+        # rather than a count: the columns are hidden when it is false, because 0% and
+        # "not reported" are different claims and the second must never look like the
+        # first.
+        "retention": retention_on,
         # None means "show the number, do not colour it": a target nobody has agreed
         # on is worse than none, because a red cell reads as an instruction.
         "cpt_target": B["cpt_target"],

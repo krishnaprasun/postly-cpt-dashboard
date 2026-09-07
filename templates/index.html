@@ -1613,7 +1613,8 @@ function editorRows(){
      someone else's number -- and a budget column reads as a figure somebody set, not as a
      model. Every other metric here is summed from measured ad rows. */
   const SUM = ['spend','t101','t10m','inst','imp','clk','imp_spend','vv','tp','vimp',
-               'cp_signups','cp_mandates','cp_d0a','cp_d0c'];
+               'cp_signups','cp_mandates','cp_d0a','cp_d0c',
+               'rt_base','rt_renew','rt_d1e','rt_d0c','rt_canc'];
   const out = new Map();
   for(const a of (DATA.ads || []).filter(inSeg)){
     const c = editorOf(a.name);
@@ -4097,6 +4098,18 @@ const COLS = {
 
 /* Appended to whichever tab is showing, so signups and mandates sit on the same row as
    the spend that bought them at every level. */
+/* Retention, for a brand whose trial feed reports it. Appended like CP_COLS so it lands
+   on whichever table is showing -- ad, ad set, campaign, account, editor -- rather than
+   being a view of its own. Hidden entirely when the feed did not carry it: 0% and "not
+   reported" are different claims. */
+const RET_COLS = [
+  {k:'d0can', t:'D0 cancel', kind:'pct'},
+  {k:'canc', t:'Cancelled', kind:'pct'},
+  {k:'d1e', t:'D1 engaged', kind:'pct'},
+  {k:'renew', t:'Renewal', kind:'pct'},
+];
+const retOn = () => !!(DATA && DATA.retention);
+
 const CP_COLS = [
   {k:'cp_signups', t:'Signups', kind:'num', src:1},
   {k:'cps', t:'Cost/signup', kind:'rs', src:1},
@@ -4112,7 +4125,8 @@ const CP_COLS = [
 function colsFor(tab){
   const base = hasTrials() ? COLS[tab]
                            : COLS[tab].filter(c => c.k!=='trials' && c.k!=='cpt');
-  return cpOn() ? base.concat(CP_COLS) : base;
+  const withCp = cpOn() ? base.concat(CP_COLS) : base;
+  return retOn() ? withCp.concat(RET_COLS) : withCp;
 }
 
 /* Rows for one level, with the derived trials/CPT/cost-per columns the table shows.
@@ -4175,6 +4189,14 @@ function rows(tab, filtered){
          video, and dividing by `imp` would dilute both rates by exactly that fraction. */
       hook: o.vimp ? 100 * o.vv / o.vimp : null,
       thru: o.vimp ? 100 * o.tp / o.vimp : null,
+      /* Retention. Divided at the level being shown, never averaged from the level
+         below -- and divided by rt_base, the MEASURED mandate count, not by trials:
+         trials carry the pro-rata uplift and a rate whose denominator has been modelled
+         while its numerator was measured is a rate of nothing. */
+      renew: o.rt_base ? 100 * o.rt_renew / o.rt_base : null,
+      d1e:   o.rt_base ? 100 * o.rt_d1e   / o.rt_base : null,
+      d0can: o.rt_base ? 100 * o.rt_d0c   / o.rt_base : null,
+      canc:  o.rt_base ? 100 * o.rt_canc  / o.rt_base : null,
       cps: cpt(o.spend, o.cp_signups), cpm: cpt(o.spend, o.cp_mandates),
       d0a: o.cp_mandates > 0 ? 100*o.cp_d0a/o.cp_mandates : null,
       d0c: o.cp_mandates > 0 ? 100*o.cp_d0c/o.cp_mandates : null}));

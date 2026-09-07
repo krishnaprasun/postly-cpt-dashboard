@@ -170,3 +170,53 @@ def google_trials_daily(host, query, since, until, events):
                 dst = out.setdefault(day, {}).setdefault(ek, {})
                 dst[(camp, "")] = dst.get((camp, ""), 0) + n
     return out
+
+
+# The retention columns the query carries beside the trial count, as
+# {payload key: CSV column}. They arrive as PERCENTAGES per ad, and a percentage cannot
+# be rolled up -- averaging an ad on 400 mandates with one on 3 would let the small ad
+# move the campaign. Each is turned back into the count it describes so ad, ad set,
+# campaign and editor rows sum, and the rate is divided out again at the level being
+# shown. Exactly how CTR and CPM are handled everywhere else on the page.
+RETENTION = {"rt_renew": "Renewal %",
+             "rt_d1e": "D1 Engagement %",
+             "rt_d0c": "D0 Cancellation %",
+             "rt_canc": "Overall Cancellation %"}
+# The denominator, kept separate from the trial count on purpose: trials carry the
+# pro-rata uplift and these rates must not. A rate whose numerator is measured and whose
+# denominator has been modelled is not a rate of anything.
+RET_BASE = "rt_base"
+RET_KEYS = (RET_BASE,) + tuple(RETENTION)
+
+
+def retention_by_ad(host, query, since, until, base_col="Mandates"):
+    """{ad_name: {rt_base, rt_renew, rt_d1e, rt_d0c, rt_canc}} over [since, until].
+
+    Rows with no ad name -- every Google and organic row -- are skipped rather than
+    bucketed: these join to ad rows by name, and a bucket key matches no ad.
+    """
+    qid, key = query
+    out = {}
+    for r in csv.DictReader(io.StringIO(
+            _fetch(host, qid, key).decode("utf-8", "replace"))):
+        day = (r.get(DATE_COL) or "")[:10]
+        if not (since <= day <= until):
+            continue
+        ad = (r.get(AD_COL) or "").strip()
+        if not ad or ad.lower() in ("none", "null", "n/a"):
+            continue
+        try:
+            base = float(r.get(base_col) or 0)
+        except ValueError:
+            continue
+        if base <= 0:
+            continue
+        rec = out.setdefault(ad, {k: 0.0 for k in RET_KEYS})
+        rec[RET_BASE] += base
+        for k, col in RETENTION.items():
+            try:
+                pct = float(r.get(col) or 0)
+            except ValueError:
+                pct = 0.0
+            rec[k] += base * pct / 100.0
+    return out
