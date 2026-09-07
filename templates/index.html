@@ -1666,6 +1666,15 @@ const segHas = sg => !!(DATA && DATA.segments && DATA.segments[sg]
    from the model, and it keeps ad -> ad set -> campaign rollups exact. What it does not
    do is shift trials BETWEEN ads: each row keeps its measured share and the whole page
    lifts by the window's factor. That limitation is stated in the note, not hidden. */
+/* The brand's signup count, whichever feed carries it. Both are joined to ads by the
+   same ad name, so they are the same shape despite coming from different queries. */
+function sgOf(o){ return (o.rt_signups || 0) || (o.cp_signups || 0); }
+/* Trials as MEASURED. rt_base is already measured; a vendor row's trial figure carries
+   the pro-rata uplift and has it divided back out. */
+function trMeasured(o){
+  if(typeof o.rt_base === 'number' && o.rt_base > 0) return o.rt_base;
+  return (o[EV] || 0) / (upliftOf(EV) || 1);
+}
 function upliftOf(ev){
   const p = RAW && RAW.prorata && RAW.prorata[ev];
   return (p && p.uplift) ? p.uplift : 1;
@@ -4172,11 +4181,18 @@ const NC_COLS = [
 ];
 const ncOn = () => !!(DATA && (DATA.events || []).includes('t10m'));
 
+/* The funnel rates belong to whichever brand has a signup count, not to the retention
+   set -- Postly has signups from Classplus and installs from Branch, and was denied these
+   purely because they were wired to the PrepShots field. */
+const FUNNEL_COLS = [
+  {k:'sg_inst', t:'Signup/install', kind:'pct', src:SRC_INSTMIX},
+  {k:'sg_tr', t:'Trial/signup', kind:'pct', src:SRC_FUNNEL},
+];
+const sgOn = () => retOn() || cpOn();
+
 const RET_COLS = [
   {k:'rt_signups', t:'Signups', kind:'num', src:SRC_DB},
   {k:'cpsg', t:'Cost/signup', kind:'rs', src:SRC_DBMIX},
-  {k:'sg_inst', t:'Signup/install', kind:'pct', src:SRC_INSTMIX},
-  {k:'sg_tr', t:'Trial/signup', kind:'pct', src:SRC_FUNNEL},
   {k:'d0can', t:'D0 cancel', kind:'pct', src:SRC_DB},
   {k:'canc', t:'Cancelled', kind:'pct', src:SRC_DB},
   {k:'d1e', t:'D1 engaged', kind:'pct', src:SRC_DB},
@@ -4204,7 +4220,8 @@ function colsFor(tab){
                            : COLS[tab].filter(c => c.k!=='trials' && c.k!=='cpt');
   const withNc = ncOn() ? base.concat(NC_COLS) : base;
   const withCp = cpOn() ? withNc.concat(CP_COLS) : withNc;
-  return retOn() ? withCp.concat(RET_COLS) : withCp;
+  const withRet = retOn() ? withCp.concat(RET_COLS) : withCp;
+  return sgOn() ? withRet.concat(FUNNEL_COLS) : withRet;
 }
 
 /* Rows for one level, with the derived trials/CPT/cost-per columns the table shows.
@@ -4274,10 +4291,18 @@ function rows(tab, filtered){
       /* Signups is a count, so it needs no denominator -- only a cost beside it. */
       cpsg:  cpt(o.spend, o.rt_signups),
       /* The funnel, step by step: of the installs this ad bought, how many signed up;
-         of those signups, how many started a trial. Both divide by MEASURED counts --
-         rt_base, not the trial figure -- so neither moves when pro rata is applied. */
-      sg_inst: o.inst ? 100 * o.rt_signups / o.inst : null,
-      sg_tr:   o.rt_signups ? 100 * o.rt_base / o.rt_signups : null,
+         of those signups, how many started a trial.
+
+         Signups come from whichever source the brand HAS -- the Redash trial feed on
+         PrepShots, the Classplus query on Postly -- so this is not a PrepShots feature.
+
+         The trial side divides by a MEASURED count. On a product-DB brand that is
+         rt_base; on a vendor brand the row's trial figure has already been multiplied by
+         the pro-rata uplift, so it is divided back out. A rate with a measured numerator
+         over a modelled denominator would move whenever the model did, which is not a
+         property any conversion rate should have. */
+      sg_inst: (o.inst && sgOf(o)) ? 100 * sgOf(o) / o.inst : null,
+      sg_tr:   sgOf(o) ? 100 * trMeasured(o) / sgOf(o) : null,
       /* NC 10m: trials still alive ten minutes in. Carried on every row for the brands
          whose feed reports it, and never shown until now because EV is pinned to t101. */
       nc10: (typeof o.t10m === 'number') ? o.t10m : null,
