@@ -1614,7 +1614,7 @@ function editorRows(){
      model. Every other metric here is summed from measured ad rows. */
   const SUM = ['spend','t101','t10m','inst','imp','clk','imp_spend','vv','tp','vimp',
                'cp_signups','cp_mandates','cp_d0a','cp_d0c',
-               'rt_base','rt_renew','rt_d1e','rt_d0c','rt_canc'];
+               'rt_base','rt_signups','rt_renew','rt_d1e','rt_d0c','rt_canc'];
   const out = new Map();
   for(const a of (DATA.ads || []).filter(inSeg)){
     const c = editorOf(a.name);
@@ -4103,6 +4103,8 @@ const COLS = {
    being a view of its own. Hidden entirely when the feed did not carry it: 0% and "not
    reported" are different claims. */
 const RET_COLS = [
+  {k:'rt_signups', t:'Signups', kind:'num'},
+  {k:'cpsg', t:'Cost/signup', kind:'rs'},
   {k:'d0can', t:'D0 cancel', kind:'pct'},
   {k:'canc', t:'Cancelled', kind:'pct'},
   {k:'d1e', t:'D1 engaged', kind:'pct'},
@@ -4193,6 +4195,8 @@ function rows(tab, filtered){
          below -- and divided by rt_base, the MEASURED mandate count, not by trials:
          trials carry the pro-rata uplift and a rate whose denominator has been modelled
          while its numerator was measured is a rate of nothing. */
+      /* Signups is a count, so it needs no denominator -- only a cost beside it. */
+      cpsg:  cpt(o.spend, o.rt_signups),
       renew: o.rt_base ? 100 * o.rt_renew / o.rt_base : null,
       d1e:   o.rt_base ? 100 * o.rt_d1e   / o.rt_base : null,
       d0can: o.rt_base ? 100 * o.rt_d0c   / o.rt_base : null,

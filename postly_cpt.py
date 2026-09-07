@@ -1181,7 +1181,8 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 #   9 - Meta's own installs (`minst`), and `inst` filled from them on a brand whose
 #       vendor has none. A payload restored from before this carries inst=0 for that
 #       brand and would show no installs against real spend.
-PAYLOAD_SHAPE = 9
+#  10 - signups (rt_signups) from the same product-DB query
+PAYLOAD_SHAPE = 10
 
 
 def has_vid(r):

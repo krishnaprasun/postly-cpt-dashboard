@@ -182,11 +182,14 @@ RETENTION = {"rt_renew": "Renewal %",
              "rt_d1e": "D1 Engagement %",
              "rt_d0c": "D0 Cancellation %",
              "rt_canc": "Overall Cancellation %"}
+# Plain counts from the same query, summed rather than weighted -- they are already the
+# thing itself, not a rate describing it.
+COUNTS = {"rt_signups": "Signups"}
 # The denominator, kept separate from the trial count on purpose: trials carry the
 # pro-rata uplift and these rates must not. A rate whose numerator is measured and whose
 # denominator has been modelled is not a rate of anything.
 RET_BASE = "rt_base"
-RET_KEYS = (RET_BASE,) + tuple(RETENTION)
+RET_KEYS = (RET_BASE,) + tuple(COUNTS) + tuple(RETENTION)
 
 
 def retention_by_ad(host, query, since, until, base_col="Mandates"):
@@ -213,6 +216,11 @@ def retention_by_ad(host, query, since, until, base_col="Mandates"):
             continue
         rec = out.setdefault(ad, {k: 0.0 for k in RET_KEYS})
         rec[RET_BASE] += base
+        for k, col in COUNTS.items():
+            try:
+                rec[k] += float(r.get(col) or 0)
+            except ValueError:
+                pass
         for k, col in RETENTION.items():
             try:
                 pct = float(r.get(col) or 0)
