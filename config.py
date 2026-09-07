@@ -305,6 +305,12 @@ BRANDS = {
         # product DB has no cap and knows today. `events` maps to CSV COLUMN names here,
         # where a vendor brand maps to event names.
         "provider": "redash",
+        # The product DB reports trials, not installs, so this brand's install column was
+        # empty. Meta's own attributed installs come free on the insights call already
+        # being made. Meta-attributed only: Google and organic installs are not in it, and
+        # for PrepShots that is most of the volume -- so this is the install count behind
+        # the spend this page reports, not the app's.
+        "installs_from": "meta",
         # One column, so one trial figure. AppsFlyer's NC 10m has no equivalent in this
         # query; the column is dropped for this brand rather than filled with something
         # that means something else. It comes back if the query grows the column.

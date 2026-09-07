@@ -1089,8 +1089,11 @@ def budget_days(brand, dates):
 #
 # Both fields are ABSENT when the count is zero, not zero -- 129 of 604 rows had plays and
 # no ThruPlay key at all. So absence means nothing was watched, and `_vid` reads it as 0.
+# `mobile_app_install` rides along on the same request. Widening an IN filter cannot drop
+# rows -- the check recorded above was that filtering does not lose spend, and adding a
+# type only ever returns more -- so installs cost nothing beyond a few bytes per row.
 VIDEO_FILTER = json.dumps([{"field": "action_type", "operator": "IN",
-                            "value": ["video_view"]}])
+                            "value": ["video_view", "mobile_app_install"]}])
 VIDEO_FIELDS = ",video_thruplay_watched_actions,actions"
 
 
@@ -1119,6 +1122,8 @@ def _vid(rows):
             continue
         r["vv"] = _action(r, "actions", "video_view") or 0.0
         r["tp"] = _action(r, "video_thruplay_watched_actions", "video_view") or 0.0
+        # Meta's OWN install count. Absent means none, exactly as the video keys do.
+        r["minst"] = _action(r, "actions", "mobile_app_install") or 0.0
         r.pop("actions", None)
         r.pop("video_thruplay_watched_actions", None)
     return rows
@@ -1173,7 +1178,10 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 #       stamp exists to prevent -- the field is read to decide whether to SHOW the tab,
 #       so an old payload does not render it blank, it renders nothing at all.
 #   8 - retention counts (rt_*) and the `retention` flag, for a product-DB trial feed
-PAYLOAD_SHAPE = 8
+#   9 - Meta's own installs (`minst`), and `inst` filled from them on a brand whose
+#       vendor has none. A payload restored from before this carries inst=0 for that
+#       brand and would show no installs against real spend.
+PAYLOAD_SHAPE = 9
 
 
 def has_vid(r):
@@ -4119,6 +4127,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                     ads[aid]["vv"] += _num(r.get("vv"))
                     ads[aid]["tp"] += _num(r.get("tp"))
                     ads[aid]["vimp"] += _num(r.get("impressions"))
+                ads[aid]["minst"] = ads[aid].get("minst", 0.0) + _num(r.get("minst"))
                 ads[aid]["adset"] = ads[aid]["adset"] or r.get("adset_name", "")
                 ads[aid]["campaign"] = ads[aid]["campaign"] or r.get("campaign_name", "")
 
@@ -4221,6 +4230,21 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         tot = sum(g["spend"] for g in group)
         for g in group:
             g[INSTALL_KEY] += n * (g["spend"] / tot) if tot else n / len(group)
+
+    # ---- installs from Meta, for a brand whose vendor cannot supply them ---
+    # PrepShots measures trials in the product DB, which has no install count, so its
+    # install column was empty. Meta reports its OWN attributed installs on the insights
+    # call already being made, so they cost nothing extra to take.
+    #
+    # Read the number for what it is: Meta-attributed installs, not the brand's installs.
+    # Google and organic installs are not in it, and on a brand where most volume is
+    # Google that gap is most of the total. It is the install figure for the spend this
+    # page reports, which is the comparison CPI is drawn from, and nothing wider.
+    if B.get("installs_from") == "meta":
+        for x in ads.values():
+            x[INSTALL_KEY] = x.get("minst", 0.0) or 0.0
+        inst_matched = sum(x[INSTALL_KEY] for x in ads.values())
+        inst_meta = inst_matched          # every one of them names an ad that has a row
 
     # ---- attach retention to ads by the SAME name key ----------------------
     # Only a brand whose trials come from the product DB has these; everyone else keeps
@@ -4473,7 +4497,12 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         "channel_labels": CHANNEL_LABELS,
         # Branch installs, joined to ads by the same name key as trials. Reported
         # separately from `matched` because installs are not what CPT divides by.
-        "installs": {"branch_total": round(sum(trials.get(INSTALL_KEY, {}).values()), 1),
+        # `branch_total` is the vendor's whole install count; a brand taking installs from
+        # Meta has no vendor figure, so the Meta total stands in rather than a zero, which
+        # would read as "no installs happened".
+        "installs": {"branch_total": round(
+            inst_meta if B.get("installs_from") == "meta"
+            else sum(trials.get(INSTALL_KEY, {}).values()), 1),
                      "matched": round(inst_matched, 1),
                      # Meta's whole bucket and the part of it no ad row can carry, so the
                      # summary can divide by the same thing the trial tiles do.
