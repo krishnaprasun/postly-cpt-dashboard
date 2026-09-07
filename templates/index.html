@@ -2102,6 +2102,25 @@ function cpKpis(c, sp){
      <div class="s">${cptTxt(sp,su)} each · <em>product DB</em>${stale ? ` ·
        <span class="warn">${p.age_min > 120 ? Math.round(p.age_min/60) + 'h'
          : p.age_min + ' min'} old</span>` : ''}</div></div>
+   ${(() => {
+     /* The funnel as one tile rather than two: install -> signup leads, signup -> trial
+        rides the sub-line. The row already carries eight and the point of this one is the
+        SHAPE of the drop, which reads better as a pair than as two rivals.
+        The trial side divides the pro-rata uplift back out -- signups are measured, and a
+        rate that mixed a measured numerator with a modelled denominator would drift with
+        the model. */
+     const inst = c.inst || 0;
+     if(!(su > 0) || !(inst > 0)) return '';
+     const trM = (c[EV] || 0) / (upliftOf(EV) || 1);
+     const a = 100 * su / inst, b = trM > 0 ? 100 * trM / su : null;
+     return `
+   <div class="kpi" title="Derived: product-database signups over ${ATTRIB()} installs,
+     then measured trials over those signups. Both denominators are measured, so pro rata
+     moves neither."><div class="k">Signup rate</div>
+     <div class="v">${a.toFixed(0)}%</div>
+     <div class="s">of ${num(inst)} installs · ${b === null ? '—'
+       : b.toFixed(1) + '% of those start a trial'}</div></div>`;
+   })()}
    <div class="kpi" title="${CP_SRC}"><div class="k">Day-0</div><div class="v">${pct(c.cp_d0a,m)}</div>
      <div class="s">active on day 0 · ${pct(c.cp_d0c,m)} cancelled ·
        Classplus ${p.age_min===null?'':p.age_min+' min old'}</div></div>`;
