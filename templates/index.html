@@ -2361,13 +2361,17 @@ function renderCohorts(){
   document.getElementById('ccount').textContent =
     `${COH.rows.length} days · ${num(t.live)} ad sets created`;
   const pct = (a, b) => b ? `${(100*a/b).toFixed(0)}%` : '—';
+  /* The brand's graduation bar, or null when nobody has agreed one -- the columns are
+     then not drawn at all. Measuring a team against a threshold invented here would turn
+     a report into an accusation. */
+  const BAR = (COH && typeof COH.grad_cpi === 'number') ? COH.grad_cpi : null;
   const n0 = v => v ? num(v) : '<span class="dimtxt">0</span>';
   /* Shares are measured against what was UPLOADED, not against what graduated: the
      question the row exists to answer is how much of a day's work reached a trial
      campaign, and against graduates every day would read 100%. */
   const row = r => !r.live ? `<tr class="idle">
       <td class="l">${dayLbl(r.date)}${r.prov ? PROV : ''}</td>
-      <td colspan="8" class="l dimtxt">${r.day_test_spend
+      <td colspan="${BAR === null ? 8 : 10}" class="l dimtxt">${r.day_test_spend
         ? `nothing uploaded — ${rs(r.day_test_spend)} spent testing what was already running`
         : 'no testing spend'}</td></tr>`
     : `<tr${r.prov ? ' class="prov"' : ''}>
@@ -2376,13 +2380,17 @@ function renderCohorts(){
       <td class="gr">${n0(r.d1)}</td><td class="gr">${n0(r.d2)}</td>
       <td class="gr">${n0(r.d3)}</td><td class="gr">${n0(r.d4)}</td>
       <td class="gr" title="Graduated more than four days after going live">${n0(r.d5)}</td>
-      <td><b>${n0(r.grad)}</b><span class="sub2">${pct(r.grad, r.live)}</span></td></tr>`;
+      <td><b>${n0(r.grad)}</b><span class="sub2">${pct(r.grad, r.live)}</span></td>
+      ${BAR === null ? '' : `<td>${n0(r.elig)}</td>
+      <td class="${r.missed ? 'warn' : ''}"><b>${n0(r.missed)}</b><span class="sub2">${
+        pct(r.elig_grad, r.elig)}</span></td>`}</tr>`;
   const head = `<thead>
     <tr class="grp">
       <th class="l g-dt"></th>
       <th colspan="2" class="g-up">Creatives uploaded</th>
       <th colspan="5" class="g-gr">Graduation</th>
-      <th class="g-sc">Post scaling</th></tr>
+      <th class="g-sc">Post scaling</th>
+      ${BAR === null ? '' : `<th colspan="2" class="g-up">Earned it</th>`}</tr>
     <tr>
       <th class="l">Date</th>
       <th title="Ad sets created in a testing campaign that day">Meta</th>
@@ -2391,6 +2399,12 @@ function renderCohorts(){
       <th>Day 2</th><th>Day 3</th><th>Day 4</th>
       <th title="Graduated more than four days later">Day 5+</th>
       <th title="Everything from that day that graduated — the day columns added up">Final live</th>
+      ${BAR === null ? '' : `
+      <th title="Creatives whose testing CPI came in at or below ${'\u20b9'}${BAR} — the bar
+        this brand graduates against. A creative with no installs has no CPI and is
+        counted neither way.">Eligible</th>
+      <th title="Eligible and never graduated. The percentage is how many of the day's
+        eligible creatives the team did move.">Missed</th>`}
       </tr></thead>`;
   const foot = `<tfoot><tr>
       <td class="l">${COH.rows.length} days</td>
@@ -2398,6 +2412,9 @@ function renderCohorts(){
       <td class="gr">${n0(t.d1)}</td><td class="gr">${n0(t.d2)}</td>
       <td class="gr">${n0(t.d3)}</td><td class="gr">${n0(t.d4)}</td><td class="gr">${n0(t.d5)}</td>
       <td><b>${num(t.grad)}</b><span class="sub2">${pct(t.grad, t.live)}</span></td>
+      ${BAR === null ? '' : `<td>${n0(t.elig)}</td>
+      <td class="${t.missed ? 'warn' : ''}"><b>${n0(t.missed)}</b><span class="sub2">${
+        pct(t.elig_grad, t.elig)}</span></td>`}
       </tr></tfoot>`;
   box.innerHTML = `<div class="panel" style="padding-bottom:10px">
       <div class="mcap"><h3>Graduation funnel · ${lbl}${bandLbl}</h3>

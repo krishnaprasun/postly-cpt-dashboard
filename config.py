@@ -267,6 +267,13 @@ BRANDS = {
                        "t10m": "SE_trial_nc_after_10mins"},
         # No agreed target yet, so CPT is shown uncoloured rather than judged.
         "cpt_target": 275,
+        # The testing CPI at or below which a creative has EARNED a graduation. Taken
+        # from the team's own candidates sheet, which tiers under Rs8 to a Rs3000 budget
+        # and Rs8-12 to Rs1000, and treats anything above 12 as not a candidate.
+        # None on a brand where nobody has agreed a bar: the Graduation view then hides
+        # the eligible columns rather than measure the team against a number invented
+        # here. Set it per brand when the bar is agreed.
+        "grad_cpi": 12,
         "classplus": False,
         "logo": "brand/speakeasy.svg",
         # Their black-on-gold identity. `dark` is a deep bronze rather than the logo's

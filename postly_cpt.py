@@ -464,17 +464,45 @@ CPI_BANDS = {"lt8": ("under Rs8", lambda c: c is not None and c < 8),
              "none": ("no installs", lambda c: c is None)}
 
 
+def grad_cpi(brand):
+    """The testing CPI at or below which a creative was worth graduating, for this brand.
+
+    None means nobody has agreed a bar, and the eligible column is then hidden rather
+    than drawn against a number somebody invented -- the same rule cpt_target follows,
+    for the same reason: a threshold nobody signed up to turns a report into an
+    accusation.
+    """
+    # Env first, so the bar can be tuned without a deploy -- it is a number someone will
+    # want to move after looking at a week of it, and a redeploy per adjustment is how a
+    # threshold ends up never being adjusted.
+    v = os.environ.get("GRAD_CPI_" + brand.upper(), "").strip()
+    if not v:
+        v = (C.BRANDS.get(brand) or {}).get("grad_cpi")
+    try:
+        return float(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _cpi(rec):
     """Testing CPI: what the creative paid per install while it was still in testing.
     None when it never got an install — a rate with no denominator is not a zero."""
     return (rec["ts"] / rec["ti"]) if rec.get("ti") else None
 
 
-def _cohort_rows(art, since, until, band=None):
-    """Fold the ledger into one row per day, under whichever CPI band is asked for."""
+def _cohort_rows(art, since, until, band=None, bar=None):
+    """Fold the ledger into one row per day, under whichever CPI band is asked for.
+
+    `bar` is the brand's graduation CPI. With one, each day also counts how many
+    creatives EARNED a graduation -- testing CPI at or below the bar -- beside how many
+    got one, and how many of those eligible were left behind. That difference is the
+    team's execution, and it is not visible from the graduated count alone: a day that
+    graduated three of three is not the same day as one that graduated three of eleven.
+    """
     keep = CPI_BANDS.get(band, (None, None))[1] if band and band != "all" else None
     prov = set(art.get("provisional") or [])
     rows = {d: {"date": d, "live": 0, "grad": 0, "win": 0,
+                "elig": 0, "elig_grad": 0, "missed": 0, "unearned": 0,
                 "d1": 0, "d2": 0, "d3": 0, "d4": 0, "d5": 0,
                 "test_spend": 0.0, "test_inst": 0.0, "trial_spend": 0.0, "trials": 0.0,
                 "day_test_spend": (art.get("day_test_spend") or {}).get(d, 0.0),
@@ -492,6 +520,22 @@ def _cohort_rows(art, since, until, band=None):
         r["live"] += 1
         r["test_spend"] += rec["ts"]
         r["test_inst"] += rec["ti"]
+        # Eligibility is a property of the creative's OWN testing CPI, so it is counted
+        # on every creative before the band filter narrows what happened next. A creative
+        # with no installs has no CPI and cannot be judged either way -- it is neither
+        # eligible nor missed, because a rate with no denominator is not a high one.
+        if bar is not None:
+            cpi = _cpi(rec)
+            if cpi is not None and cpi <= bar:
+                r["elig"] += 1
+                if rec.get("g"):
+                    r["elig_grad"] += 1
+                else:
+                    r["missed"] += 1
+            elif rec.get("g"):
+                # Graduated without meeting the bar. Not an error -- somebody may have
+                # seen something the CPI did not -- but it is a decision worth counting.
+                r["unearned"] += 1
         if not rec.get("g"):
             continue
         if keep is not None and not keep(_cpi(rec)):
@@ -519,8 +563,9 @@ def _cohort_rows(art, since, until, band=None):
 
 
 def _cohort_totals(rows):
-    return {k: round(sum(r[k] for r in rows), 2)
+    return {k: round(sum(r.get(k) or 0 for r in rows), 2)
             for k in ("live", "grad", "win", "d1", "d2", "d3", "d4", "d5",
+                      "elig", "elig_grad", "missed", "unearned",
                       "test_spend", "test_inst", "trial_spend", "trials")}
 
 
@@ -558,12 +603,15 @@ def cohorts(brand, since, until, band=None, force=False):
                "stored_days": meta["stored_days"], "lookback_from": meta["lookback_from"],
                "generated_at": now_ist_str()}
 
-    rows = _cohort_rows(art, since, until, band)
+    rows = _cohort_rows(art, since, until, band, bar=grad_cpi(brand))
     data = {"brand": brand,
             "since": rows[0]["date"] if rows else since,
             "until": rows[-1]["date"] if rows else until,
             "rows": rows, "totals": _cohort_totals(rows),
             "band": band, "bands": {k: v[0] for k, v in CPI_BANDS.items()},
+            # The bar this brand graduates against, or None when nobody has set one --
+            # the page hides the eligible columns rather than invent a threshold.
+            "grad_cpi": grad_cpi(brand),
             "winner_spend": WINNER_SPEND,
             "event": art.get("event"), "event_label": art.get("event_label"),
             "last_test_day": art.get("last_test_day"),
