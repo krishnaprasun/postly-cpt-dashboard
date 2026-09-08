@@ -932,6 +932,10 @@ def api_hour_snapshot():
                 if cust:
                     for w in windows:
                         w_since, w_until = resolve_range(w, None, None)
+                        # The TAB calls google_window; the Trends/Grid views call
+                        # google_series. Warming only the second left the click people
+                        # actually make still paying for a full rebuild.
+                        P.google_window(b, w_since, w_until, force=True)
                         P.google_series(b, w_since, w_until, dim="gadgroup", force=True)
                         gwarm.append(w)
             except Exception as ex:

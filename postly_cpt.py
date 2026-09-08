@@ -2525,14 +2525,37 @@ def google_customers(brand):
 
 
 def google_window(brand, since, until, force=False):
-    """See _google_window_build. Cached, because switching channel should not re-pull."""
+    """See _google_window_build. Cached, because switching channel should not re-pull.
+
+    Persisted as well as cached, for the reason the series is: this is what the Google
+    TAB calls, and an in-process cache is empty after every restart. The store keeps it
+    across one, so clicking Google is a read rather than a rebuild.
+    """
     key = (brand, since, until)
+    skey = _gser_key(since, until, "window")
     if not force:
         hit, age = _gcache_get(_gwin_cache, key, GSERIES_TTL)
         if hit is not None:
             return dict(hit, cached=True, age_min=age)
+        if H.available():
+            try:
+                saved, ok = _gser_load(brand)
+            except Exception:
+                saved, ok = {}, False
+            rec = saved.get(skey) if ok else None
+            v = (rec or {}).get("v")
+            at = (rec or {}).get("at") or 0
+            if v and time.time() - at < GSER_MAX_AGE:
+                _gcache_put(_gwin_cache, key, v, err=bool(v.get("trials_error")))
+                return dict(v, cached=True, stored=True,
+                            age_min=int((time.time() - at) // 60))
     out = _google_window_build(brand, since, until, force=force)
     _gcache_put(_gwin_cache, key, out, err=bool(out.get("trials_error")))
+    if H.available() and not out.get("trials_error") and not out.get("spend_error"):
+        try:
+            _gser_save(brand, skey, out)
+        except Exception:
+            traceback.print_exc()
     return dict(out, cached=False, age_min=0)
 
 
