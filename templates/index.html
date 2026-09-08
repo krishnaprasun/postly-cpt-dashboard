@@ -4714,12 +4714,30 @@ function renderTable(){
     SORT = {key:k, dir: SORT.key===k ? -SORT.dir : (k==='name'?1:-1)};
     renderTable();
   });
-  tbl.querySelector('tbody').innerHTML = r.map(o =>
-    /* A row that spent nothing in this window is a row of em-dashes with a name on it.
-       It still belongs in the table — it is a real ad set, and hiding it silently would
-       be worse — but it should not compete with the rows that did something. */
-    `<tr class="${o.spend ? '' : 'idle'}">` + cols.map(c => cell(o,c)).join('') + '</tr>'
-  ).join('');
+  /* An empty table is the one state that cannot explain itself: every filter here is a
+     checkbox somewhere else on the page, and a blank box reads as "the dashboard broke"
+     rather than "you hid everything". Name what did it, and how many rows it hid. */
+  const unfiltered = rows(TAB, false).length;
+  tbl.querySelector('tbody').innerHTML = r.length
+    ? r.map(o =>
+        /* A row that spent nothing in this window is a row of em-dashes with a name on
+           it. It still belongs in the table — it is a real ad set, and hiding it
+           silently would be worse — but it should not compete with the rows that did
+           something. */
+        `<tr class="${o.spend ? '' : 'idle'}">` + cols.map(c => cell(o,c)).join('') + '</tr>'
+      ).join('')
+    : `<tr class="idle"><td class="l dimtxt" colspan="${cols.length}">${
+        unfiltered
+          ? `No rows match the filters. ${unfiltered} hidden by: ` + [
+              document.getElementById('activeOnly').checked ? '<b>active only</b>' : '',
+              document.getElementById('spentOnly').checked ? '<b>spent only</b>' : '',
+              document.getElementById('q').value.trim() ? `search <b>${
+                document.getElementById('q').value.trim()}</b>` : '',
+              document.getElementById('fAcct').value ? '<b>an account filter</b>' : '',
+              document.getElementById('fCamp').value ? '<b>a campaign filter</b>' : '',
+              SEG === 'blended' ? '' : `the <b>${SEG}</b> segment`,
+            ].filter(Boolean).join(' · ')
+          : 'Nothing in this window.'}</td></tr>`;
   // Footer totals are recomputed from the visible rows, never averaged: a rate is
   // derived from the summed numerator and denominator so filtering the table cannot
   // produce a cost-per that no row actually implies.
