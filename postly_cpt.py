@@ -3519,10 +3519,21 @@ def _with_active(data, brand):
         keys, ok = None, False
     if not ok or keys is None:
         return dict(data, active_known=False, active_dim=True)
+
+    # The script dimension keys a row by NAME + stage (see _dim_day: the same creative
+    # runs in a testing campaign and again in a trial one, and merging those two lives
+    # into one row blends two different campaign objectives). _series_active answers in
+    # bare ad names, because "a script is still running if any live ad carries it" is a
+    # fact about the name and not about a stage. Comparing the two directly never
+    # matched, so every row came back inactive and `active only` emptied the grid --
+    # reported 2026-09-09 on the Day grid, which defaults to this dimension.
+    def _match(k):
+        return (k or "").split("\x1f", 1)[0] in keys if dim == "script" else k in keys
+
     return dict(data, active_known=True, active_dim=True,
                 active_rows=sum(1 for r in data.get("rows") or []
-                                if r.get("key") in keys),
-                rows=[dict(r, active=(r.get("key") in keys))
+                                if _match(r.get("key"))),
+                rows=[dict(r, active=_match(r.get("key")))
                       for r in (data.get("rows") or [])])
 
 
