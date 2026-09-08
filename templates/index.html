@@ -579,6 +579,15 @@ table.coh col.c-dt{width:20%}
 table.coh col.c-up{width:11%}
 table.coh col.c-day{width:8%}
 table.coh col.c-fin{width:18%}
+/* With the eligible pair the table is eleven columns, not nine, and `table-layout:fixed`
+   takes every width from this colgroup -- a column with no <col> gets none and lands on
+   top of its neighbour. Percentages rebalanced to 100 rather than scaled, so the date
+   column keeps enough room for two lines. */
+table.coh col.c-dt2{width:15%}
+table.coh col.c-up2{width:8%}
+table.coh col.c-day2{width:7%}
+table.coh col.c-fin2{width:14%}
+table.coh col.c-earn{width:10%}
 table.coh th,table.coh td{padding-left:10px;padding-right:12px}
 /* The date is the one cell that may need two lines once the width is fixed; everything
    else is a number and must not wrap. */
@@ -2435,8 +2444,11 @@ function renderCohorts(){
              trial campaign it graduates into, so this filter narrows the graduation
              columns and everything after them, not what was made that day.` : ''}</p></div>
     <div class="wrap"><table id="cohtbl" class="coh">
-      <colgroup><col class="c-dt"><col span="2" class="c-up"><col span="5" class="c-day">
-        <col class="c-fin"></colgroup>${head}
+      <colgroup><col class="${BAR === null ? 'c-dt' : 'c-dt2'}">
+        <col span="2" class="${BAR === null ? 'c-up' : 'c-up2'}">
+        <col span="5" class="${BAR === null ? 'c-day' : 'c-day2'}">
+        <col class="${BAR === null ? 'c-fin' : 'c-fin2'}">
+        ${BAR === null ? '' : `<col span="2" class="c-earn">`}</colgroup>${head}
       <tbody>${COH.rows.slice().reverse().map(row).join('')}</tbody>${foot}</table></div>`;
 }
 
