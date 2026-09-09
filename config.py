@@ -234,6 +234,11 @@ BRANDS = {
                        "t10m": "postly_trial_nc_after10min_backend"},
         # Raised from 150 on 2026-08-31 at the owner's instruction.
         "cpt_target": 180,
+        # An ad set's first five days -- D0 to D4 -- are its discovery phase, where Meta
+        # is still exploring and cost per trial is not comparable with a settled ad set's.
+        # Postly reads the two apart. Unset on every other brand, and the tiles are then
+        # not drawn rather than drawn against a boundary nobody agreed.
+        "discovery_days": 5,
         # Postly names every AD for the editor in it, and Meta has no field for that, so
         # the name is the only record. Measured 2026-09-07: 1,051 of 1,136 ad names carry
         # one of these, against 2 of 333 ad SET names — the ad is the rung that knows,

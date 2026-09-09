@@ -1230,7 +1230,8 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 #       vendor has none. A payload restored from before this carries inst=0 for that
 #       brand and would show no installs against real spend.
 #  10 - signups (rt_signups) from the same product-DB query
-PAYLOAD_SHAPE = 10
+#  11 - `created` on ad set rows and the `discovery` split built from it
+PAYLOAD_SHAPE = 11
 
 
 def has_vid(r):
@@ -4275,6 +4276,11 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                 "campaign_id": s.get("campaign_id"),
                 "campaign": (cstat.get(s.get("campaign_id")) or {}).get("name", ""),
                 "account": a["name"], "account_id": a["id"],
+                # Meta's own launch date, which is what the discovery split counts
+                # days from. Only the live roster carries it; an ad set seen solely
+                # through insights has none, and is counted in neither phase rather than
+                # guessed into one.
+                "created": (s.get("created_time") or "")[:10],
                 "spend": 0.0, "t101": 0.0, "t10m": 0.0,
                 "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
                 "vv": 0.0, "tp": 0.0, "vimp": 0.0, "active_ads": 0}
@@ -4583,6 +4589,51 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
     ages = [x for x in ages if x is not None]
     budget_age = int(max(ages)) if ages else None
 
+    # ---- discovery phase --------------------------------------------------
+    # An ad set's first N days are its discovery phase, and they buy something different
+    # from the days after: Meta is still exploring, so cost per trial there is not
+    # comparable with a settled ad set's. Split so the two can be read apart instead of
+    # averaged into one number that describes neither.
+    #
+    # Age is measured from Meta's created_time to the END of the window. That is exact on
+    # a single day, which is what this view defaults to. On a longer window an ad set that
+    # crossed out of discovery inside it lands wholly on the side it ended on -- stated
+    # here rather than hidden, because the alternative is re-deriving every day's age from
+    # the day store for a tile.
+    #
+    # An ad set with no created_time is counted in NEITHER phase. It is reported on its
+    # own so the two buckets never silently fail to add up to the brand.
+    disc = None
+    ddays = B.get("discovery_days")
+    if ddays:
+        try:
+            end = datetime.strptime(until, "%Y-%m-%d").date()
+        except ValueError:
+            end = None
+        if end:
+            buckets = {"discovery": {}, "mature": {}, "unknown": {}}
+            for k in buckets:
+                buckets[k] = {"spend": 0.0, "adsets": 0,
+                              **{e: 0.0 for e in EVENTS}}
+            for x in adsets.values():
+                created = (x.get("created") or "")[:10]
+                where = "unknown"
+                if created:
+                    try:
+                        age = (end - datetime.strptime(created, "%Y-%m-%d").date()).days
+                        where = "discovery" if 0 <= age < ddays else "mature"
+                    except ValueError:
+                        where = "unknown"
+                b = buckets[where]
+                b["spend"] += x["spend"]
+                b["adsets"] += 1
+                for e in EVENTS:
+                    b[e] += x.get(e) or 0
+            disc = {"days": ddays,
+                    **{k: {"spend": round(v["spend"], 2), "adsets": v["adsets"],
+                           **{e: round(v[e], 1) for e in EVENTS}}
+                       for k, v in buckets.items()}}
+
     branch_totals = {k: sum(trials[k].values()) for k in EVENTS}
     # Everything the per-ad CPT does not cover. Kept as a single figure because that is
     # what "attribution %" is measured against, but no longer the end of the story --
@@ -4668,6 +4719,9 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         # on the page: it costs no payload, and it inherits the segment filter, the
         # account and campaign scopes and the pro-rata uplift for free.
         "editors": B.get("editors") or [],
+        # {days, discovery:{...}, mature:{...}, unknown:{...}} for a brand that splits its
+        # first N days out, None for every other brand -- the tiles are then not drawn.
+        "discovery": disc,
         # Whether this brand's trial feed carried retention rates this build. A flag
         # rather than a count: the columns are hidden when it is false, because 0% and
         # "not reported" are different claims and the second must never look like the

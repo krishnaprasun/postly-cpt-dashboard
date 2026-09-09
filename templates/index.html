@@ -2060,6 +2060,29 @@ function kpis(){
                 trials. It settles as the day fills in.">includes last night's</span>`
            : ` · ${r.toFixed(1)}% of trials`;
        })()}</div></div>` : '')
+   + /* Discovery vs settled, as one tile rather than two. An ad set's first days buy
+        something different from its later ones -- Meta is still exploring -- so averaging
+        them into a single CPT describes neither. Both numbers on one tile because the
+        POINT is the gap between them, and because the row is already eight wide.
+        Meta only: the split is computed from Meta ad sets' launch dates. */
+     (() => {
+       const dc = DATA.discovery;
+       if(!dc || !chanIsMeta() || !hasTrials()) return '';
+       const a = dc.discovery, b = dc.mature;
+       const ca = a[EV] > 0 ? a.spend / a[EV] : null;
+       const cb = b[EV] > 0 ? b.spend / b[EV] : null;
+       if(ca === null && cb === null) return '';
+       const unk = (dc.unknown && dc.unknown.adsets) || 0;
+       return `
+   <div class="kpi" title="Ad sets are split by their age on ${DATA.until}: the first
+     ${dc.days} days (D0 to D${dc.days - 1}) against everything later. Age comes from
+     Meta's own created_time; an ad set without one is counted in neither and is named
+     below."><div class="k">CPT · discovery vs settled</div>
+     <div class="v">${ca === null ? '—' : rs(ca)}<span class="dimtxt"> / </span>${
+       cb === null ? '—' : rs(cb)}</div>
+     <div class="s">first ${dc.days} days (${num(a.adsets)} ad sets) vs after (${
+       num(b.adsets)})${unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
+     })()
    : `
    <div class="kpi"><div class="k">Budget/day${srcBtn('meta')}</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) +
