@@ -1,93 +1,85 @@
-# Push-to-deploy, because Render's own GitHub connection is not wired for this account.
+# Push-to-deploy, to Cloud Run.
 #
-# Render reports autoDeploy=yes and autoDeployTrigger=commit, and both are correct -- but
-# the repo has no webhook and no Render GitHub App installation, so GitHub never tells
-# Render a push happened. Every one of the first 40 deploys was `trigger: api`. Rather
-# than re-authorizing in Render's dashboard, this workflow does what that webhook would:
-# calls the deploy API itself, then waits and fails loudly if the deploy does not go live.
+# Was Render. The workspace was suspended on 2026-09-09 for exceeding the free
+# bandwidth allowance, which takes every free service in it down until the calendar
+# month rolls -- so the dashboard moved to Cloud Run in the project that already holds
+# its GCS history bucket, and this workflow followed it.
 #
-# SECRET: RENDER_API_KEY. A Render API key reaches EVERY workspace the account belongs to
-# and cannot be scoped down, so when it is rotated -- and it is overdue -- this secret has
-# to be updated in the same breath, or deploys start 401ing:
-#     gh secret set RENDER_API_KEY --repo krishnaprasun/postly-cpt-dashboard
-# The repo is public; GitHub does not expose secrets to forks or to pull_request runs from
-# them, and this workflow only ever runs on a push to main of this repository.
+# NO SERVICE ACCOUNT KEY. The org policy iam.disableServiceAccountKeyCreation forbids
+# downloadable keys, which is the same constraint that forced history-service to exist.
+# Authentication is Workload Identity Federation: GitHub mints an OIDC token, Google
+# trades it for short-lived credentials, and the provider only accepts tokens whose
+# `repository` claim is this repo. Nothing long-lived is stored in GitHub secrets.
 
-name: Deploy to Render
+name: Deploy to Cloud Run
 
 on:
   push:
     branches: [main]
     # Documentation does not ship to the running service, and a needless deploy costs a
-    # cold restart on a free instance. Code changes still deploy on every push.
+    # container build. Code changes still deploy on every push.
     paths-ignore:
       - 'docs/**'
       - '**.md'
   workflow_dispatch:        # and a manual button, for a docs-only push you DO want live
 
 concurrency:
-  group: render-deploy
+  group: cloudrun-deploy
   cancel-in-progress: false   # never cancel a deploy mid-flight; queue behind it
 
 permissions:
   contents: read
+  id-token: write             # required to mint the OIDC token WIF exchanges
+
+env:
+  PROJECT: admanagementpostly
+  REGION: asia-south1
+  SERVICE: ads-performance-dashboard
 
 jobs:
   deploy:
     if: github.repository == 'krishnaprasun/postly-cpt-dashboard'
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      SERVICE: srv-da3cttibkg8c738a4nvg
     steps:
-      - name: Trigger the deploy
-        id: go
-        run: |
-          set -euo pipefail
-          resp=$(curl -sS -X POST \
-            -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache":"do_not_clear"}' \
-            "https://api.render.com/v1/services/$SERVICE/deploys")
-          id=$(printf '%s' "$resp" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("id",""))')
-          if [ -z "$id" ]; then
-            echo "::error::Render refused the deploy: $resp"; exit 1
-          fi
-          echo "id=$id" >> "$GITHUB_OUTPUT"
-          echo "Triggered $id for ${GITHUB_SHA:0:7}"
+      - uses: actions/checkout@v4
 
-      - name: Wait for it to go live
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: projects/360124450287/locations/global/workloadIdentityPools/github/providers/github-provider
+          service_account: gh-deploy-cpt@admanagementpostly.iam.gserviceaccount.com
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      # Env vars are NOT passed here on purpose: the service already carries 35 of them
+      # and `gcloud run deploy` leaves untouched any it is not told about. Passing a
+      # partial set would silently delete the rest.
+      - name: Deploy
         run: |
           set -euo pipefail
-          id="${{ steps.go.outputs.id }}"
-          for _ in $(seq 1 80); do
-            st=$(curl -sS -H "Authorization: Bearer ${{ secrets.RENDER_API_KEY }}" \
-                 "https://api.render.com/v1/services/$SERVICE/deploys/$id" |
-                 python3 -c 'import json,sys;print(json.load(sys.stdin).get("status",""))')
-            echo "$(date -u +%H:%M:%S) $st"
-            case "$st" in
-              live)
-                # Render reports `live` BEFORE it has detected the open port, and until it
-                # does every request 404s at the edge. And a plain 200 proves nothing
-                # either: during a roll the OLD instance is still answering. So the test
-                # is that /healthz names OUR commit.
-                for _ in $(seq 1 20); do
-                  body=$(curl -s --max-time 20 https://postly-cpt-dashboard.onrender.com/healthz || true)
-                  got=$(printf '%s' "$body" | sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p')
-                  if [ -n "$got" ]; then
-                    [ "$got" = "$GITHUB_SHA" ] && { echo "serving ${got:0:7} — deploy landed"; exit 0; }
-                    echo "still serving ${got:0:7}, want ${GITHUB_SHA:0:7}"
-                  else
-                    # Older image, or running off Render: no commit field to compare, so
-                    # fall back to the weaker check rather than failing a good deploy.
-                    case "$body" in *'"ok":true'*) echo "healthz ok (no commit field)"; exit 0 ;; esac
-                  fi
-                  sleep 15
-                done
-                echo "::error::$id went live but never served ${GITHUB_SHA:0:7}"; exit 1 ;;
-              build_failed|update_failed|canceled|pre_deploy_failed)
-                echo "::error::deploy $id ended $st"; exit 1 ;;
-            esac
+          gcloud run deploy "$SERVICE" \
+            --source . \
+            --region "$REGION" \
+            --project "$PROJECT" \
+            --update-env-vars "GIT_COMMIT=${GITHUB_SHA}" \
+            --quiet
+
+      # A 200 does not prove the deploy landed -- during a roll the old revision is still
+      # serving. /health reports the commit it was built from, so this compares it with
+      # the sha that was pushed and fails loudly if traffic has not moved.
+      - name: Verify the new revision is serving
+        run: |
+          set -euo pipefail
+          URL=$(gcloud run services describe "$SERVICE" --region "$REGION" \
+                  --project "$PROJECT" --format='value(status.url)')
+          for i in $(seq 1 20); do
+            got=$(curl -fsS --max-time 30 "$URL/health" | python3 -c \
+              'import json,sys; print(json.load(sys.stdin).get("commit",""))' || true)
+            if [ "$got" = "${GITHUB_SHA}" ]; then
+              echo "live on ${GITHUB_SHA:0:7}"; exit 0
+            fi
+            echo "  serving '${got:0:7}', waiting for ${GITHUB_SHA:0:7} ($i/20)"
             sleep 15
           done
-          echo "::error::deploy $id did not finish in time"; exit 1
+          echo "::error::Cloud Run never served ${GITHUB_SHA:0:7}"; exit 1

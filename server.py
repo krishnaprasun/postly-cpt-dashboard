@@ -1697,7 +1697,12 @@ def healthz():
     then calls the deploy done. Empty off Render, which is a fine answer locally.
     """
     return jsonify({"ok": True, "ist": P.today_ist(), "cached_windows": len(_cache),
-                    "commit": os.environ.get("RENDER_GIT_COMMIT", "")[:40]})
+                    # Render injects RENDER_GIT_COMMIT; Cloud Run has no equivalent, so
+                    # the deploy sets GIT_COMMIT itself. Either answers the same question:
+                    # a 200 does not prove the new code is serving, because during a roll
+                    # the OLD instance still answers.
+                    "commit": (os.environ.get("RENDER_GIT_COMMIT")
+                               or os.environ.get("GIT_COMMIT", ""))[:40]})
 
 
 if __name__ == "__main__":
