@@ -2119,15 +2119,18 @@ function kpis(){
                   DATA.budget_is_today ? ' ' + rs(c.budget) + ' is live right now — lower \
 than the morning\u2019s whenever ad sets have been paused during the day.' : ''}">(${
                   rs(bOpen.total)} budget)</span><span class="pct ${
-                  paceOpen > 100 ? 'warn' : ''}">${paceOpen.toFixed(0)}% used</span>${
-                DATA.budget_is_today ? budgetAge() : ''}`
+                  paceOpen > 100 ? 'warn' : ''}">${paceOpen.toFixed(0)}% used</span>`
        /* A past day with no snapshot gets no budget line rather than today's. The live
           roster was the only number to hand, and against yesterday's spend it produced a
           percentage of the wrong thing. */
        : (DATA.budget_day && !DATA.budget_is_today)
              ? `no budget snapshot for ${DATA.budget_day}`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
-             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div>
+             /* The same shape as the branch above. Before the day's 09:00 snapshot exists
+                -- which is most of the night -- this is the branch that runs, and it was
+                still the old one-line sentence, so "% used" looked unchanged. */
+             : `<span class="vsub">(${rs(c.budget)} budget)</span><span class="pct ${
+                 pace > 100 ? 'warn' : ''}">${pace.toFixed(0)}% used</span>`}</div>
      ${/* No cost-per here. Spend over trials IS the CPT, and the hero tile two along
            exists to report exactly that, against its target and in its own colour.
            Printing it again in a bracket said nothing the row did not already say twice
@@ -2136,7 +2139,7 @@ than the morning\u2019s whenever ad sets have been paused during the day.' : ''}
        ncOn() && chanIsMeta() && typeof mc.t10m === 'number' && mc.t10m > 0
        ? `<span class="vsub" title="Trials still running ten minutes in. Early in the day \
 this carries last night's, because a trial started at 23:55 fires its ten-minute event at \
-00:05.">(${num(mc.t10m)} NC 10m${mc[EV] > 0 ? ' · ' + (100 * mc.t10m / mc[EV]).toFixed(0)
+00:05.">(${num(mc.t10m)} NC_10mn${mc[EV] > 0 ? ' · ' + (100 * mc.t10m / mc[EV]).toFixed(0)
          + '%' : ''})</span>` : ''}<span class="vlab tri">${
        modLbl ? 'trials · pro rata' : 'trials'}</span></div>` : ''}</div>` +
    (trials ? ``
@@ -4394,8 +4397,8 @@ const COLS = {
    switch: the page pins EV to t101, so every one of these counts was being fetched,
    stored and rolled up without ever reaching the screen. */
 const NC_COLS = [
-  {k:'nc10', t:'NC 10m', kind:'num', src:SRC_VENDOR},
-  {k:'cpnc', t:'Cost/NC 10m', kind:'rs', src:SRC_MIX},
+  {k:'nc10', t:'NC_10mn', kind:'num', src:SRC_VENDOR},
+  {k:'cpnc', t:'Cost/NC_10mn', kind:'rs', src:SRC_MIX},
 ];
 const ncOn = () => !!(DATA && (DATA.events || []).includes('t10m'));
 
@@ -4521,7 +4524,7 @@ function rows(tab, filtered){
          property any conversion rate should have. */
       sg_inst: (o.inst && sgOf(o)) ? 100 * sgOf(o) / o.inst : null,
       sg_tr:   sgOf(o) ? 100 * trMeasured(o) / sgOf(o) : null,
-      /* NC 10m: trials still alive ten minutes in. Carried on every row for the brands
+      /* NC_10mn: trials still alive ten minutes in. Carried on every row for the brands
          whose feed reports it, and never shown until now because EV is pinned to t101. */
       nc10: (typeof o.t10m === 'number') ? o.t10m : null,
       cpnc: cpt(o.spend, o.t10m),

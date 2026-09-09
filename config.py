@@ -229,7 +229,7 @@ BRANDS = {
                      {"id": INSTALL_ACCOUNT, "name": "Postly Install"}],
         "events": {"t101": "postly_trial_started_backend",
                    "t10m": "postly_trial_nc_after10min_backend"},
-        "labels": {"t101": "Trials", "t10m": "NC 10m"},
+        "labels": {"t101": "Trials", "t10m": "NC_10mn"},
         "event_note": {"t101": "postly_trial_started_backend",
                        "t10m": "postly_trial_nc_after10min_backend"},
         # Raised from 150 on 2026-08-31, and to 200 on 2026-09-10, at the owner's
@@ -271,7 +271,7 @@ BRANDS = {
                      {"id": "act_909676394829541", "name": "SpeakEasy Install"}],
         "events": {"t101": "speakeasy_trial_started",
                    "t10m": "SE_trial_nc_after_10mins"},
-        "labels": {"t101": "Trials", "t10m": "NC 10m"},
+        "labels": {"t101": "Trials", "t10m": "NC_10mn"},
         "event_note": {"t101": "speakeasy_trial_started",
                        "t10m": "SE_trial_nc_after_10mins"},
         # No agreed target yet, so CPT is shown uncoloured rather than judged.
@@ -300,7 +300,7 @@ BRANDS = {
         # the cleanest join of the three brands.
         "events": {"t101": "trial_started_backend",
                    "t10m": "trial_nc_after10min_backend"},
-        "labels": {"t101": "Trials", "t10m": "NC 10m"},
+        "labels": {"t101": "Trials", "t10m": "NC_10mn"},
         "event_note": {"t101": "trial_started_backend",
                        "t10m": "trial_nc_after10min_backend"},
         "cpt_target": 180,
@@ -348,7 +348,7 @@ BRANDS = {
         # taken as the trial. Confirm with the owner before anything is judged on it.
         "events": {"t101": "super_trial_transaction",
                    "t10m": "superpasstrial_10min_not_cancelled"},
-        "labels": {"t101": "Trials", "t10m": "NC 10m"},
+        "labels": {"t101": "Trials", "t10m": "NC_10mn"},
         "event_note": {"t101": "super_trial_transaction",
                        "t10m": "superpasstrial_10min_not_cancelled"},
         # No agreed target yet, so CPT is shown uncoloured rather than judged against a
