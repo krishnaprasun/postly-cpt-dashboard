@@ -1361,7 +1361,14 @@ function stampNow(){
      another 40 minutes. */
   if(HOURLY_MODE){
     const secs = m === null ? null : m;
-    const due = secs === null ? null : Math.max(0, 3600 - (secs % 3600));
+    /* Counted to the next top of the hour, not an hour from the last pull. The job is
+       cron `0 * * * *` in IST, so a refresh that landed at 19:08 -- a retry, a manual
+       run, or a slow build finishing late -- is still followed by one at 20:00, not
+       20:08. Measuring from the pull put the countdown eight minutes long and told
+       people to wait for a number that had already moved. */
+    const ist = new Date(Date.now() + 330 * 60000);
+    const due = secs === null ? null
+      : 3600 - (ist.getUTCMinutes() * 60 + ist.getUTCSeconds());
     el.innerHTML = secs === null
       ? `Refreshed hourly · <b>${(DATA.generated_at||'').replace(' IST','')}</b> IST`
       : `Data as of <b class="${secs > 5400 ? 'warn' : ''}">${ago(secs)
