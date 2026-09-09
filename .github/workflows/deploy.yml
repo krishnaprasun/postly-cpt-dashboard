@@ -63,6 +63,7 @@ jobs:
             --region "$REGION" \
             --project "$PROJECT" \
             --update-env-vars "GIT_COMMIT=${GITHUB_SHA}" \
+            --timeout=900 \
             --quiet
 
       # A 200 does not prove the deploy landed -- during a roll the old revision is still
