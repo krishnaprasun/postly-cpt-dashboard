@@ -176,12 +176,23 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* A pair of figures needs to say which is which. "Rs384 (Rs203)" under a heading reading
    "discovery vs settled" makes the reader work out the order for themselves, and half of
    them will guess wrong. */
-.kpi .vlab{display:block;font-size:9px;font-weight:650;letter-spacing:.7px;
-  text-transform:uppercase;color:var(--faint);margin-top:2px;line-height:1.2}
+.kpi .vlab{display:block;font-size:9.5px;font-weight:750;letter-spacing:.8px;
+  text-transform:uppercase;color:var(--faint);margin-top:3px;line-height:1.2}
+/* Discovery is gold and settled is green, the same two colours this page already uses for
+   "still finding out" and "known good" -- the gold band on the Graduation table, the green
+   of a CPT under target. The colour is on the LABEL, not the figure: a CPT here is not
+   good or bad against a target, it is one phase's cost beside the other's, and colouring
+   the numbers would make the tile look like it was passing judgement on them. */
+.kpi .vlab.disc{color:var(--gold-dk)}
+.kpi .vlab.sett{color:var(--green-dk)}
 /* The budget behind a figure, in brackets under it: the money committed beside the money
    already spent, without either competing for the headline. */
 .kpi .vsub{display:block;font-size:11.5px;font-weight:600;color:var(--faint);
   letter-spacing:0;line-height:1.25;margin-top:3px;font-variant-numeric:tabular-nums}
+/* A bracketed second figure that carries real weight rather than sitting as a footnote.
+   Used where the two numbers are both worth reading -- live ad sets and the ads inside
+   them -- as against a budget, which is context for the figure above it. */
+.kpi .vsub.lg{font-size:16px;font-weight:650;color:var(--muted);margin-top:5px}
 /* The share, under the figure it is a share OF. Its own line so it is read as a rate and
    not as part of the amount above it. */
 .kpi .pct{display:block;font-size:12px;font-weight:650;color:var(--muted);margin-top:3px;
@@ -2166,10 +2177,10 @@ than the morning\u2019s whenever ad sets have been paused during the day.' : ''}
      paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
      <div class="v">${ca === null ? '—' : rs(ca)}<span class="vsub">(${
        rs(a.budget || 0)}${bTot ? ' · ' + (100 * (a.budget || 0) / bTot).toFixed(0) + '%'
-       : ''})</span><span class="vlab">discovery</span></div>
+       : ''})</span><span class="vlab disc">discovery</span></div>
      <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vsub">(${
        rs(b.budget || 0)}${bTot ? ' · ' + (100 * (b.budget || 0) / bTot).toFixed(0) + '%'
-       : ''})</span><span class="vlab">settled</span></div>
+       : ''})</span><span class="vlab sett">settled</span></div>
      <div class="s">${num(a.live || 0)} vs ${num(b.live || 0)} live ad sets${
        unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
      })()
@@ -2190,9 +2201,7 @@ they are running right now is unknown.'
      : 'Ad sets switched on right now, and the ads inside them.'}"><div class="k">${
      deg ? 'Ad sets with spend' : 'Live ad sets'}</div>
      <div class="v">${num(sets)}</div>
-     <div class="vsub">(${num(ads)} ads${deg ? ', status unknown' : ''})</div>
-     ${sets > 0 && ads > 0 ? `<div class="pct">${(ads / sets).toFixed(1)} ads per set</div>`
-       : ''}</div>`;
+     <div class="vsub lg">(${num(ads)} ads${deg ? ', status unknown' : ''})</div></div>`;
    })()}` +
    (cpOn() ? cpKpis(c, sp) : '');
 }
