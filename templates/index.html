@@ -149,10 +149,12 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    what people come for, and left-aligning it against a wall of text made every tile read
    as a paragraph with a figure in it. */
 .kpi{background:var(--white);border:1px solid var(--line);border-radius:14px;
-  padding:13px 12px 28px;box-shadow:var(--shadow);position:relative;
+  padding:14px 12px 15px;box-shadow:var(--shadow);position:relative;
   display:flex;flex-direction:column;justify-content:center;min-width:0;text-align:center}
-.kpi .k{font-size:10px;text-transform:uppercase;letter-spacing:.85px;color:var(--muted);
-  font-weight:650;line-height:1.35}
+/* The header names the tile and was the palest thing on it -- muted grey against a
+   29px figure. It reads as a heading now. */
+.kpi .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--ink);
+  font-weight:750;line-height:1.35}
 .kpi .v{font-size:29px;font-weight:680;margin-top:9px;letter-spacing:-1px;
   font-variant-numeric:tabular-nums;line-height:1.05}
 /* The second figure of a pair, under the first and in parentheses. Stacked rather than
@@ -165,6 +167,10 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    them will guess wrong. */
 .kpi .vlab{display:block;font-size:9px;font-weight:650;letter-spacing:.7px;
   text-transform:uppercase;color:var(--faint);margin-top:2px;line-height:1.2}
+/* The budget behind a figure, in brackets under it: the money committed beside the money
+   already spent, without either competing for the headline. */
+.kpi .vsub{display:block;font-size:11.5px;font-weight:600;color:var(--faint);
+  letter-spacing:0;line-height:1.25;margin-top:2px;font-variant-numeric:tabular-nums}
 /* CPT is the number this dashboard exists to report, so it gets the width and the size.
    Only above 900px: below that the row is already stacking and a double-width tile would
    push the rest into a single cramped column. */
@@ -1297,8 +1303,11 @@ function srcBtn(part){
   const src = SRCS[part];
   const secs = src && src.age();
   if(secs === null || secs === undefined) return '';
-  if(HOURLY_MODE) return `<span class="rfr flat${secs > 5400 ? ' warn' : ''}"
-      title="${src.what} as of ${ago(secs)}">${ago(secs).replace(' ago','')}</span>`;
+  /* No per-tile age in hourly mode. One job reads everything for everybody, so every
+     tile carried the SAME number -- and the page header already says "Data as of X" once.
+     Repeating it under two tiles bought nothing and reserved a strip of empty space under
+     all nine. The age survives on the tile's own tooltip. */
+  if(HOURLY_MODE) return '';
   return `<button class="rfr${secs > 2100 ? ' warn' : ''}" data-rfr="${part}"
       title="${src.what} last read ${ago(secs)} — click to re-read ${
         part === 'both' ? 'both' : src.what} only"
@@ -2028,13 +2037,15 @@ function kpis(){
      <div class="v">${rs(sp)}</div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : paceOpen !== null
-             ? `${rs(bOpen.total)} budget at ${bOpen.at} · ${paceOpen.toFixed(0)}% used${
-                DATA.budget_is_today
-                  /* Only today has a "live now": on a past day the roster describes this
-                     minute and says nothing about what was running then. */
-                  ? ` · <span title="Budget of the ad sets switched on right now. Lower
-                       than the morning's whenever ad sets have been paused during the
-                       day.">${rs(c.budget)} live now</span>${budgetAge()}` : ''}`
+             /* Three figures and two clauses did not fit a tile this wide -- it was
+                clipped at "live now" and the reader lost the number the sentence was
+                built around. The morning budget and its percentage stay; the live figure
+                moves to the tooltip, where the explanation of it already lived. */
+             ? `<span title="Of ${rs(bOpen.total)} budgeted at ${bOpen.at}. ${
+                  DATA.budget_is_today ? rs(c.budget) + ' is live right now — lower than \
+the morning\u2019s whenever ad sets have been paused during the day.' : ''}">${
+                  paceOpen.toFixed(0)}% of ${rs(bOpen.total)} budget</span>${
+                DATA.budget_is_today ? budgetAge() : ''}`
        /* A past day with no snapshot gets no budget line rather than today's. The live
           roster was the only number to hand, and against yesterday's spend it produced a
           percentage of the wrong thing. */
@@ -2100,10 +2111,11 @@ function kpis(){
      Spend and CPT count every ad set. Budget counts only the LIVE ones,
      the same population the budget tile uses -- a paused ad set has a daily budget on
      paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
-     <div class="v">${ca === null ? '—' : rs(ca)}<span class="vlab">discovery</span></div>
-     <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vlab">settled</span></div>
-     <div class="s">${num(a.live || 0)} vs ${num(b.live || 0)} live · ${
-       rs(a.budget || 0)} vs ${rs(b.budget || 0)}/day${
+     <div class="v">${ca === null ? '—' : rs(ca)}<span class="vsub">(${
+       rs(a.budget || 0)}/day)</span><span class="vlab">discovery</span></div>
+     <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vsub">(${
+       rs(b.budget || 0)}/day)</span><span class="vlab">settled</span></div>
+     <div class="s">${num(a.live || 0)} vs ${num(b.live || 0)} live ad sets${
        unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
      })()
    : `
