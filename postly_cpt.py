@@ -1232,7 +1232,11 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 #  10 - signups (rt_signups) from the same product-DB query
 #  11 - `created` on ad set rows and the `discovery` split built from it
 #  12 - daily budget and live-ad-set count on each side of the discovery split
-PAYLOAD_SHAPE = 12
+#  13 - not a new field: cpt_target's VALUE changed (Postly 180 -> 200). It is baked into
+#       every stored payload, so without a bump the page kept colouring against 180 until
+#       each window happened to rebuild. A config value that reaches the payload needs
+#       this as much as a new key does.
+PAYLOAD_SHAPE = 13
 
 
 def has_vid(r):
