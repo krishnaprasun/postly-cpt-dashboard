@@ -154,14 +154,18 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* The header names the tile and was the palest thing on it -- muted grey against a
    29px figure. It reads as a heading now. */
 .kpi .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--ink);
-  font-weight:750;line-height:1.35}
+  font-weight:750;line-height:1.35;padding-bottom:8px;margin-bottom:2px;
+  border-bottom:1px solid var(--line2)}
 .kpi .v{font-size:29px;font-weight:680;margin-top:9px;letter-spacing:-1px;
-  font-variant-numeric:tabular-nums;line-height:1.05}
+  font-variant-numeric:tabular-nums;line-height:1.05;white-space:nowrap}
 /* The second figure of a pair, under the first and in parentheses. Stacked rather than
    side by side: broken after a slash it read as a number and then another number, and
    at this size two of them never fit on one line in a tile this narrow. */
-.kpi .v2{font-size:21px;font-weight:650;line-height:1.15;margin-top:7px;
-  letter-spacing:-.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+/* The second figure of a pair is the SAME size and colour as the first. They are two
+   readings of one thing, and drawing one smaller and greyer said the other mattered more,
+   which is not what the tile is claiming. */
+.kpi .v2{font-size:29px;font-weight:680;line-height:1.05;margin-top:10px;
+  letter-spacing:-1px;color:var(--ink);font-variant-numeric:tabular-nums}
 /* A pair of figures needs to say which is which. "Rs384 (Rs203)" under a heading reading
    "discovery vs settled" makes the reader work out the order for themselves, and half of
    them will guess wrong. */
@@ -1855,6 +1859,37 @@ function chanOf(){ return (DATA && DATA.channels && DATA.channels[EV]) || null; 
 
 
 /* ---------- KPIs ---------- */
+/* Rs6,59,015 is nine characters and does not fit a 150px tile at 29px -- it ran out of
+   both edges. Rather than pick a size that suits the longest number this brand will ever
+   post, every value is measured after render and stepped down until it fits. Numbers grow
+   through the day and differ per brand; a fixed size is a guess that goes wrong twice. */
+function fitValues(){
+  for(const el of document.querySelectorAll('#kpis .v, #kpis .v2')){
+    el.style.fontSize = '';
+    const room = el.clientWidth;
+    if(!room) continue;
+    /* Measure the NUMBER, not the element. A value can carry a bracketed budget and a
+       label stacked beneath it, and those are their own smaller sizes -- scrollWidth
+       would include them and shrink the figure to fit text that already fits. */
+    const t = el.firstChild;
+    let width;
+    if(t && t.nodeType === 3 && t.textContent.trim()){
+      const r = document.createRange(); r.selectNode(t);
+      width = () => r.getBoundingClientRect().width;
+    } else {
+      width = () => el.scrollWidth;
+    }
+    let px = parseFloat(getComputedStyle(el).fontSize);
+    while(width() > room - 2 && px > 15){ px -= 1; el.style.fontSize = px + 'px'; }
+  }
+}
+
+/* The tiles are a fluid grid, so the room a number has changes with the window. */
+let _fitT = null;
+addEventListener('resize', () => {
+  clearTimeout(_fitT); _fitT = setTimeout(fitValues, 120);
+});
+
 function kpis(){
   /* The summary divides by the brand's whole Meta bucket, not by the sum of the ad rows
      — see metaTotals(). MT is null when that cannot be done, and the rows are used. */
@@ -4884,7 +4919,7 @@ function render(){
   }
   document.getElementById('cpWrap').style.display =
     (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
-  renderLimits(); kpis(); renderTable();
+  renderLimits(); kpis(); fitValues(); renderTable();
   if(CAN_EXPORT){
     document.getElementById('expBtn').disabled = false;
     if(expWrap.classList.contains('on')) expCounts();
