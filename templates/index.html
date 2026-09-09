@@ -191,6 +191,7 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 .kpi .vlab.tri{color:var(--green-dk)}
 .kpi .vlab.ins{color:var(--muted)}
 .kpi .vlab.sgn{color:var(--green-dk)}
+.kpi .vlab.neg{color:var(--red)}
 /* The budget behind a figure, in brackets under it: the money committed beside the money
    already spent, without either competing for the headline. */
 .kpi .vsub{display:block;font-size:11.5px;font-weight:600;color:var(--faint);
@@ -2186,8 +2187,10 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
 they are running right now is unknown.'
      : 'Ad sets switched on right now, and the ads inside them.'}"><div class="k">${
      deg ? 'Ad sets with spend' : 'Live ad sets'}</div>
-     <div class="v">${num(sets)}</div>
-     <div class="vsub lg">(${num(ads)} ads${deg ? ', status unknown' : ''})</div></div>`;
+     <div class="v">${num(sets)}<span class="vlab ins">ad sets${
+       deg ? ' with spend' : ''}</span></div>
+     <div class="v2">${num(ads)}<span class="vlab ins">ads${
+       deg ? ' · status unknown' : ''}</span></div></div>`;
    })();
 }
 
@@ -2275,14 +2278,20 @@ installs</span></div>
    <div class="kpi" title="Signups over ${ATTRIB()} installs, then measured trials over
      those signups. Both denominators are measured, so pro rata moves neither.">
      <div class="k">Conversion</div>
-     <div class="v">${a === null ? '—' : a.toFixed(0) + '%'}<span class="vlab ins">\
-install &rarr; signup</span></div>
-     <div class="v2">${b === null ? '—' : b.toFixed(1) + '%'}<span class="vlab sgn">\
-signup &rarr; trial</span></div></div>`;
+     <div class="v">${a === null ? '—' : a.toFixed(0) + '%'}<span class="vsub">(${
+       num(inst)} &rarr; ${num(su)})</span><span class="vlab ins">install &rarr; signup\
+</span></div>
+     <div class="v2">${b === null ? '—' : b.toFixed(1) + '%'}<span class="vsub">(${
+       num(su)} &rarr; ${num(Math.round(trM))})</span><span class="vlab sgn">signup \
+&rarr; trial</span></div></div>`;
    })()}
-   <div class="kpi" title="${CP_SRC}"><div class="k">Day-0</div><div class="v">${pct(c.cp_d0a,m)}</div>
-     <div class="s">active on day 0 · ${pct(c.cp_d0c,m)} cancelled ·
-       Classplus ${p.age_min===null?'':p.age_min+' min old'}</div></div>`;
+   <div class="kpi" title="Both are a share of that day's MANDATES, from the Classplus
+     product database — not of signups. ${CP_SRC}"><div class="k">Day-0</div>
+     <div class="v">${pct(c.cp_d0a,m)}<span class="vsub">(of ${num(m)} mandates)</span>\
+<span class="vlab sgn">still active</span></div>
+     <div class="v2">${pct(c.cp_d0c,m)}<span class="vlab neg">cancelled</span></div>
+     <div class="s">${p.age_min === null ? '' : 'Classplus ' + p.age_min + ' min old'}\
+</div></div>`;
 }
 
 /* ---------- longevity ---------- */
