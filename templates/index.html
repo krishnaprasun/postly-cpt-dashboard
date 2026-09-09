@@ -151,6 +151,11 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
   font-weight:650;line-height:1.35}
 .kpi .v{font-size:25px;font-weight:680;margin-top:7px;letter-spacing:-.8px;
   font-variant-numeric:tabular-nums;line-height:1.05}
+/* Two figures in one value. It has to stay on one line -- broken after the slash it read
+   as a number and then another number, not as a pair -- so it takes a smaller size and
+   its own spacing rather than wrapping. */
+.kpi .v.pair{font-size:20px;letter-spacing:-.5px;white-space:nowrap}
+.kpi .v.pair .dimtxt{margin:0 3px;font-weight:500}
 /* CPT is the number this dashboard exists to report, so it gets the width and the size.
    Only above 900px: below that the row is already stacking and a double-width tile would
    push the rest into a single cramped column. */
@@ -2028,21 +2033,25 @@ function kpis(){
        : !DATA.budgets_known ? 'budget unavailable — partial data'
              : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
    (trials ? `
-   <div class="kpi"><div class="k">Trials${modLbl}${srcBtn('trials')}</div>
+   <div class="kpi" title="${(DATA.event_note[EV]||EV).replace(/"/g,'&quot;')} — counted by
+     ${ATTRIB()}"><div class="k">Trials${modLbl}${srcBtn('trials')}</div>
      <div class="v">${num(tr)}</div>
      <div class="s">${offMatters(MT)
        ? `${num(MT.rows)} sit on the ad rows below · <span class="warn">${num(MT.off)}</span>
           name an ad with no spend in this window`
-       : (DATA.event_note[EV]||EV)}${SEG==='blended' ? ''
-       : ` · ${segLbl} campaigns only`} · via <b>${ATTRIB()}</b></div></div>`
+       /* The event name moved to the tooltip. It is a single 28-character token with
+          nowhere to break -- it ate two of the three lines this sub-line gets and pushed
+          "via Branch" past the clamp, so the tile stopped naming its own source. */
+       : `${SEG === 'blended' ? 'all campaigns' : segLbl + ' campaigns'} · via <b>${
+           ATTRIB()}</b>`}${offMatters(MT) && SEG !== 'blended'
+       ? ` · ${segLbl}` : ''}</div></div>`
    + /* The second event, beside the first rather than instead of it. Meta only: no
         vendor reports a Google NC 10m, and putting Meta's count under a blended heading
         would overstate it by whatever Google earned. */
      (ncOn() && chanIsMeta() && typeof mc.t10m === 'number' ? `
    <div class="kpi"><div class="k">NC 10m${modLbl}</div>
      <div class="v">${num(mc.t10m)}</div>
-     <div class="s">${mc.t10m > 0 ? rs(sp / mc.t10m) + ' per NC 10m · ' : ''}still running
-       ten minutes in${(() => {
+     <div class="s">${mc.t10m > 0 ? rs(sp / mc.t10m) + ' each' : 'still running at 10m'}${(() => {
          /* The two are separate events, each stamped with its OWN time: a trial started
             at 23:55 fires its ten-minute event at 00:05 the NEXT day. So in the first
             hours of a day NC 10m arrives from last night's trials while barely any of
@@ -2080,10 +2089,10 @@ function kpis(){
      below.&#10;&#10;Spend and CPT count every ad set. Budget counts only the LIVE ones,
      the same population the budget tile uses -- a paused ad set has a daily budget on
      paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
-     <div class="v">${ca === null ? '—' : rs(ca)}<span class="dimtxt"> / </span>${
+     <div class="v pair">${ca === null ? '—' : rs(ca)}<span class="dimtxt">/</span>${
        cb === null ? '—' : rs(cb)}</div>
-     <div class="s">${rs(a.budget || 0)} vs ${rs(b.budget || 0)} budget/day · ${
-       num(a.live || 0)} vs ${num(b.live || 0)} live ad sets${
+     <div class="s">${rs(a.budget || 0)} vs ${rs(b.budget || 0)}/day · ${
+       num(a.live || 0)} vs ${num(b.live || 0)} live${
        unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
      })()
    : `
