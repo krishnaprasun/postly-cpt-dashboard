@@ -21,9 +21,7 @@
      gold-themed Speakeasy still shows a good number in green, not in its own gold. */
   --accent:#20A75D; --accent-dk:#127A42; --accent-lt:#EAF7F0;
   --gold:#E8A017; --gold-dk:#B87A08; --gold-lt:#FDF4E3;
-  /* Already the Graduation table's "creatives uploaded" band; promoted to a token so the
-     budget brackets can share it. */
-  --blue:#2C6FBF;
+
   --red:#B3342C; --red-lt:#FBECEA;
   --shadow:0 1px 2px rgba(26,28,46,.05), 0 4px 14px rgba(26,28,46,.045);
 }
@@ -197,12 +195,10 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 .kpi .vlab.neg{color:var(--red)}
 /* The budget behind a figure, in brackets under it: the money committed beside the money
    already spent, without either competing for the headline. */
-.kpi .vsub{display:block;font-size:11.5px;font-weight:600;color:var(--faint);
+/* One size for every bracket, budget included. They are all the same KIND of thing --
+   context for the figure above -- and three sizes of grey said they were three kinds. */
+.kpi .vsub{display:block;font-size:13.5px;font-weight:600;color:var(--faint);
   letter-spacing:0;line-height:1.25;margin-top:3px;font-variant-numeric:tabular-nums}
-/* Budget, and the target that plays the same role for CPT: money committed rather than
-   money spent. Blue separates it from both -- ink is what happened, green is what it
-   bought, and this is neither. At 11.5px in faint grey it was a footnote nobody read. */
-.kpi .vsub.bud{font-size:13.5px;font-weight:650;color:var(--blue)}
 /* A bracketed second figure that carries real weight rather than sitting as a footnote.
    Used where the two numbers are both worth reading -- live ad sets and the ads inside
    them -- as against a budget, which is context for the figure above it. */
@@ -2101,7 +2097,7 @@ function kpis(){
      ads" carry a number that is not Meta's. Both survive on the tooltip. */
   const heroSub = T === null
     ? (k === null ? 'no target set' : `no target set · ${num(tr)} trials`)
-    : `<span class="vsub bud">(target ${rs(T)})</span>`;
+    : `<span class="vsub">(target ${rs(T)})</span>`;
   const heroTip = [
     T === null ? '' : `Target ${rs(T)}${k === null ? ''
       : ` — ${k <= T ? 'under' : 'over'} by ${rs(Math.abs(k - T))}`}.`,
@@ -2114,7 +2110,12 @@ function kpis(){
      the header badge — a screenshot of this page has to carry its own caveat. The label
      is the whole caveat: the size of the lift and the measured figure under it belong in
      the note, not in a tile somebody is trying to read a number off. */
-  const modLbl = proOn() ? ' · <span class="modelled">pro rata</span>' : '';
+  /* The tiles no longer carry the words. Pro rata is the only reading this page shows,
+     on every brand, every window -- a label repeated on every tile that is never absent
+     stops being information. The model is untouched; the explanation lives in the info
+     panel, which is where the size of the lift and the measured figure under it already
+     were. */
+  const modLbl = '';
   document.getElementById('kpis').innerHTML =
    (trials ? `
    <div class="kpi hero"><div class="k">Current CPT · ${segLbl}${chanIsMeta()?modLbl:''}</div>
@@ -2130,7 +2131,7 @@ function kpis(){
                 clipped at "live now" and the reader lost the number the sentence was
                 built around. The morning budget and its percentage stay; the live figure
                 moves to the tooltip, where the explanation of it already lived. */
-             ? `<span class="vsub bud" title="Budgeted at ${bOpen.at}.${
+             ? `<span class="vsub" title="Budgeted at ${bOpen.at}.${
                   DATA.budget_is_today ? ' ' + rs(c.budget) + ' is live right now — lower \
 than the morning\u2019s whenever ad sets have been paused during the day.' : ''}">(${
                   rs(bOpen.total)} budget)</span><span class="pct ${
@@ -2144,19 +2145,20 @@ than the morning\u2019s whenever ad sets have been paused during the day.' : ''}
              /* The same shape as the branch above. Before the day's 09:00 snapshot exists
                 -- which is most of the night -- this is the branch that runs, and it was
                 still the old one-line sentence, so "% used" looked unchanged. */
-             : `<span class="vsub bud">(${rs(c.budget)} budget)</span><span class="pct ${
+             : `<span class="vsub">(${rs(c.budget)} budget)</span><span class="pct ${
                  pace > 100 ? 'warn' : ''}">${pace.toFixed(0)}% used</span>`}</div>
      ${/* No cost-per here. Spend over trials IS the CPT, and the hero tile two along
            exists to report exactly that, against its target and in its own colour.
            Printing it again in a bracket said nothing the row did not already say twice
-           over. */
-       trials ? `<div class="v2">${num(tr)}${
+           over.
+           The label sits directly under the figure it names, ABOVE the bracket: the
+           bracket is about NC_10m, so a "trials" label under it named the wrong thing. */
+       trials ? `<div class="v2">${num(tr)}<span class="vlab tri">trials</span>${
        ncOn() && chanIsMeta() && typeof mc.t10m === 'number' && mc.t10m > 0
        ? `<span class="vsub" title="Trials still running ten minutes in. Early in the day \
 this carries last night's, because a trial started at 23:55 fires its ten-minute event at \
-00:05.">(${num(mc.t10m)} NC_10mn${mc[EV] > 0 ? ' · ' + (100 * mc.t10m / mc[EV]).toFixed(0)
-         + '%' : ''})</span>` : ''}<span class="vlab tri">${
-       modLbl ? 'trials · pro rata' : 'trials'}</span></div>` : ''}</div>` +
+00:05.">(${num(mc.t10m)} NC_10m${mc[EV] > 0 ? ' · ' + (100 * mc.t10m / mc[EV]).toFixed(0)
+         + '%' : ''})</span>` : ''}</div>` : ''}</div>` +
    (trials ? ``
    + /* Discovery vs settled, as one tile rather than two. An ad set's first days buy
         something different from its later ones -- Meta is still exploring -- so averaging
@@ -2184,10 +2186,10 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
      Spend and CPT count every ad set. Budget counts only the LIVE ones,
      the same population the budget tile uses -- a paused ad set has a daily budget on
      paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
-     <div class="v">${ca === null ? '—' : rs(ca)}<span class="vsub bud">(${
+     <div class="v">${ca === null ? '—' : rs(ca)}<span class="vsub">(${
        rs(a.budget || 0)}${bTot ? ' · ' + (100 * (a.budget || 0) / bTot).toFixed(0) + '%'
        : ''})</span><span class="vlab disc">discovery</span></div>
-     <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vsub bud">(${
+     <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vsub">(${
        rs(b.budget || 0)}${bTot ? ' · ' + (100 * (b.budget || 0) / bTot).toFixed(0) + '%'
        : ''})</span><span class="vlab sett">settled</span></div>
      <div class="s">${num(a.live || 0)} vs ${num(b.live || 0)} live ad sets${
@@ -4412,8 +4414,8 @@ const COLS = {
    switch: the page pins EV to t101, so every one of these counts was being fetched,
    stored and rolled up without ever reaching the screen. */
 const NC_COLS = [
-  {k:'nc10', t:'NC_10mn', kind:'num', src:SRC_VENDOR},
-  {k:'cpnc', t:'Cost/NC_10mn', kind:'rs', src:SRC_MIX},
+  {k:'nc10', t:'NC_10m', kind:'num', src:SRC_VENDOR},
+  {k:'cpnc', t:'Cost/NC_10m', kind:'rs', src:SRC_MIX},
 ];
 const ncOn = () => !!(DATA && (DATA.events || []).includes('t10m'));
 
@@ -4539,7 +4541,7 @@ function rows(tab, filtered){
          property any conversion rate should have. */
       sg_inst: (o.inst && sgOf(o)) ? 100 * sgOf(o) / o.inst : null,
       sg_tr:   sgOf(o) ? 100 * trMeasured(o) / sgOf(o) : null,
-      /* NC_10mn: trials still alive ten minutes in. Carried on every row for the brands
+      /* NC_10m: trials still alive ten minutes in. Carried on every row for the brands
          whose feed reports it, and never shown until now because EV is pinned to t101. */
       nc10: (typeof o.t10m === 'number') ? o.t10m : null,
       cpnc: cpt(o.spend, o.t10m),
@@ -5382,8 +5384,13 @@ function chanNote(){
     counter = proOn()
       /* The reader is looking at modelled numbers and is owed the size of the model and
          the measured figure it replaced, in the same breath. */
-      ? `<br><b class="modelled">The figures above this paragraph are modelled, not
-          measured.</b> Of the ${num(p.pool)} trials no channel claims,
+      /* This is now the ONLY place the model is named. The tiles used to carry a "pro
+         rata" label; it appeared on every tile of every brand in every window, never
+         absent, and a caveat that is always on is one nobody reads. The arithmetic is
+         unchanged -- the explanation simply lives in one place that explains it properly
+         instead of nine that only gesture at it. */
+      ? `<br><b class="modelled">Every trial count and CPT on this page is MODELLED (pro
+          rata), not measured.</b> Of the ${num(p.pool)} trials no channel claims,
           this model hands Meta ${num(p.allocated)} and Google the rest, by their measured
           shares. Google's own trials are untouched. Every trial count on the page is lifted
           <b>×${p.uplift.toFixed(3)}</b> and every CPT divided by it. Brand-wide CPT
