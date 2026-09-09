@@ -149,8 +149,8 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    what people come for, and left-aligning it against a wall of text made every tile read
    as a paragraph with a figure in it. */
 .kpi{background:var(--white);border:1px solid var(--line);border-radius:14px;
-  padding:13px 12px 30px;box-shadow:var(--shadow);position:relative;
-  display:flex;flex-direction:column;min-width:0;text-align:center}
+  padding:13px 12px 28px;box-shadow:var(--shadow);position:relative;
+  display:flex;flex-direction:column;justify-content:center;min-width:0;text-align:center}
 .kpi .k{font-size:10px;text-transform:uppercase;letter-spacing:.85px;color:var(--muted);
   font-weight:650;line-height:1.35}
 .kpi .v{font-size:29px;font-weight:680;margin-top:9px;letter-spacing:-1px;
@@ -158,8 +158,13 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* The second figure of a pair, under the first and in parentheses. Stacked rather than
    side by side: broken after a slash it read as a number and then another number, and
    at this size two of them never fit on one line in a tile this narrow. */
-.kpi .v2{font-size:20px;font-weight:650;line-height:1.15;margin-top:1px;
-  letter-spacing:-.5px;color:var(--faint);font-variant-numeric:tabular-nums}
+.kpi .v2{font-size:21px;font-weight:650;line-height:1.15;margin-top:7px;
+  letter-spacing:-.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+/* A pair of figures needs to say which is which. "Rs384 (Rs203)" under a heading reading
+   "discovery vs settled" makes the reader work out the order for themselves, and half of
+   them will guess wrong. */
+.kpi .vlab{display:block;font-size:9px;font-weight:650;letter-spacing:.7px;
+  text-transform:uppercase;color:var(--faint);margin-top:2px;line-height:1.2}
 /* CPT is the number this dashboard exists to report, so it gets the width and the size.
    Only above 900px: below that the row is already stacking and a double-width tile would
    push the rest into a single cramped column. */
@@ -2091,13 +2096,14 @@ function kpis(){
    <div class="kpi" title="Ad sets are split by their age on ${DATA.until}: the first
      ${dc.days} days (D0 to D${dc.days - 1}) against everything later. Age comes from
      Meta's own created_time; an ad set without one is counted in neither and is named
-     below.&#10;&#10;Spend and CPT count every ad set. Budget counts only the LIVE ones,
+     below.&#10;&#10;The top figure is the discovery phase, the one under it is settled.
+     Spend and CPT count every ad set. Budget counts only the LIVE ones,
      the same population the budget tile uses -- a paused ad set has a daily budget on
      paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
-     <div class="v">${ca === null ? '—' : rs(ca)}</div>
-     <div class="v2">(${cb === null ? '—' : rs(cb)})</div>
-     <div class="s">${rs(a.budget || 0)} vs ${rs(b.budget || 0)}/day · ${
-       num(a.live || 0)} vs ${num(b.live || 0)} live${
+     <div class="v">${ca === null ? '—' : rs(ca)}<span class="vlab">discovery</span></div>
+     <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vlab">settled</span></div>
+     <div class="s">${num(a.live || 0)} vs ${num(b.live || 0)} live · ${
+       rs(a.budget || 0)} vs ${rs(b.budget || 0)}/day${
        unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
      })()
    : `
