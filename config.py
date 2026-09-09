@@ -232,8 +232,10 @@ BRANDS = {
         "labels": {"t101": "Trials", "t10m": "NC 10m"},
         "event_note": {"t101": "postly_trial_started_backend",
                        "t10m": "postly_trial_nc_after10min_backend"},
-        # Raised from 150 on 2026-08-31 at the owner's instruction.
-        "cpt_target": 180,
+        # Raised from 150 on 2026-08-31, and to 200 on 2026-09-10, at the owner's
+        # instruction. Nothing here is derived from it -- it colours the CPT figures and
+        # nothing else, so moving it changes what reads as good, never what is measured.
+        "cpt_target": 200,
         # An ad set's first four days -- D0 to D3 -- are its discovery phase, where Meta
         # is still exploring and cost per trial is not comparable with a settled ad set's.
         # Corrected from 5 on 2026-09-09: the boundary is D3, so D4 belongs to the settled

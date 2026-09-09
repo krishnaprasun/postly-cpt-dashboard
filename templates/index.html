@@ -1274,8 +1274,13 @@ const pct = (n,d) => d>0 ? (100*n/d).toFixed(0)+'%' : '—';
 /* Classplus columns show only when the query's own window matches the one on screen —
    see `classplus()` in postly_cpt.py. Never guess: a mandate count from another day
    sitting next to today's spend is worse than a blank column. */
-const cpOn = () => !!(DATA && DATA.classplus && DATA.classplus.available
-                      && document.getElementById('cpCols').checked);
+/* Whether the product DB answered at all. The TILES key off this, and nothing else --
+   they used to key off cpOn() as well, so unticking "signups & mandates" in the table
+   controls silently removed three tiles from the summary row. A checkbox that says it
+   governs columns must govern columns. */
+const cpHave = () => !!(DATA && DATA.classplus && DATA.classplus.available);
+/* And whether the reader also wants those COLUMNS in the table below. */
+const cpOn = () => cpHave() && !!document.getElementById('cpCols').checked;
 
 /* ---------- fetch ---------- */
 let staleTimer=null, BUSY=false, lastFetchAt=0, ticker=null;
@@ -2168,7 +2173,7 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
    /* Order is importance: the headline CPT, the money and what it bought, how that CPT
       splits, the funnel counts and their conversions, then the roster count last -- it
       says how much is running, not how it is doing. */
-   (cpOn() ? cpKpis(c, sp) : '') +
+   (cpHave() ? cpKpis(c, sp) : '') +
    (() => {
      /* Same three lines as Spend: the figure, the second number in brackets under it,
         and the rate they imply on its own line. The header carries the unit -- "309"
