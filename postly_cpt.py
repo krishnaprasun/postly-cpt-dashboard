@@ -1231,7 +1231,8 @@ VID_FROM = os.environ.get("VID_FROM", "2026-08-27")
 #       brand and would show no installs against real spend.
 #  10 - signups (rt_signups) from the same product-DB query
 #  11 - `created` on ad set rows and the `discovery` split built from it
-PAYLOAD_SHAPE = 11
+#  12 - daily budget and live-ad-set count on each side of the discovery split
+PAYLOAD_SHAPE = 12
 
 
 def has_vid(r):
@@ -4686,7 +4687,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                         x["created"] = known.get(x.get("id"), "")
             buckets = {"discovery": {}, "mature": {}, "unknown": {}}
             for k in buckets:
-                buckets[k] = {"spend": 0.0, "adsets": 0,
+                buckets[k] = {"spend": 0.0, "budget": 0.0, "adsets": 0, "live": 0,
                               **{e: 0.0 for e in EVENTS}}
             for x in adsets.values():
                 created = (x.get("created") or "")[:10]
@@ -4699,11 +4700,20 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                         where = "unknown"
                 b = buckets[where]
                 b["spend"] += x["spend"]
+                # Budget counts only where the rollup counts it -- an ad set that is off
+                # has a daily budget on paper and spends none of it, and the brand total
+                # above excludes those. Counting them here would make the two halves sum
+                # to more than the budget tile beside them.
+                if x.get("active"):
+                    b["budget"] += x.get("budget") or 0
+                    b["live"] += 1
                 b["adsets"] += 1
                 for e in EVENTS:
                     b[e] += x.get(e) or 0
             disc = {"days": ddays,
-                    **{k: {"spend": round(v["spend"], 2), "adsets": v["adsets"],
+                    **{k: {"spend": round(v["spend"], 2),
+                           "budget": round(v["budget"], 2),
+                           "adsets": v["adsets"], "live": v["live"],
                            **{e: round(v[e], 1) for e in EVENTS}}
                        for k, v in buckets.items()}}
 

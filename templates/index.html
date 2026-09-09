@@ -2077,11 +2077,14 @@ function kpis(){
    <div class="kpi" title="Ad sets are split by their age on ${DATA.until}: the first
      ${dc.days} days (D0 to D${dc.days - 1}) against everything later. Age comes from
      Meta's own created_time; an ad set without one is counted in neither and is named
-     below."><div class="k">CPT · discovery vs settled</div>
+     below.&#10;&#10;Spend and CPT count every ad set. Budget counts only the LIVE ones,
+     the same population the budget tile uses -- a paused ad set has a daily budget on
+     paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
      <div class="v">${ca === null ? '—' : rs(ca)}<span class="dimtxt"> / </span>${
        cb === null ? '—' : rs(cb)}</div>
-     <div class="s">first ${dc.days} days (${num(a.adsets)} ad sets) vs after (${
-       num(b.adsets)})${unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
+     <div class="s">${rs(a.budget || 0)} vs ${rs(b.budget || 0)} budget/day · ${
+       num(a.live || 0)} vs ${num(b.live || 0)} live ad sets${
+       unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
      })()
    : `
    <div class="kpi"><div class="k">Budget/day${srcBtn('meta')}</div><div class="v">${rs(c.budget)}</div>
