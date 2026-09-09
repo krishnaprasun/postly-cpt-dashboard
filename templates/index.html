@@ -202,8 +202,11 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 .kpi .vsub.lg{font-size:16px;font-weight:650;color:var(--muted);margin-top:5px}
 /* The share, under the figure it is a share OF. Its own line so it is read as a rate and
    not as part of the amount above it. */
-.kpi .pct{display:block;font-size:12px;font-weight:650;color:var(--muted);margin-top:3px;
-  font-variant-numeric:tabular-nums}
+/* Budget used. Green while there is headroom and red once there is not -- the one figure
+   on this row with a hard line in it, and the line is 100%. Sized to be read from across
+   a desk, because it is the number somebody acts on before lunch. */
+.kpi .pct{display:block;font-size:16px;font-weight:700;color:var(--green-dk);
+  margin-top:5px;font-variant-numeric:tabular-nums;letter-spacing:-.2px}
 .kpi .pct.warn{color:var(--red)}
 /* CPT is the number this dashboard exists to report, so it gets the width and the size.
    Only above 900px: below that the row is already stacking and a double-width tile would
@@ -2265,8 +2268,9 @@ function cpKpis(c, sp){
 installs</span></div>
      <div class="v2">${num(su)}<span class="vsub">(${cptTxt(sp, su)} per signup)</span>\
 <span class="vlab sgn">signups</span></div>
-     <div class="s">${stale ? `<span class="warn">DB ${p.age_min > 120
-       ? Math.round(p.age_min / 60) + 'h' : p.age_min + ' min'} old</span>` : ''}</div></div>`
+     <div class="s">${p.age_min === null ? '' : `<span class="${stale ? 'warn' : ''}">${
+       DATA.brand_label || 'Product'} DB · ${p.age_min > 120
+       ? Math.round(p.age_min / 60) + 'h' : p.age_min + ' min'} old</span>`}</div></div>`
    : ''}
    ${(() => {
      /* The funnel's two conversions, in the order they happen. Its own tile now that the
@@ -2289,13 +2293,16 @@ installs</span></div>
        num(su)} &rarr; ${num(Math.round(trM))})</span><span class="vlab sgn">signup \
 &rarr; trial</span></div></div>`;
    })()}
-   <div class="kpi" title="Both are a share of that day's MANDATES, from the Classplus
-     product database — not of signups. ${CP_SRC}"><div class="k">Day-0</div>
+   <div class="kpi" title="Both are a share of that day's MANDATES — not of signups —
+     and they do NOT add to 100%: a mandate can be neither active nor cancelled on day
+     zero. Today ${pct(c.cp_d0a,m)} and ${pct(c.cp_d0c,m)} leave ${
+     m ? (100 - 100*((c.cp_d0a||0)+(c.cp_d0c||0))/m).toFixed(0) : 0}% in neither state.
+     ${CP_SRC}"><div class="k">Day-0</div>
      <div class="v">${pct(c.cp_d0a,m)}<span class="vsub">(of ${num(m)} mandates)</span>\
 <span class="vlab sgn">still active</span></div>
      <div class="v2">${pct(c.cp_d0c,m)}<span class="vlab neg">cancelled</span></div>
-     <div class="s">${p.age_min === null ? '' : 'Classplus ' + p.age_min + ' min old'}\
-</div></div>`;
+     <div class="s">${p.age_min === null ? ''
+       : `${DATA.brand_label || 'Product'} DB · ${p.age_min} min old`}</div></div>`;
 }
 
 /* ---------- longevity ---------- */
