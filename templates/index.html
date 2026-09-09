@@ -164,7 +164,7 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 .kpi .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--ink);
   font-weight:750;line-height:1.35;padding-bottom:8px;margin-bottom:2px;
   border-bottom:1px solid var(--line2)}
-.kpi .v{font-size:29px;font-weight:680;letter-spacing:-1px;
+.kpi .v{font-size:29px;font-weight:680;letter-spacing:-1px;color:var(--ink);
   font-variant-numeric:tabular-nums;line-height:1.05;white-space:nowrap}
 /* The second figure of a pair, under the first and in parentheses. Stacked rather than
    side by side: broken after a slash it read as a number and then another number, and
@@ -172,8 +172,8 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* The second figure of a pair is the SAME size and colour as the first. They are two
    readings of one thing, and drawing one smaller and greyer said the other mattered more,
    which is not what the tile is claiming. */
-.kpi .v2{font-size:29px;font-weight:680;line-height:1.05;margin-top:10px;
-  letter-spacing:-1px;color:var(--ink);font-variant-numeric:tabular-nums}
+.kpi .v2{font-size:29px;font-weight:680;line-height:1.05;margin-top:12px;
+  letter-spacing:-1px;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap}
 /* A pair of figures needs to say which is which. "Rs384 (Rs203)" under a heading reading
    "discovery vs settled" makes the reader work out the order for themselves, and half of
    them will guess wrong. */
@@ -184,14 +184,16 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    of a CPT under target. The colour is on the LABEL, not the figure: a CPT here is not
    good or bad against a target, it is one phase's cost beside the other's, and colouring
    the numbers would make the tile look like it was passing judgement on them. */
+/* Colour on a label MEANS something or it is not there. Three cases earn it:
+     disc/sett  the two sides of the discovery boundary, gold for still learning and
+                green for settled -- the pair the tile exists to contrast;
+     neg        the bad half of a pair, where one half genuinely is bad.
+   Everything else is muted, including labels that used to be green only because they
+   happened to be the second figure in their tile. Green on SIGNUPS and SIGNUP -> TRIAL
+   said those were better than INSTALLS and INSTALL -> SIGNUP, which is not a claim
+   anyone was making. */
 .kpi .vlab.disc{color:var(--gold-dk)}
 .kpi .vlab.sett{color:var(--green-dk)}
-/* Money out is ink, the thing it bought is green. Applied to the label, not the number,
-   for the same reason the phases are: these are two facts, not a verdict. */
-.kpi .vlab.spd{color:var(--muted)}
-.kpi .vlab.tri{color:var(--green-dk)}
-.kpi .vlab.ins{color:var(--muted)}
-.kpi .vlab.sgn{color:var(--green-dk)}
 .kpi .vlab.neg{color:var(--red)}
 /* The budget behind a figure, in brackets under it: the money committed beside the money
    already spent, without either competing for the headline. */
@@ -2124,7 +2126,7 @@ function kpis(){
        waiting ? '<span class="spin"></span>loading Google' : heroSub}</div></div>` : '') + `
    <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend${
      trials ? ' · trials' : ''}${srcBtn('meta')}</div>
-     <div class="v">${rs(sp)}<span class="vlab spd">spend</span></div>
+     <div class="v">${rs(sp)}<span class="vlab">spend</span></div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : paceOpen !== null
              /* Three figures and two clauses did not fit a tile this wide -- it was
@@ -2153,7 +2155,7 @@ than the morning\u2019s whenever ad sets have been paused during the day.' : ''}
            over.
            The label sits directly under the figure it names, ABOVE the bracket: the
            bracket is about NC_10m, so a "trials" label under it named the wrong thing. */
-       trials ? `<div class="v2">${num(tr)}<span class="vlab tri">trials</span>${
+       trials ? `<div class="v2">${num(tr)}<span class="vlab">trials</span>${
        ncOn() && chanIsMeta() && typeof mc.t10m === 'number' && mc.t10m > 0
        ? `<span class="vsub" title="Trials still running ten minutes in. Early in the day \
 this carries last night's, because a trial started at 23:55 fires its ten-minute event at \
@@ -2214,9 +2216,9 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
 they are running right now is unknown.'
      : 'Ad sets switched on right now, and the ads inside them.'}"><div class="k">${
      deg ? 'Ad sets with spend' : 'Live ad sets'}</div>
-     <div class="v">${num(sets)}<span class="vlab ins">ad sets${
+     <div class="v">${num(sets)}<span class="vlab">ad sets${
        deg ? ' with spend' : ''}</span></div>
-     <div class="v2">${num(ads)}<span class="vlab ins">ads${
+     <div class="v2">${num(ads)}<span class="vlab">ads${
        deg ? ' · status unknown' : ''}</span></div></div>`;
    })();
 }
@@ -2284,10 +2286,10 @@ function cpKpis(c, sp){
    <div class="kpi" title="Installs come from ${ATTRIB()}; signups from the Classplus
      product database. ${CP_SRC}"><div class="k">Installs · signups</div>
      <div class="v">${inst > 0 ? num(inst) : '—'}<span class="vsub">(${
-       inst > 0 ? cptTxt(sp, inst) : '—'} per install)</span><span class="vlab ins">\
+       inst > 0 ? cptTxt(sp, inst) : '—'} per install)</span><span class="vlab">\
 installs</span></div>
      <div class="v2">${num(su)}<span class="vsub">(${cptTxt(sp, su)} per signup)</span>\
-<span class="vlab sgn">signups</span></div>
+<span class="vlab">signups</span></div>
      <div class="s">${p.age_min === null ? '' : `<span class="${stale ? 'warn' : ''}">${
        DATA.brand_label || 'Product'} DB · ${p.age_min > 120
        ? Math.round(p.age_min / 60) + 'h' : p.age_min + ' min'} old</span>`}</div></div>`
@@ -2307,10 +2309,10 @@ installs</span></div>
      those signups. Both denominators are measured, so pro rata moves neither.">
      <div class="k">Conversion</div>
      <div class="v">${a === null ? '—' : a.toFixed(0) + '%'}<span class="vsub">(${
-       num(inst)} &rarr; ${num(su)})</span><span class="vlab ins">install &rarr; signup\
+       num(inst)} &rarr; ${num(su)})</span><span class="vlab">install &rarr; signup\
 </span></div>
      <div class="v2">${b === null ? '—' : b.toFixed(1) + '%'}<span class="vsub">(${
-       num(su)} &rarr; ${num(Math.round(trM))})</span><span class="vlab sgn">signup \
+       num(su)} &rarr; ${num(Math.round(trM))})</span><span class="vlab">signup \
 &rarr; trial</span></div></div>`;
    })()}
    <div class="kpi" title="Both are a share of that day's MANDATES — not of signups —
@@ -2319,7 +2321,7 @@ installs</span></div>
      m ? (100 - 100*((c.cp_d0a||0)+(c.cp_d0c||0))/m).toFixed(0) : 0}% in neither state.
      ${CP_SRC}"><div class="k">Day-0</div>
      <div class="v">${pct(c.cp_d0a,m)}<span class="vsub">(of ${num(m)} mandates)</span>\
-<span class="vlab sgn">still active</span></div>
+<span class="vlab">still active</span></div>
      <div class="v2">${pct(c.cp_d0c,m)}<span class="vlab neg">cancelled</span></div>
      <div class="s">${p.age_min === null ? ''
        : `${DATA.brand_label || 'Product'} DB · ${p.age_min} min old`}</div></div>`;
