@@ -2125,8 +2125,12 @@ than the morning\u2019s whenever ad sets have been paused during the day.' : ''}
              ? `no budget snapshot for ${DATA.budget_day}`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
              : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div>
-     ${trials ? `<div class="v2">${num(tr)}<span class="vsub">(${cptTxt(sp, tr)} each)\
-</span>${ncOn() && chanIsMeta() && typeof mc.t10m === 'number' && mc.t10m > 0
+     ${/* No cost-per here. Spend over trials IS the CPT, and the hero tile two along
+           exists to report exactly that, against its target and in its own colour.
+           Printing it again in a bracket said nothing the row did not already say twice
+           over. */
+       trials ? `<div class="v2">${num(tr)}${
+       ncOn() && chanIsMeta() && typeof mc.t10m === 'number' && mc.t10m > 0
        ? `<span class="vsub" title="Trials still running ten minutes in. Early in the day \
 this carries last night's, because a trial started at 23:55 fires its ten-minute event at \
 00:05.">(${num(mc.t10m)} NC 10m${mc[EV] > 0 ? ' · ' + (100 * mc.t10m / mc[EV]).toFixed(0)
