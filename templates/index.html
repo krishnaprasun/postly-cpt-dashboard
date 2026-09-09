@@ -2127,6 +2127,41 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
          + '%' : ''})</span>` : ''}<span class="vlab tri">${
        modLbl ? 'trials · pro rata' : 'trials'}</span></div>` : ''}</div>` +
    (trials ? ``
+   + /* Discovery vs settled, as one tile rather than two. An ad set's first days buy
+        something different from its later ones -- Meta is still exploring -- so averaging
+        them into a single CPT describes neither. Both numbers on one tile because the
+        POINT is the gap between them, and because the row is already eight wide.
+        Meta only: the split is computed from Meta ad sets' launch dates. */
+     (() => {
+       const dc = DATA.discovery;
+       if(!dc || !chanIsMeta() || !hasTrials()) return '';
+       const a = dc.discovery, b = dc.mature;
+       const ca = a[EV] > 0 ? a.spend / a[EV] : null;
+       const cb = b[EV] > 0 ? b.spend / b[EV] : null;
+       if(ca === null && cb === null) return '';
+       const unk = (dc.unknown && dc.unknown.adsets) || 0;
+       /* The bracket answers "how much of TODAY'S budget sits on each side" -- the amount
+          and its share of the day's total. "/day" said the same thing about each figure
+          separately and answered neither half of that question. */
+       const bTot = (a.budget || 0) + (b.budget || 0);
+       return `
+   <div class="kpi" title="Ad sets are split by their age on ${DATA.until}: the first
+     ${dc.days} days (D0 to D${dc.days - 1}) against everything later. Age comes from
+     Meta's own created_time; an ad set without one is counted in neither and is named
+     below.&#10;&#10;The bracket under each figure is that cohort's share of today's live
+     budget.&#10;&#10;The top figure is the discovery phase, the one under it is settled.
+     Spend and CPT count every ad set. Budget counts only the LIVE ones,
+     the same population the budget tile uses -- a paused ad set has a daily budget on
+     paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
+     <div class="v">${ca === null ? '—' : rs(ca)}<span class="vsub">(${
+       rs(a.budget || 0)}${bTot ? ' · ' + (100 * (a.budget || 0) / bTot).toFixed(0) + '%'
+       : ''})</span><span class="vlab disc">discovery</span></div>
+     <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vsub">(${
+       rs(b.budget || 0)}${bTot ? ' · ' + (100 * (b.budget || 0) / bTot).toFixed(0) + '%'
+       : ''})</span><span class="vlab sett">settled</span></div>
+     <div class="s">${num(a.live || 0)} vs ${num(b.live || 0)} live ad sets${
+       unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
+     })()
    : `
    <div class="kpi"><div class="k">Budget/day${srcBtn('meta')}</div><div class="v">${rs(c.budget)}</div>
      <div class="s">across ${num(DATA.accounts.length)} ad accounts${budgetAge()}</div></div>`) +
