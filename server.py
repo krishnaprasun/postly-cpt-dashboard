@@ -1680,7 +1680,13 @@ def robots():
     return Response("User-agent: *\nDisallow: /\n", mimetype="text/plain")
 
 
+# Two paths, one handler. Google's frontend answers `/healthz` itself on Cloud Run --
+# the request never reaches the container, and the caller gets a Google 404 that looks
+# exactly like the app being broken. `/health` is not intercepted, so monitoring has a
+# path that works on both hosts. Verified 2026-09-09: /healthz returned a 1,568-byte
+# Google error page while /healthz/ and every other path reached Flask normally.
 @app.route("/healthz")
+@app.route("/health")
 def healthz():
     """Public and cheap on purpose — Render's health check must not trigger a pull.
 
