@@ -1322,6 +1322,70 @@ def is_live(status):
     return (status or "") in _LIVE_SET
 
 
+# ---- ad set launch dates ----------------------------------------------------
+# The roster is filtered to live ad sets, so a paused one carries no created_time and the
+# discovery split could not place it -- 115 ad sets on Postly the day this shipped. Meta
+# will still answer for them by id, and a launch date never changes, so it is asked for
+# once and kept. The map lives in the store beside everything else and grows monotonically:
+# steady state costs one read and no Meta call at all.
+CREATED_NS = "created"
+_created_cache, _created_lock = {}, threading.Lock()
+CREATED_TTL = int(os.environ.get("CREATED_TTL", "3600"))
+# Meta's ?ids= form takes many at once; 50 keeps the URL well inside limits.
+CREATED_BATCH = 50
+
+
+def _created_load(brand):
+    with _created_lock:
+        hit = _created_cache.get(brand)
+        if hit and time.time() - hit[0] < CREATED_TTL:
+            return dict(hit[1])
+    got = H.get_agg(H.agg_ns(brand, CREATED_NS, 0)) if H.available() else None
+    m = {k: v for k, v in (got or {}).items() if not k.startswith("_")}
+    with _created_lock:
+        _created_cache[brand] = (time.time(), dict(m))
+    return m
+
+
+def created_dates(brand, ids):
+    """{adset_id: 'YYYY-MM-DD'} for these ad sets, asking Meta only for what is new.
+
+    Never raises: a launch date that cannot be fetched leaves the ad set undated, which
+    the discovery split already handles by counting it in neither phase. Losing a tile's
+    precision is not worth failing a page build over.
+    """
+    m = _created_load(brand)
+    want = [i for i in ids if i and i not in m]
+    if not want:
+        return m
+    fresh = {}
+    for i in range(0, len(want), CREATED_BATCH):
+        chunk = want[i:i + CREATED_BATCH]
+        try:
+            # raw=True: the ?ids= form answers a dict keyed by id, with no `data` and no
+            # paging. Without it _graph accumulates j["data"] and hands back an empty list.
+            j = _graph("", {"ids": ",".join(chunk), "fields": "created_time"},
+                       tries=2, rl_retries=0, raw=True)
+        except Exception:
+            traceback.print_exc()
+            break
+        for sid, rec in (j or {}).items():
+            d = ((rec or {}).get("created_time") or "")[:10]
+            if d:
+                fresh[sid] = d
+    if not fresh:
+        return m
+    m.update(fresh)
+    with _created_lock:
+        _created_cache[brand] = (time.time(), dict(m))
+    if H.available():
+        try:
+            H.put_agg(H.agg_ns(brand, CREATED_NS, 0), today_ist(), m)
+        except Exception:
+            traceback.print_exc()
+    return m
+
+
 def meta_roster(acct, force=False):
     """(campaigns, active ad sets, active ads, ok_flags) — each piece independently
     cached and independently allowed to fail.
@@ -4611,6 +4675,15 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         except ValueError:
             end = None
         if end:
+            # Fill in the ones the live roster could not date. Asked of Meta once per ad
+            # set, ever, and kept in the store -- a launch date does not change.
+            miss = [x["id"] for x in adsets.values()
+                    if x.get("id") and not (x.get("created") or "")]
+            if miss:
+                known = created_dates(brand, miss)
+                for x in adsets.values():
+                    if not (x.get("created") or ""):
+                        x["created"] = known.get(x.get("id"), "")
             buckets = {"discovery": {}, "mature": {}, "unknown": {}}
             for k in buckets:
                 buckets[k] = {"spend": 0.0, "adsets": 0,
