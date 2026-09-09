@@ -148,15 +148,22 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    comparison figure below in grey parentheses, and the age at the foot -- the number is
    what people come for, and left-aligning it against a wall of text made every tile read
    as a paragraph with a figure in it. */
+/* The header sits at the TOP of every tile, so the nine of them line up across the row;
+   the value and its notes centre in whatever height is left. Centring the whole stack put
+   each heading at a different height depending on how much text was under it, which read
+   as nine tiles that had never been introduced to each other. */
 .kpi{background:var(--white);border:1px solid var(--line);border-radius:14px;
   padding:14px 12px 15px;box-shadow:var(--shadow);position:relative;
-  display:flex;flex-direction:column;justify-content:center;min-width:0;text-align:center}
+  display:flex;flex-direction:column;justify-content:flex-start;min-width:0;
+  text-align:center}
+.kpi .v{margin-top:auto}
+.kpi > *:last-child{margin-bottom:auto}
 /* The header names the tile and was the palest thing on it -- muted grey against a
    29px figure. It reads as a heading now. */
 .kpi .k{font-size:10.5px;text-transform:uppercase;letter-spacing:.9px;color:var(--ink);
   font-weight:750;line-height:1.35;padding-bottom:8px;margin-bottom:2px;
   border-bottom:1px solid var(--line2)}
-.kpi .v{font-size:29px;font-weight:680;margin-top:9px;letter-spacing:-1px;
+.kpi .v{font-size:29px;font-weight:680;letter-spacing:-1px;
   font-variant-numeric:tabular-nums;line-height:1.05;white-space:nowrap}
 /* The second figure of a pair, under the first and in parentheses. Stacked rather than
    side by side: broken after a slash it read as a number and then another number, and
@@ -174,7 +181,12 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
 /* The budget behind a figure, in brackets under it: the money committed beside the money
    already spent, without either competing for the headline. */
 .kpi .vsub{display:block;font-size:11.5px;font-weight:600;color:var(--faint);
-  letter-spacing:0;line-height:1.25;margin-top:2px;font-variant-numeric:tabular-nums}
+  letter-spacing:0;line-height:1.25;margin-top:3px;font-variant-numeric:tabular-nums}
+/* The share, under the figure it is a share OF. Its own line so it is read as a rate and
+   not as part of the amount above it. */
+.kpi .pct{display:block;font-size:12px;font-weight:650;color:var(--muted);margin-top:3px;
+  font-variant-numeric:tabular-nums}
+.kpi .pct.warn{color:var(--red)}
 /* CPT is the number this dashboard exists to report, so it gets the width and the size.
    Only above 900px: below that the row is already stacking and a double-width tile would
    push the rest into a single cramped column. */
@@ -2076,10 +2088,11 @@ function kpis(){
                 clipped at "live now" and the reader lost the number the sentence was
                 built around. The morning budget and its percentage stay; the live figure
                 moves to the tooltip, where the explanation of it already lived. */
-             ? `<span title="Of ${rs(bOpen.total)} budgeted at ${bOpen.at}. ${
-                  DATA.budget_is_today ? rs(c.budget) + ' is live right now — lower than \
-the morning\u2019s whenever ad sets have been paused during the day.' : ''}">${
-                  paceOpen.toFixed(0)}% of ${rs(bOpen.total)} budget</span>${
+             ? `<span class="vsub" title="Budgeted at ${bOpen.at}.${
+                  DATA.budget_is_today ? ' ' + rs(c.budget) + ' is live right now — lower \
+than the morning\u2019s whenever ad sets have been paused during the day.' : ''}">(${
+                  rs(bOpen.total)} budget)</span><span class="pct ${
+                  paceOpen > 100 ? 'warn' : ''}">${paceOpen.toFixed(0)}% used</span>${
                 DATA.budget_is_today ? budgetAge() : ''}`
        /* A past day with no snapshot gets no budget line rather than today's. The live
           roster was the only number to hand, and against yesterday's spend it produced a
@@ -2138,18 +2151,25 @@ the morning\u2019s whenever ad sets have been paused during the day.' : ''}">${
        const cb = b[EV] > 0 ? b.spend / b[EV] : null;
        if(ca === null && cb === null) return '';
        const unk = (dc.unknown && dc.unknown.adsets) || 0;
+       /* The bracket answers "how much of TODAY'S budget sits on each side" -- the amount
+          and its share of the day's total. "/day" said the same thing about each figure
+          separately and answered neither half of that question. */
+       const bTot = (a.budget || 0) + (b.budget || 0);
        return `
    <div class="kpi" title="Ad sets are split by their age on ${DATA.until}: the first
      ${dc.days} days (D0 to D${dc.days - 1}) against everything later. Age comes from
      Meta's own created_time; an ad set without one is counted in neither and is named
-     below.&#10;&#10;The top figure is the discovery phase, the one under it is settled.
+     below.&#10;&#10;The bracket under each figure is that cohort's share of today's live
+     budget.&#10;&#10;The top figure is the discovery phase, the one under it is settled.
      Spend and CPT count every ad set. Budget counts only the LIVE ones,
      the same population the budget tile uses -- a paused ad set has a daily budget on
      paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
      <div class="v">${ca === null ? '—' : rs(ca)}<span class="vsub">(${
-       rs(a.budget || 0)}/day)</span><span class="vlab">discovery</span></div>
+       rs(a.budget || 0)}${bTot ? ' · ' + (100 * (a.budget || 0) / bTot).toFixed(0) + '%'
+       : ''})</span><span class="vlab">discovery</span></div>
      <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vsub">(${
-       rs(b.budget || 0)}/day)</span><span class="vlab">settled</span></div>
+       rs(b.budget || 0)}${bTot ? ' · ' + (100 * (b.budget || 0) / bTot).toFixed(0) + '%'
+       : ''})</span><span class="vlab">settled</span></div>
      <div class="s">${num(a.live || 0)} vs ${num(b.live || 0)} live ad sets${
        unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
      })()
