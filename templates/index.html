@@ -2189,13 +2189,14 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
      the same population the budget tile uses -- a paused ad set has a daily budget on
      paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
      <div class="v">${ca === null ? '—' : rs(ca)}<span class="vsub">(${
-       rs(a.budget || 0)}${bTot ? ' · ' + (100 * (a.budget || 0) / bTot).toFixed(0) + '%'
-       : ''})</span><span class="vlab disc">discovery</span></div>
+       rs(a.budget || 0)} budget${bTot ? ' · ' + (100 * (a.budget || 0) / bTot).toFixed(0)
+       + '%' : ''})</span><span class="vlab disc">discovery · ${num(a.live || 0)} live\
+</span></div>
      <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vsub">(${
-       rs(b.budget || 0)}${bTot ? ' · ' + (100 * (b.budget || 0) / bTot).toFixed(0) + '%'
-       : ''})</span><span class="vlab sett">settled</span></div>
-     <div class="s">${num(a.live || 0)} vs ${num(b.live || 0)} live ad sets${
-       unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
+       rs(b.budget || 0)} budget${bTot ? ' · ' + (100 * (b.budget || 0) / bTot).toFixed(0)
+       + '%' : ''})</span><span class="vlab sett">settled · ${num(b.live || 0)} live\
+</span></div>
+     <div class="s">${unk ? `${num(unk)} ad sets undated` : ''}</div></div>`;
      })()
    : `
    <div class="kpi"><div class="k">Budget/day${srcBtn('meta')}</div><div class="v">${rs(c.budget)}</div>
