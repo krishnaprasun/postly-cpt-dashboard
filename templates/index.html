@@ -21,6 +21,9 @@
      gold-themed Speakeasy still shows a good number in green, not in its own gold. */
   --accent:#20A75D; --accent-dk:#127A42; --accent-lt:#EAF7F0;
   --gold:#E8A017; --gold-dk:#B87A08; --gold-lt:#FDF4E3;
+  /* Already the Graduation table's "creatives uploaded" band; promoted to a token so the
+     budget brackets can share it. */
+  --blue:#2C6FBF;
   --red:#B3342C; --red-lt:#FBECEA;
   --shadow:0 1px 2px rgba(26,28,46,.05), 0 4px 14px rgba(26,28,46,.045);
 }
@@ -196,6 +199,10 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    already spent, without either competing for the headline. */
 .kpi .vsub{display:block;font-size:11.5px;font-weight:600;color:var(--faint);
   letter-spacing:0;line-height:1.25;margin-top:3px;font-variant-numeric:tabular-nums}
+/* Budget, and the target that plays the same role for CPT: money committed rather than
+   money spent. Blue separates it from both -- ink is what happened, green is what it
+   bought, and this is neither. At 11.5px in faint grey it was a footnote nobody read. */
+.kpi .vsub.bud{font-size:13.5px;font-weight:650;color:var(--blue)}
 /* A bracketed second figure that carries real weight rather than sitting as a footnote.
    Used where the two numbers are both worth reading -- live ad sets and the ads inside
    them -- as against a budget, which is context for the figure above it. */
@@ -2088,13 +2095,20 @@ function kpis(){
   const other = chanIsMeta()
     ? (gq ? `Google ${rs(gq)}` : '')
     : (gt2 && gt2.trials ? `Google ${rs(gt2.spend / gt2.trials)}` : '');
-  const heroSub = [
-    T===null ? (k===null ? 'no target set' : `no target set · ${num(tr)} trials`)
-             : `target ${rs(T)} · ${k===null?'':(k<=T?'under':'over')} by ${k===null?'—':rs(Math.abs(k-T))}`,
-    d ? `<span class="${d.pct <= 0 ? 'good' : 'bad'}">${d.pct > 0 ? '+' : ''}${
-          d.pct.toFixed(0)}%</span> vs prior ${PRIOR.days}d (${rs(d.was)})` : '',
-    other,
-  ].filter(Boolean).join(' · ');
+  /* The target in brackets, in the shape every other tile uses, and nothing else.
+     "under by Rs22" is the same fact as the figure and the target sitting above it, and
+     Google's CPT belongs on the Google tab -- putting it here made a tile headed "Meta
+     ads" carry a number that is not Meta's. Both survive on the tooltip. */
+  const heroSub = T === null
+    ? (k === null ? 'no target set' : `no target set · ${num(tr)} trials`)
+    : `<span class="vsub bud">(target ${rs(T)})</span>`;
+  const heroTip = [
+    T === null ? '' : `Target ${rs(T)}${k === null ? ''
+      : ` — ${k <= T ? 'under' : 'over'} by ${rs(Math.abs(k - T))}`}.`,
+    d ? `${d.pct > 0 ? '+' : ''}${d.pct.toFixed(0)}% vs the prior ${PRIOR.days} days (${
+          rs(d.was)}).` : '',
+    other ? other.replace(/<[^>]+>/g, '') : '',
+  ].filter(Boolean).join(' ');
 
   /* Pro rata changes what CPT means, so it is named on the tile itself and not only in
      the header badge — a screenshot of this page has to carry its own caveat. The label
@@ -2105,7 +2119,8 @@ function kpis(){
    (trials ? `
    <div class="kpi hero"><div class="k">Current CPT · ${segLbl}${chanIsMeta()?modLbl:''}</div>
      <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
-     <div class="s">${waiting ? '<span class="spin"></span>loading Google' : heroSub}</div></div>` : '') + `
+     <div class="s" title="${heroTip.replace(/"/g,'&quot;')}">${
+       waiting ? '<span class="spin"></span>loading Google' : heroSub}</div></div>` : '') + `
    <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend${
      trials ? ' · trials' : ''}${srcBtn('meta')}</div>
      <div class="v">${rs(sp)}<span class="vlab spd">spend</span></div>
@@ -2115,7 +2130,7 @@ function kpis(){
                 clipped at "live now" and the reader lost the number the sentence was
                 built around. The morning budget and its percentage stay; the live figure
                 moves to the tooltip, where the explanation of it already lived. */
-             ? `<span class="vsub" title="Budgeted at ${bOpen.at}.${
+             ? `<span class="vsub bud" title="Budgeted at ${bOpen.at}.${
                   DATA.budget_is_today ? ' ' + rs(c.budget) + ' is live right now — lower \
 than the morning\u2019s whenever ad sets have been paused during the day.' : ''}">(${
                   rs(bOpen.total)} budget)</span><span class="pct ${
@@ -2129,7 +2144,7 @@ than the morning\u2019s whenever ad sets have been paused during the day.' : ''}
              /* The same shape as the branch above. Before the day's 09:00 snapshot exists
                 -- which is most of the night -- this is the branch that runs, and it was
                 still the old one-line sentence, so "% used" looked unchanged. */
-             : `<span class="vsub">(${rs(c.budget)} budget)</span><span class="pct ${
+             : `<span class="vsub bud">(${rs(c.budget)} budget)</span><span class="pct ${
                  pace > 100 ? 'warn' : ''}">${pace.toFixed(0)}% used</span>`}</div>
      ${/* No cost-per here. Spend over trials IS the CPT, and the hero tile two along
            exists to report exactly that, against its target and in its own colour.
@@ -2169,10 +2184,10 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
      Spend and CPT count every ad set. Budget counts only the LIVE ones,
      the same population the budget tile uses -- a paused ad set has a daily budget on
      paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
-     <div class="v">${ca === null ? '—' : rs(ca)}<span class="vsub">(${
+     <div class="v">${ca === null ? '—' : rs(ca)}<span class="vsub bud">(${
        rs(a.budget || 0)}${bTot ? ' · ' + (100 * (a.budget || 0) / bTot).toFixed(0) + '%'
        : ''})</span><span class="vlab disc">discovery</span></div>
-     <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vsub">(${
+     <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vsub bud">(${
        rs(b.budget || 0)}${bTot ? ' · ' + (100 * (b.budget || 0) / bTot).toFixed(0) + '%'
        : ''})</span><span class="vlab sett">settled</span></div>
      <div class="s">${num(a.live || 0)} vs ${num(b.live || 0)} live ad sets${
