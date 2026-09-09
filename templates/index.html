@@ -144,18 +144,22 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    the row breaks. */
 .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;
   margin-bottom:20px}
+/* Centred, with the number given the room it deserves. The label sits above it, a
+   comparison figure below in grey parentheses, and the age at the foot -- the number is
+   what people come for, and left-aligning it against a wall of text made every tile read
+   as a paragraph with a figure in it. */
 .kpi{background:var(--white);border:1px solid var(--line);border-radius:14px;
-  padding:13px 15px 28px;box-shadow:var(--shadow);position:relative;
-  display:flex;flex-direction:column;min-width:0}
+  padding:13px 12px 30px;box-shadow:var(--shadow);position:relative;
+  display:flex;flex-direction:column;min-width:0;text-align:center}
 .kpi .k{font-size:10px;text-transform:uppercase;letter-spacing:.85px;color:var(--muted);
   font-weight:650;line-height:1.35}
-.kpi .v{font-size:25px;font-weight:680;margin-top:7px;letter-spacing:-.8px;
+.kpi .v{font-size:29px;font-weight:680;margin-top:9px;letter-spacing:-1px;
   font-variant-numeric:tabular-nums;line-height:1.05}
-/* Two figures in one value. It has to stay on one line -- broken after the slash it read
-   as a number and then another number, not as a pair -- so it takes a smaller size and
-   its own spacing rather than wrapping. */
-.kpi .v.pair{font-size:20px;letter-spacing:-.5px;white-space:nowrap}
-.kpi .v.pair .dimtxt{margin:0 3px;font-weight:500}
+/* The second figure of a pair, under the first and in parentheses. Stacked rather than
+   side by side: broken after a slash it read as a number and then another number, and
+   at this size two of them never fit on one line in a tile this narrow. */
+.kpi .v2{font-size:20px;font-weight:650;line-height:1.15;margin-top:1px;
+  letter-spacing:-.5px;color:var(--faint);font-variant-numeric:tabular-nums}
 /* CPT is the number this dashboard exists to report, so it gets the width and the size.
    Only above 900px: below that the row is already stacking and a double-width tile would
    push the rest into a single cramped column. */
@@ -173,7 +177,7 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    the short ones sitting over an inch of nothing -- the ragged look was never the tiles,
    it was the text under them. Three lines holds every sub-line the page currently
    writes, at the size below. */
-.kpi .s{font-size:11px;color:var(--muted);margin-top:6px;line-height:1.5;
+.kpi .s{font-size:11px;color:var(--muted);margin-top:7px;line-height:1.45;
   /* Event names are single unbroken tokens -- `postly_trial_started_backend` has
      nowhere to break and ran past the tile edge. Break inside a word only when
      there is no other option, so ordinary prose still wraps at spaces. */
@@ -215,7 +219,8 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    height on every tile, because every subtitle is a different length. Pinned to the
    bottom, every card reserves the same strip and every control sits on one line across
    the row, whether or not that card has one. */
-.rfr{position:absolute;left:15px;bottom:9px;display:inline-flex;align-items:center;
+.rfr{position:absolute;left:50%;transform:translateX(-50%);bottom:9px;
+  display:inline-flex;align-items:center;
   gap:4px;font:inherit;
   font-size:10.5px;font-weight:600;letter-spacing:0;text-transform:none;
   color:var(--faint);background:none;border:1px solid transparent;border-radius:99px;
@@ -2089,8 +2094,8 @@ function kpis(){
      below.&#10;&#10;Spend and CPT count every ad set. Budget counts only the LIVE ones,
      the same population the budget tile uses -- a paused ad set has a daily budget on
      paper and spends none of it."><div class="k">CPT · discovery vs settled</div>
-     <div class="v pair">${ca === null ? '—' : rs(ca)}<span class="dimtxt">/</span>${
-       cb === null ? '—' : rs(cb)}</div>
+     <div class="v">${ca === null ? '—' : rs(ca)}</div>
+     <div class="v2">(${cb === null ? '—' : rs(cb)})</div>
      <div class="s">${rs(a.budget || 0)} vs ${rs(b.budget || 0)}/day · ${
        num(a.live || 0)} vs ${num(b.live || 0)} live${
        unk ? ` · ${num(unk)} undated` : ''}</div></div>`;
