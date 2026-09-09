@@ -1257,6 +1257,11 @@ def api_budget_snapshot():
             out.append({"brand": b, "date": snap["date"], "at": snap["at"],
                         "adsets": len(snap["adsets"]), "campaigns": len(snap["campaigns"]),
                         "accounts": len(snap["accounts"]), "total": snap["total"],
+                        # The live counts as recorded, so a scheduler log says how many
+                        # ad sets and ads were delivering at this reading.
+                        "live_adsets": snap.get("live_adsets"),
+                        "live_ads": snap.get("live_ads"),
+                        "ads_degraded": snap.get("ads_degraded") or [],
                         "samples": snap.get("samples"), "moved": len(snap.get("moved") or []),
                         # Which of the day's three slots this became, so a scheduler log
                         # says whether the 9am, 3pm or 11pm reading actually landed.

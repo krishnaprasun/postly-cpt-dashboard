@@ -1017,8 +1017,13 @@ def budget_snapshot(brand, force=False, store=True):
     B = C.brand(brand)
     day = today_ist()
     sets_, camps_, accts_, degraded, live_accounts = {}, {}, {}, [], []
+    # The ads listing is already fetched here and was being thrown away, so counting the
+    # live ads costs nothing extra. It is tracked per account because a failed ads call
+    # must not be recorded as "every ad paused" -- that is a real number and a missing
+    # one, and a history cannot tell them apart after the fact.
+    ads_degraded, live_ads_total = [], 0
     for a in B["accounts"]:
-        camps, live_sets, _ads, ok = meta_roster(a["id"], force)
+        camps, live_sets, live_ads, ok = meta_roster(a["id"], force)
         if not (ok["campaigns"] and ok["adsets"]):
             # A partial snapshot would look like a budget cut that never happened. Record
             # the account as degraded and leave its rows out entirely.
@@ -1036,6 +1041,14 @@ def budget_snapshot(brand, force=False, store=True):
                                "st": st, "a": a["id"]}
             if is_live(st):
                 acct_total += b
+        # Counted from the listing that is already filtered to the delivering states,
+        # so this is live ads and not every ad ever built under the set.
+        per_set = defaultdict(int)
+        if ok["ads"]:
+            for ad in live_ads:
+                per_set[str(ad.get("adset_id") or "")] += 1
+        else:
+            ads_degraded.append(a["id"])
         for x in live_sets:
             b = _rupees(x.get("daily_budget"))
             sets_[x["id"]] = {"n": x.get("name", ""), "b": b,
@@ -1046,7 +1059,12 @@ def budget_snapshot(brand, force=False, store=True):
                               "st": x.get("effective_status") or "ACTIVE",
                               "c": x.get("campaign_id", ""), "a": a["id"]}
             acct_total += b
+            if ok["ads"]:
+                sets_[x["id"]]["ads"] = per_set.get(x["id"], 0)
         accts_[a["id"]] = {"n": a["name"], "b": round(acct_total, 2)}
+        if ok["ads"]:
+            accts_[a["id"]]["ads"] = len(live_ads)
+            live_ads_total += len(live_ads)
         live_accounts.append(a["id"])
 
     # ---- ad sets that were here yesterday and are not today ------------------
@@ -1066,9 +1084,18 @@ def budget_snapshot(brand, force=False, store=True):
                         "a": "act_" + str(v.get("account_id") or "").replace("act_", "")}
             lapsed += 1
 
+    # Both totals are recorded outright rather than left to be re-derived by filtering
+    # `adsets` on status: the lapsed ad sets chased in above sit in the same dict, and a
+    # reader counting live rows there would have to know which rule this snapshot used.
+    live_sets_total = sum(1 for v in sets_.values() if is_live(v.get("st") or ""))
     snap = {"brand": brand, "date": day, "at": now_ist_str(),
             "lapsed": lapsed, "since_day": prev_date,
             "adsets": sets_, "campaigns": camps_, "accounts": accts_,
+            "live_adsets": live_sets_total,
+            # Absent, not zero, when no account could report its ads.
+            "live_ads": (live_ads_total if (live_accounts
+                         and len(ads_degraded) < len(live_accounts)) else None),
+            "ads_degraded": ads_degraded,
             # Still the ACTIVE-only figure, so it keeps matching the Budget/day tile:
             # a paused ad set's number is not money that will be spent.
             "total": round(sum(v["b"] for v in accts_.values()), 2),
