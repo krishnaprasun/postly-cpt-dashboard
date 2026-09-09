@@ -185,6 +185,12 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
    the numbers would make the tile look like it was passing judgement on them. */
 .kpi .vlab.disc{color:var(--gold-dk)}
 .kpi .vlab.sett{color:var(--green-dk)}
+/* Money out is ink, the thing it bought is green. Applied to the label, not the number,
+   for the same reason the phases are: these are two facts, not a verdict. */
+.kpi .vlab.spd{color:var(--muted)}
+.kpi .vlab.tri{color:var(--green-dk)}
+.kpi .vlab.ins{color:var(--muted)}
+.kpi .vlab.sgn{color:var(--green-dk)}
 /* The budget behind a figure, in brackets under it: the money committed beside the money
    already spent, without either competing for the headline. */
 .kpi .vsub{display:block;font-size:11.5px;font-weight:600;color:var(--faint);
@@ -2091,8 +2097,9 @@ function kpis(){
    <div class="kpi hero"><div class="k">Current CPT · ${segLbl}${chanIsMeta()?modLbl:''}</div>
      <div class="v ${cls(k)}">${k===null?'—':rs(k)}</div>
      <div class="s">${waiting ? '<span class="spin"></span>loading Google' : heroSub}</div></div>` : '') + `
-   <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend${srcBtn('meta')}</div>
-     <div class="v">${rs(sp)}</div>
+   <div class="kpi${trials ? '' : ' hero'}"><div class="k">Spend${
+     trials ? ' · trials' : ''}${srcBtn('meta')}</div>
+     <div class="v">${rs(sp)}<span class="vlab spd">spend</span></div>
      <div class="s">${days>1 ? `${rs(sp/days)}/day avg over ${days} days`
        : paceOpen !== null
              /* Three figures and two clauses did not fit a tile this wide -- it was
@@ -2111,20 +2118,11 @@ than the morning\u2019s whenever ad sets have been paused during the day.' : ''}
        : (DATA.budget_day && !DATA.budget_is_today)
              ? `no budget snapshot for ${DATA.budget_day}`
        : !DATA.budgets_known ? 'budget unavailable — partial data'
-             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div></div>` +
-   (trials ? `
-   <div class="kpi" title="${(DATA.event_note[EV]||EV).replace(/"/g,'&quot;')} — counted by
-     ${ATTRIB()}"><div class="k">Trials${modLbl}${srcBtn('trials')}</div>
-     <div class="v">${num(tr)}</div>
-     <div class="s">${offMatters(MT)
-       ? `${num(MT.rows)} sit on the ad rows below · <span class="warn">${num(MT.off)}</span>
-          name an ad with no spend in this window`
-       /* The event name moved to the tooltip. It is a single 28-character token with
-          nowhere to break -- it ate two of the three lines this sub-line gets and pushed
-          "via Branch" past the clamp, so the tile stopped naming its own source. */
-       : `${SEG === 'blended' ? 'all campaigns' : segLbl + ' campaigns'} · via <b>${
-           ATTRIB()}</b>`}${offMatters(MT) && SEG !== 'blended'
-       ? ` · ${segLbl}` : ''}</div></div>`
+             : `${rs(c.budget)}/day budget · ${pace.toFixed(0)}% used${budgetAge()}`}</div>
+     ${trials ? `<div class="v2">${num(tr)}<span class="vsub">(${cptTxt(sp, tr)} per \
+trial)</span><span class="vlab tri">${modLbl ? 'trials · pro rata' : 'trials'}</span></div>`
+       : ''}</div>` +
+   (trials ? ``
    + /* The second event, beside the first rather than instead of it. Meta only: no
         vendor reports a Google NC 10m, and putting Meta's count under a blended heading
         would overstate it by whatever Google earned. */
@@ -2258,30 +2256,25 @@ function cpKpis(c, sp){
     ? `<br><span class="warn">Product DB last ran ${p.retrieved_at} · ${
         p.age_min > 120 ? Math.round(p.age_min/60) + 'h' : p.age_min + ' min'} old</span>
        — spend below is current, so this reads high` : '';
+  /* Installs and signups in one tile, the same shape as spend-and-trials beside it: two
+     figures, each with its cost per in brackets. They are consecutive steps of one funnel
+     and were previously three tiles -- signups, signup rate, and the install count buried
+     in the rate's sub-line. The conversion between them is the sub-line, which is where a
+     rate belongs when the two counts it is derived from are both on the tile. */
+  const inst = c.inst || 0;
   return `
-   <div class="kpi" title="${CP_SRC}"><div class="k">Signups</div><div class="v">${num(su)}</div>
-     <div class="s">${cptTxt(sp,su)} each · <em>product DB</em>${stale ? ` ·
-       <span class="warn">${p.age_min > 120 ? Math.round(p.age_min/60) + 'h'
-         : p.age_min + ' min'} old</span>` : ''}</div></div>
-   ${(() => {
-     /* The funnel as one tile rather than two: install -> signup leads, signup -> trial
-        rides the sub-line. The row already carries eight and the point of this one is the
-        SHAPE of the drop, which reads better as a pair than as two rivals.
-        The trial side divides the pro-rata uplift back out -- signups are measured, and a
-        rate that mixed a measured numerator with a modelled denominator would drift with
-        the model. */
-     const inst = c.inst || 0;
-     if(!(su > 0) || !(inst > 0)) return '';
-     const trM = (c[EV] || 0) / (upliftOf(EV) || 1);
-     const a = 100 * su / inst, b = trM > 0 ? 100 * trM / su : null;
-     return `
-   <div class="kpi" title="Derived: product-database signups over ${ATTRIB()} installs,
-     then measured trials over those signups. Both denominators are measured, so pro rata
-     moves neither."><div class="k">Signup rate</div>
-     <div class="v">${a.toFixed(0)}%</div>
-     <div class="s">of ${num(inst)} installs · ${b === null ? '—'
-       : b.toFixed(1) + '% of those start a trial'}</div></div>`;
-   })()}
+   ${inst > 0 || su > 0 ? `
+   <div class="kpi" title="Installs come from ${ATTRIB()}; signups from the Classplus
+     product database. ${CP_SRC}"><div class="k">Installs · signups</div>
+     <div class="v">${inst > 0 ? num(inst) : '—'}<span class="vsub">(${
+       inst > 0 ? cptTxt(sp, inst) : '—'} per install)</span><span class="vlab ins">\
+installs</span></div>
+     <div class="v2">${num(su)}<span class="vsub">(${cptTxt(sp, su)} per signup)</span>\
+<span class="vlab sgn">signups</span></div>
+     <div class="s">${inst > 0 && su > 0 ? `${(100 * su / inst).toFixed(0)}% of installs \
+sign up` : ''}${stale ? ` · <span class="warn">DB ${p.age_min > 120
+       ? Math.round(p.age_min / 60) + 'h' : p.age_min + ' min'} old</span>` : ''}</div></div>`
+   : ''}
    <div class="kpi" title="${CP_SRC}"><div class="k">Day-0</div><div class="v">${pct(c.cp_d0a,m)}</div>
      <div class="s">active on day 0 · ${pct(c.cp_d0c,m)} cancelled ·
        Classplus ${p.age_min===null?'':p.age_min+' min old'}</div></div>`;
