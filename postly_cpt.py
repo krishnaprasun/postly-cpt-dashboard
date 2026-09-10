@@ -1740,6 +1740,7 @@ def _cp_parse(qr, qid=""):
     except ValueError:
         at, age = None, None
     return {"qid": qid, "window": win, "daily": bool(datecol), "by_day": by_day,
+            "runtime": qr.get("runtime"),
             "retrieved_at": at.astimezone(IST).strftime("%H:%M IST") if at else "",
             "age_min": age}
 
@@ -1761,8 +1762,13 @@ def _cp_slice(src, since, until):
                        for k in CP_KEYS}}
 
 
-def classplus_fetch(qid, key):
-    """Latest result for one query, refreshed if the cached one is older than CP_TTL.
+def classplus_fetch(qid, key, max_age=None):
+    """Latest result for one query, refreshed if the cached one is older than `max_age`.
+
+    `max_age` is what decides whether Redash SERVES or RUNS: ask for something fresher
+    than its cache and it starts a job. Funda's query takes ~39 minutes, so its brand
+    asks for a six-hour-old result and never triggers one -- runs are started by the
+    scheduler, deliberately and a few times a day, not by whoever opened the page.
 
     Redash answers the POST either with a result (cache was fresh enough) or with a job.
     A job is polled, but only within a budget: the query takes ~15s and the dashboard is
@@ -1775,7 +1781,8 @@ def classplus_fetch(qid, key):
     # otherwise with a job. Its payload is trimmed and carries no SQL, and the SQL is
     # the only place the covered window is written down — so the numbers are always
     # read back from results.json, which returns the full record.
-    j = _cp_call(f"queries/{qid}/results", key, {"max_age": CP_TTL}, timeout=60)
+    j = _cp_call(f"queries/{qid}/results", key,
+                 {"max_age": CP_TTL if max_age is None else int(max_age)}, timeout=60)
     job = (j.get("job") or {}).get("id") if "query_result" not in j else None
     deadline = time.time() + CP_POLL_BUDGET
     while job and time.time() < deadline:
@@ -1786,6 +1793,19 @@ def classplus_fetch(qid, key):
             break
     qr = _cp_call(f"queries/{qid}/results.json", key, timeout=60)["query_result"]
     return _cp_parse(qr, qid)
+
+
+def classplus_start(qid, key):
+    """Ask Redash for a result fresher than anything it has, and DO NOT wait.
+
+    The point is the side effect. `max_age: 0` makes Redash start a run, and the job id
+    comes back immediately; the result is collected by a later call, by which time the
+    query has had its forty minutes. Waiting here would just be a request timing out.
+    """
+    j = _cp_call(f"queries/{qid}/results", key, {"max_age": 0}, timeout=60)
+    if "query_result" in j:
+        return "cached"                     # already fresh; nothing needed starting
+    return ((j.get("job") or {}).get("id") or "started")
 
 
 def _cp_covers(src, since, until):
@@ -1801,20 +1821,136 @@ def _cp_covers(src, since, until):
     return (lo, hi) == (since, until)
 
 
-def classplus(since, until):
-    """(data, note) — data is None whenever it cannot be trusted for THIS window."""
-    if not C.CLASSPLUS_ON:
+def cp_ns(brand):
+    return f"{brand}cp"
+
+
+# A day is written at most once per distinct Redash result. Without this the store was
+# rewritten on every page build for a result that had not changed.
+_cp_stored = set()
+_cp_stored_lock = threading.Lock()
+
+
+def cp_store(brand, src):
+    """Persist every day this result reports. Returns how many days were written.
+
+    This is why a two-day query can answer March. The query itself only ever knows
+    yesterday and today; the store is what turns a run of those into a history, so each
+    day is kept as it was last reported and read back long after the query has moved on.
+
+    Days are re-written while they stay inside the query's window, which matters: these
+    are signup COHORTS, so yesterday's mandates keep arriving today. Once a day falls out
+    of the window it stops changing, which is the honest place for it to freeze.
+    """
+    if not (src.get("daily") and H.available()):
+        return 0
+    stamp = f"{brand}:{src['qid']}:{src.get('retrieved_at')}"
+    with _cp_stored_lock:
+        if stamp in _cp_stored:
+            return 0
+        _cp_stored.add(stamp)
+        if len(_cp_stored) > 500:
+            _cp_stored.clear()
+    n = 0
+    for day, rows in (src.get("by_day") or {}).items():
+        if not day:
+            continue
+        if H.put_agg(cp_ns(brand), day, {"date": day, "qid": src["qid"],
+                                         "at": now_ist_str(), "ads": rows}):
+            n += 1
+    return n
+
+
+def cp_days(brand, dates):
+    """{date: {ad_name: {cp_*}}} for the stored days among `dates`."""
+    if not (H.available() and dates):
+        return {}
+    out = {}
+    for day, doc in (H.fetch_raw(cp_ns(brand), list(dates)) or {}).items():
+        rows = (doc or {}).get("ads")
+        if rows:
+            out[day] = rows
+    return out
+
+
+def _cp_fold(per_day, since, until, retrieved_at, age_min):
+    """Days of {ad_name: {cp_*}} folded into the shape build() consumes."""
+    by_ad, organic = {}, _cp_blank()
+    for rows in per_day.values():
+        for name, rec in rows.items():
+            tgt = organic if name == "Organic / Unknown" else \
+                by_ad.setdefault(name, _cp_blank())
+            for k in CP_KEYS:
+                tgt[k] += int(rec.get(k) or 0)
+    return {"window": [since, until], "by_ad": by_ad, "organic": organic,
+            "retrieved_at": retrieved_at, "age_min": age_min,
+            "totals": {k: sum(v[k] for v in by_ad.values()) + organic[k]
+                       for k in CP_KEYS}}
+
+
+def classplus(since, until, brand=None):
+    """(data, note) — data is None whenever it cannot be trusted for THIS window.
+
+    Two sources, in that order of preference: whatever the queries can answer live, and
+    the store for the days they cannot. Funda's query reaches back one day, so all but
+    the last two days of any window come from the store; Postly's reaches back thirty and
+    the store only shows up beyond that.
+    """
+    B = C.brand(brand) if brand else None
+    queries = (B or {}).get("cp_queries") or (C.CLASSPLUS_QUERIES if not brand else [])
+    if not queries:
         return None, None
-    seen, dead = [], 0
-    for qid, key in C.CLASSPLUS_QUERIES:
-        src, ok = _part("classplus", f"q{qid}", lambda q=qid, k=key: classplus_fetch(q, k),
-                        CP_TTL)
+    max_age = int((B or {}).get("cp_max_age") or CP_TTL)
+    ns = cp_ns(brand) if brand else None
+
+    wanted = date_range(since, until)
+    per_day, seen, dead, live_days = {}, [], 0, 0
+    for qid, key in queries:
+        src, ok = _part(ns or "classplus", f"q{qid}",
+                        lambda q=qid, k=key, m=max_age: classplus_fetch(q, k, m), CP_TTL)
         if not ok or not src:
             dead += 1
             continue
-        if _cp_covers(src, since, until):
-            return _cp_slice(src, since, until), None
         seen.append(src)
+        if not src["daily"]:
+            # A whole-block result still cannot be split, so it answers its own window
+            # and nothing else -- and there is nothing dated to store either.
+            if _cp_covers(src, since, until):
+                return _cp_slice(src, since, until), None
+            continue
+        if brand:
+            cp_store(brand, src)
+        for d, rows in (src["by_day"] or {}).items():
+            if since <= d <= until and d not in per_day:
+                per_day[d] = rows
+                live_days += 1
+
+    missing = [d for d in wanted if d not in per_day]
+    from_store = 0
+    if missing and brand:
+        for d, rows in cp_days(brand, missing).items():
+            per_day[d] = rows
+            from_store += 1
+
+    if per_day:
+        fresh = max(seen, key=lambda x: (x.get("age_min") is not None,
+                                         -(x.get("age_min") or 0)), default=None) \
+            if seen else None
+        data = _cp_fold(per_day, since, until,
+                        (fresh or {}).get("retrieved_at", ""),
+                        (fresh or {}).get("age_min"))
+        gap = [d for d in wanted if d not in per_day]
+        note = None
+        if gap:
+            # Named rather than counted: a blank stretch in the middle of a window is a
+            # different problem from one at the far end, and only the dates say which.
+            span = gap[0] if len(gap) == 1 else f"{gap[0]} → {gap[-1]}"
+            note = (f"Classplus has no figures for {len(gap)} day(s) in this window "
+                    f"({span}) — those days are not in the query's range and were never "
+                    f"stored, so the columns count the rest of the window only.")
+        data["days"] = {"live": live_days, "stored": from_store, "missing": len(gap)}
+        return data, note
+
     if not seen:
         return None, "Classplus is not responding — signup and mandate columns are hidden."
     # Say which query holds what, rather than merging every window into one phrase:
@@ -4578,7 +4714,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                     g[k] += rec[k] * share
 
     # ---- attach Classplus signups/mandates to ads by the SAME name key ------
-    cp, cp_note = classplus(since, until) if B["classplus"] else (None, None)
+    cp, cp_note = classplus(since, until, brand) if B["classplus"] else (None, None)
     cp_matched = {k: 0.0 for k in CP_KEYS}
     if cp:
         for name, rec in cp["by_ad"].items():
@@ -4938,6 +5074,10 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
             "age_min": cp["age_min"],
             "totals": cp["totals"],
             "organic": cp["organic"],
+            # How much of this window the query answered and how much came out of the
+            # store. On Funda that is two days live and the rest stored, and a reader
+            # who does not know that cannot tell a stored day from a fresh one.
+            "days": cp.get("days"),
             "matched": {k: round(v, 1) for k, v in cp_matched.items()},
             "unmatched": {k: round(cp["totals"][k] - cp_matched[k], 1) for k in CP_KEYS},
         } if cp else {"available": False, "note": cp_note}),

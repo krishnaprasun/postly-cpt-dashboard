@@ -1275,6 +1275,53 @@ def api_budget_snapshot():
     return jsonify({"results": out})
 
 
+@app.route("/api/classplus/refresh", methods=["POST", "GET"])
+def api_classplus_refresh():
+    """Start a fresh run of a brand's product-DB queries, and store what is cached now.
+
+    Two things, because they belong to different moments. Funda's query takes ~39
+    minutes, so nothing can start it and wait for it: this stores the result of the LAST
+    run and starts the next one. Called on a schedule a few times a day, each call banks
+    the previous call's work.
+
+    Token-gated like the other writing endpoints — it costs Redash a long query and
+    writes to the store.
+    """
+    want = H.TOKEN
+    if not want or not hmac.compare_digest(request.headers.get("Authorization", ""),
+                                           "Bearer " + want):
+        return jsonify({"error": "unauthorized"}), 401
+    brands = [request.args.get("brand")] if request.args.get("brand") else [
+        b for b in C.BRANDS if C.brand(b)["classplus"]]
+    bad = [b for b in brands if b not in C.BRANDS]
+    if bad:
+        return jsonify({"error": f"unknown brand(s): {bad}"}), 400
+    run = request.args.get("run", "1") not in ("0", "false", "no")
+    out = []
+    for b in brands:
+        B = C.brand(b)
+        for qid, key in B.get("cp_queries") or []:
+            row = {"brand": b, "qid": qid}
+            try:
+                # Whatever the last run produced, banked before the next one displaces
+                # it. Stored by DAY, so this is what lets a two-day query answer a month.
+                src = P.classplus_fetch(qid, key, B.get("cp_max_age") or P.CP_TTL)
+                row.update(window=src["window"], daily=src["daily"],
+                           runtime_s=(round(src["runtime"]) if src.get("runtime") else None),
+                           retrieved_at=src["retrieved_at"], age_min=src["age_min"],
+                           stored_days=P.cp_store(b, src))
+            except Exception as e:
+                traceback.print_exc()
+                row["error"] = str(e)[:200]
+            if run:
+                try:
+                    row["started"] = P.classplus_start(qid, key)
+                except Exception as e:
+                    row["start_error"] = str(e)[:200]
+            out.append(row)
+    return jsonify({"results": out})
+
+
 @app.route("/api/budgets")
 @protected
 def api_budgets():

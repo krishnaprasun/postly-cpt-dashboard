@@ -163,6 +163,48 @@ CLASSPLUS_HOST, CLASSPLUS_QUERIES = _classplus()
 CLASSPLUS_ON = bool(CLASSPLUS_QUERIES)
 
 
+def _classplus_brand():
+    """{brand: [(query_id, api_key), ...]} — the product-DB queries, PER BRAND.
+
+    Prefixed exactly like the Branch pairs, and for the same reason: Postly keeps the
+    unprefixed name it has always had, everyone else is prefixed.
+
+      env   CLASSPLUS_QUERIES_FUNDA   "19846:key"      (or "id:key,id:key")
+            CLASSPLUS_QUERIES         -> postly, the older unprefixed form
+      file  ~/.anthropic/classplus_creds.json  {"brands": {"funda": [{"id":..,"key":..}]}}
+
+    There is deliberately NO fallback from a brand to the unprefixed list. Falling back
+    would have shown Postly's signups under Funda's ads — every row joined by ad name, so
+    it would not even look wrong, just quietly be another brand's product data.
+    """
+    out = {}
+    try:
+        j = json.loads(_read("~/.anthropic/classplus_creds.json") or "{}")
+    except ValueError:
+        j = {}
+    blocks = j.get("brands") or {}
+    for b in _BRAND_KEYS:
+        pre = "" if b == "postly" else b.upper() + "_"
+        pairs = []
+        for pair in os.environ.get("CLASSPLUS_QUERIES_" + b.upper(), "").split(","):
+            if ":" in pair:
+                qid, _, key = pair.partition(":")
+                if qid.strip() and key.strip():
+                    pairs.append((qid.strip(), key.strip()))
+        for q in blocks.get(b) or []:
+            qid, key = str(q.get("id") or "").strip(), str(q.get("key") or "").strip()
+            if qid and key and not any(x == qid for x, _ in pairs):
+                pairs.append((qid, key))
+        if not pairs and not pre:
+            pairs = list(CLASSPLUS_QUERIES)      # the legacy unprefixed pair is Postly's
+        if pairs:
+            out[b] = pairs
+    return out
+
+
+CLASSPLUS_BRAND_QUERIES = _classplus_brand()
+
+
 def _redash_trials():
     """{brand: (query_id, api_key)} — one Redash query per brand whose trials come from
     the product DB rather than from an attribution vendor.
@@ -304,7 +346,14 @@ BRANDS = {
         "event_note": {"t101": "trial_started_backend",
                        "t10m": "trial_nc_after10min_backend"},
         "cpt_target": 180,
-        "classplus": False,
+        # Query 19846, added 2026-09-10. It covers YESTERDAY AND TODAY only, so unlike
+        # Postly's 30-day query it cannot answer an older window by itself -- every day
+        # it reports is stored and older days are served from the store.
+        "classplus": True,
+        # That query takes ~39 MINUTES to run (measured 2,329s on 2026-09-10), so a page
+        # load must never be what triggers it. Six hours means the fetch always gets
+        # Redash's cached result and never starts a run; the scheduler starts the runs.
+        "cp_max_age": 21600,
         "logo": "brand/funda.png",
         # The violet end of their play-button gradient; the orange end is too close to
         # the warn amber to use as chrome.
@@ -441,6 +490,10 @@ def brand(name):
     b["key"] = name if name in BRANDS else DEFAULT_BRAND
     b["branch"] = BRANCH.get(b["key"])
     b["trials_query"] = REDASH_TRIALS.get(b["key"])
+    # Which product-DB queries this brand may read. A brand whose table says classplus
+    # but has no query configured is simply off, rather than reading someone else's.
+    b["cp_queries"] = CLASSPLUS_BRAND_QUERIES.get(b["key"]) or []
+    b["classplus"] = bool(b["classplus"] and b["cp_queries"])
     if not BRAND_HAS_BRANCH(b["key"]):
         b["events"], b["labels"], b["event_note"] = {}, {}, {}
     return b
