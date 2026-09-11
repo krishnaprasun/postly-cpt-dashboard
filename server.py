@@ -1275,6 +1275,30 @@ def api_budget_snapshot():
     return jsonify({"results": out})
 
 
+@app.route("/api/graduation/candidates")
+@protected
+def api_grad_candidates():
+    """Graduation candidates for one day, by the brand's own guardrail rule.
+
+    Read-only and link-gated like the rest of the page. A brand with no rule configured
+    answers `available: false` rather than an error — most brands do not run one.
+    """
+    brand, err, _full = _gate(request.args.get("k", ""),
+                              request.args.get("brand", C.DEFAULT_BRAND))
+    if err:
+        return err
+    date = (request.args.get("date") or "").strip() or None
+    try:
+        got = P.grad_candidates(brand, date)
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)[:300]}), 502
+    if got is None:
+        return jsonify({"available": False, "brand": brand,
+                        "note": "No graduation guardrail is configured for this brand."})
+    return jsonify({"available": True, **got})
+
+
 @app.route("/api/classplus/refresh", methods=["POST", "GET"])
 def api_classplus_refresh():
     """Start a fresh run of a brand's product-DB queries, and store what is cached now.

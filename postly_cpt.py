@@ -464,6 +464,187 @@ CPI_BANDS = {"lt8": ("under Rs8", lambda c: c is not None and c < 8),
              "none": ("no installs", lambda c: c is None)}
 
 
+GCAND_SHAPE = 1
+
+
+def gcand_ns(brand):
+    return H.agg_ns(brand, "gcand", 0)
+
+
+def _gcand_lead(name):
+    """The leading numeric id before the first underscore -- '4095' from
+    '4095_ATZA_Ankit_English_AI__030926'.
+
+    It is how a creative is followed from testing into a trial campaign despite being
+    renamed on the way, and the team's own guardrail tracks it the same way.
+    """
+    head = (name or "").split("_", 1)[0].strip()
+    return head if head.isdigit() else None
+
+
+def _gcand_source(brand, rule, since, until):
+    """(spend, installs, names, trial_numbers) per (adset_id, day) over [since, until].
+
+    Two sources because the raw day store deliberately stops three days back: settled
+    days come from it, and the last few from the hourly ad-set fold. The fold carries
+    Meta's installs per ad set per day already, so the tail is not an approximation of a
+    different number -- it is the same number, read a few hours sooner.
+    """
+    testing = set(rule.get("testing_campaigns") or [])
+    spend, inst = defaultdict(float), defaultdict(float)
+    names, trial_nums = {}, set()
+
+    raw = H.fetch_raw(brand, date_range(since, until)) if H.available() else {}
+    last_raw = max((d for d in raw if raw[d]), default=None)
+    for d, day in sorted(raw.items()):
+        for _acct, rows in ((day or {}).get("meta") or {}).items():
+            for r in rows:
+                asid = r.get("adset_id") or ""
+                if not asid:
+                    continue
+                nm = r.get("adset_name") or ""
+                if str(r.get("campaign_id") or "") in testing:
+                    names.setdefault(asid, nm)
+                    spend[(asid, d)] += float(r.get("spend") or 0)
+                    inst[(asid, d)] += float(r.get("minst") or 0)
+                elif _gcand_lead(nm):
+                    # A trial counterpart already exists, so the creative has been
+                    # graduated by hand and flagging it again is noise.
+                    trial_nums.add(_gcand_lead(nm))
+
+    # ---- the unsettled tail, from the ad-set fold ---------------------------
+    art = H.get_agg(_series_ns(brand, "adset")) if H.available() else None
+    if art:
+        tail = [d for d in (art.get("dates") or [])
+                if (last_raw is None or d > last_raw) and since <= d <= until]
+        for row in art.get("rows") or []:
+            asid, nm = row.get("key") or "", row.get("label") or ""
+            if not asid:
+                continue
+            is_test = (row.get("stage") or "") == "testing"
+            if not is_test:
+                if _gcand_lead(nm):
+                    trial_nums.add(_gcand_lead(nm))
+                continue
+            names.setdefault(asid, nm)
+            for d in tail:
+                v = (row.get("days") or {}).get(d)
+                if not v:
+                    continue
+                spend[(asid, d)] += float(v.get("spend") or 0)
+                inst[(asid, d)] += float(v.get("inst") or 0)
+    return spend, inst, names, trial_nums
+
+
+def grad_candidates(brand, day=None, store=True):
+    """The graduation candidates for one day, by the brand's own guardrail rule.
+
+    Reproduces the rule the team runs rather than inventing one, because the view exists
+    to show where the dashboard and the team disagree -- and two systems measuring
+    different things cannot disagree about anything useful.
+
+    Per ad set, over a trailing window ending on `day`:
+      cumulative CPI  = window spend / window Meta installs
+      that day's CPI  = that day's spend / that day's Meta installs
+      qualifying CPI  = the LOWER of the two
+    with three gates before any of it counts: the ad set must be in one of the testing
+    campaigns, both spend legs must clear `min_spend`, and no trial campaign may already
+    hold a counterpart with the same leading creative number. An ad set with only one
+    day of data can reach TIER1 but not TIER2 -- a borderline call on a single day is
+    not a call yet.
+    """
+    B = C.brand(brand)
+    rule = B.get("graduation_rule")
+    if not rule:
+        return None
+    day = day or (datetime.strptime(today_ist(), "%Y-%m-%d").date()
+                  - timedelta(days=1)).strftime("%Y-%m-%d")
+    win = int(rule.get("window_days") or 5)
+    d_end = datetime.strptime(day, "%Y-%m-%d").date()
+    since = (d_end - timedelta(days=win - 1)).strftime("%Y-%m-%d")
+    # A little history behind the window, so "when did this ad set first spend" is not
+    # answered by the window's own left edge.
+    look = (d_end - timedelta(days=max(win, 30))).strftime("%Y-%m-%d")
+    spend, inst, names, trial_nums = _gcand_source(brand, rule, look, day)
+
+    first = {}
+    for (asid, d) in sorted(spend):
+        if spend[(asid, d)] > 0:
+            first.setdefault(asid, d)
+
+    window = date_range(since, day)
+    minsp = float(rule.get("min_spend") or 0)
+    t1, t2 = float(rule.get("tier1_cpi") or 8), float(rule.get("tier2_cpi") or 12)
+    rows, counts = [], defaultdict(int)
+    for asid, start in first.items():
+        if start > day:
+            continue
+        counts["in_testing"] += 1
+        nm = names.get(asid, "")
+        lead = _gcand_lead(nm)
+        if lead and lead in trial_nums:
+            counts["already_in_trial"] += 1
+            continue
+        cs = sum(spend.get((asid, d), 0.0) for d in window if d >= start)
+        ci = sum(inst.get((asid, d), 0.0) for d in window if d >= start)
+        ds, di = spend.get((asid, day), 0.0), inst.get((asid, day), 0.0)
+        if not (cs >= minsp and ds >= minsp):
+            counts["under_min_spend"] += 1
+            continue
+        counts["judged"] += 1
+        cum_cpi = round(cs / ci, 2) if ci else None
+        day_cpi = round(ds / di, 2) if di else None
+        have = [x for x in (cum_cpi, day_cpi) if x is not None]
+        if not have:
+            counts["no_installs"] += 1
+            continue
+        q = min(have)
+        # One day of data: cumulative and the day are the same figure, so a TIER2-range
+        # number is a single day's noise and waits for a second.
+        day_one = round(cs, 2) == round(ds, 2)
+        if q <= t1:
+            tier, budget = "TIER1", rule.get("tier1_budget")
+        elif q <= t2 and not day_one:
+            tier, budget = "TIER2", rule.get("tier2_budget")
+        else:
+            counts["over_bar"] += 1
+            continue
+        rows.append({"id": asid, "n": nm, "start": start,
+                     "days": (d_end - datetime.strptime(start, "%Y-%m-%d").date()).days + 1,
+                     "cs": round(cs, 2), "ci": round(ci), "ccpi": cum_cpi,
+                     "ds": round(ds, 2), "di": round(di), "dcpi": day_cpi,
+                     "q": q, "tier": tier, "budget": budget, "day_one": day_one})
+    rows.sort(key=lambda r: r["q"])
+
+    # ---- NEW vs STILL_PENDING, from our own stored days --------------------
+    # The team's script keeps a tracking log for this; the store is ours, so the first
+    # day an ad set was flagged is read back from it rather than kept twice.
+    seen_before = {}
+    if H.available():
+        prior = date_range((d_end - timedelta(days=30)).strftime("%Y-%m-%d"),
+                           (d_end - timedelta(days=1)).strftime("%Y-%m-%d"))
+        for d, doc in (H.fetch_raw(gcand_ns(brand), prior) or {}).items():
+            for r in (doc or {}).get("rows") or []:
+                k = r.get("id") or ""
+                if k and (k not in seen_before or d < seen_before[k]):
+                    seen_before[k] = d
+    for r in rows:
+        was = seen_before.get(r["id"])
+        r["status"] = "STILL_PENDING" if was else "NEW"
+        r["pending"] = ((d_end - datetime.strptime(was, "%Y-%m-%d").date()).days
+                        if was else 0)
+    rows.sort(key=lambda r: (0 if r["status"] == "NEW" else 1, r["q"]))
+
+    out = {"shape": GCAND_SHAPE, "brand": brand, "date": day, "since": since,
+           "rows": rows, "counts": dict(counts), "rule": {
+               "min_spend": minsp, "tier1_cpi": t1, "tier2_cpi": t2,
+               "window_days": win, "installs": rule.get("installs") or "meta"},
+           "generated_at": now_ist_str()}
+    if store and H.available():
+        out["stored"] = H.put_agg(gcand_ns(brand), day, out)
+    return out
+
+
 def grad_cpi(brand):
     """The testing CPI at or below which a creative was worth graduating, for this brand.
 

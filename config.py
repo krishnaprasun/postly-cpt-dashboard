@@ -325,6 +325,32 @@ BRANDS = {
         # the eligible columns rather than measure the team against a number invented
         # here. Set it per brand when the bar is agreed.
         "grad_cpi": 12,
+        # The graduation guardrail the team actually runs, reproduced from their Apps Script
+        # (validated against their sheet for 2026-09-08: same four ad sets, same tiers).
+        # Everything here is THEIR number, not a dashboard opinion -- the point of the view is
+        # to show the same call they are making, so a disagreement means someone missed one,
+        # not that the two systems measure differently.
+        "graduation_rule": {
+            # An allow-list, not a name pattern. The four testing campaigns are the only
+            # ones the guardrail reads; a campaign that merely has "testing" in its name is
+            # not one of them.
+            "testing_campaigns": ["120243264641560246",   # Speakeasy_CPI_2_Testing_170326
+                                  "120250228227870246",   # Install Testing_Kannada_250626
+                                  "120250225060480246",   # Install Testing_telugu_250626
+                                  "120248327616340121"],  # Speakeasy_Testing_150626
+            # BOTH legs must clear this before any call is made. Without it an ad set that
+            # spent Rs44 on its last day qualifies on four installs.
+            "min_spend": 300,
+            "tier1_cpi": 8, "tier1_budget": 3000,
+            "tier2_cpi": 12, "tier2_budget": 1000,
+            # Cumulative is a TRAILING window, not the ad set's whole life: an ad set that
+            # has sat ungraduated for weeks would otherwise drag a 45-day query behind it.
+            "window_days": 5,
+            # Installs come from Meta's own mobile_app_install, not the attribution vendor.
+            # Branch runs about 17% lower here, which is enough to push an ad set across the
+            # Rs12 line -- the single reason our numbers and theirs used to disagree.
+            "installs": "meta",
+        },
         "classplus": False,
         "logo": "brand/speakeasy.svg",
         # Their black-on-gold identity. `dark` is a deep bronze rather than the logo's
