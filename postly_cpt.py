@@ -298,7 +298,9 @@ COHORT_TTL = int(os.environ.get("COHORT_TTL", "1800"))
 GRAD_STORE_DAYS = int(os.environ.get("GRAD_STORE_DAYS", "120"))
 # Bumped when the shape of a stored cohort row changes, so a new deploy rejects the old
 # artifact instead of rendering it with a column missing.
-GRAD_SHAPE = 3          # 3: testing CPI counts Meta installs, not Branch
+GRAD_SHAPE = 4          # 4: testing CPI counts Meta installs where the day has
+                        #    them, the vendor's only for days recorded before they
+                        #    were stored (2026-09-05)
 _cohort_cache, _cohort_lock = {}, threading.Lock()
 
 
@@ -325,6 +327,12 @@ def _cohort_scan(brand, since, until):
 
     first_test, first_trial = {}, {}
     test_spend, test_inst = defaultdict(float), defaultdict(float)
+    # Meta's installs are the denominator of the graduation CPI -- but they have only
+    # been PERSISTED since 2026-09-05, and this ledger reaches back months. Blanking
+    # every older creative's CPI would be a truthful field and a useless view, so the
+    # source is decided per DAY: Meta where the day has it, the vendor where it does
+    # not. Which days fell back is reported rather than smoothed over.
+    fell_back = set()
     trial_spend, trial_trials = defaultdict(float), defaultdict(float)
     # What the testing campaigns spent ON each day, as opposed to what a cohort went on to
     # spend. A day with testing spend and no new name means the pipeline shipped nothing
@@ -334,6 +342,10 @@ def _cohort_scan(brand, since, until):
     for d in stored:
         day = raw[d] or {}
         stage_of = {}
+        day_has_meta = any("minst" in r
+                           for rows in ((day.get("meta") or {}).values()) for r in rows)
+        if not day_has_meta:
+            fell_back.add(d)
         for _acct, rows in (day.get("meta") or {}).items():
             for r in rows:
                 n = r.get("ad_name") or ""
@@ -353,15 +365,21 @@ def _cohort_scan(brand, since, until):
                     test_spend[n] += sp
                     first_test.setdefault(n, d)
                     day_test_spend[d] += sp
-                    # Meta's own installs, not the vendor's. The graduation call is made
-                    # on CPI, and Branch runs about 17% below Meta here -- enough to move
-                    # an ad set across a bar. One source for the decision, and it is the
-                    # one the team decides on.
-                    test_inst[n] += float(r.get("minst") or 0)
+                    # Meta's own installs, not the vendor's, wherever the day has
+                    # them. Branch runs about 17% below Meta here -- enough to move an
+                    # ad set across a bar -- so the decision reads one source.
+                    if day_has_meta:
+                        test_inst[n] += float(r.get("minst") or 0)
         branch = day.get("branch") or {}
         for n, v in (branch.get(ev) or {}).items():
             if stage_of.get(n) == "trial":
                 trial_trials[n] += float(v or 0)
+        if not day_has_meta:
+            # Days before Meta installs were stored. The vendor's count is what exists
+            # for them, and a CPI from it beats no CPI at all.
+            for n, v in (branch.get("inst") or {}).items():
+                if stage_of.get(n) == "testing":
+                    test_inst[n] += float(v or 0)
 
     # ---- the unsettled tail -------------------------------------------------------
     # The raw day store deliberately stops three days back: Meta bills late and Branch
@@ -414,7 +432,10 @@ def _cohort_scan(brand, since, until):
     out.sort(key=lambda r: (r["d"], r["n"]))
     dates = stored + provisional
     last_test = max((d for d in dates if day_test_spend.get(d, 0) > 0), default=None)
+    meta_from = min((d for d in stored if d not in fell_back), default=None)
     return out, {"stored_days": len(stored), "lookback_from": look,
+                 "meta_installs_from": meta_from,
+                 "vendor_install_days": len(fell_back),
                  "last_test_day": last_test, "event": ev,
                  "event_label": B["labels"].get(ev, "Trials"),
                  "days": {d: round(day_test_spend.get(d, 0.0), 2) for d in dates},
@@ -442,6 +463,8 @@ def cohort_build(brand, until=None):
             "provisional": [d for d in (meta.get("provisional") or []) if d >= since],
             "creatives": [r for r in recs if r["d"] >= since],
             "last_test_day": meta["last_test_day"], "event": meta["event"],
+            "meta_installs_from": meta.get("meta_installs_from"),
+            "vendor_install_days": meta.get("vendor_install_days", 0),
             "event_label": meta["event_label"], "stored_days": meta["stored_days"],
             "lookback_from": meta["lookback_from"], "generated_at": now_ist_str()}
 
