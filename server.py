@@ -868,6 +868,18 @@ def api_hour_snapshot():
     if bad:
         return jsonify({"error": f"unknown brand(s): {bad}"}), 400
     today = P.today_ist()
+    # Yesterday's graduation candidates, for any brand that runs a guardrail. Built here
+    # rather than on demand because the NEW/STILL_PENDING distinction needs yesterday's
+    # list to have been WRITTEN -- a view that only computes when someone opens it can
+    # never say how long a candidate has been waiting.
+    yday = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    for b in list(C.BRANDS):
+        if not C.brand(b).get("graduation_rule"):
+            continue
+        try:
+            P.grad_candidates(b, yday)
+        except Exception:
+            traceback.print_exc()
     # A brand whose payload is already fresh is skipped, so a second pass later in the
     # hour costs nothing for the brands that succeeded and retries only the ones Meta
     # refused. Without it a throttled hour meant no refresh at all until the next one.

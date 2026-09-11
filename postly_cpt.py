@@ -492,7 +492,7 @@ def _gcand_source(brand, rule, since, until):
     """
     testing = set(rule.get("testing_campaigns") or [])
     spend, inst = defaultdict(float), defaultdict(float)
-    names, trial_nums = {}, set()
+    names, trial_nums, settled = {}, set(), set()
 
     raw = H.fetch_raw(brand, date_range(since, until)) if H.available() else {}
     last_raw = max((d for d in raw if raw[d]), default=None)
@@ -505,6 +505,7 @@ def _gcand_source(brand, rule, since, until):
                 nm = r.get("adset_name") or ""
                 if str(r.get("campaign_id") or "") in testing:
                     names.setdefault(asid, nm)
+                    settled.add(d)
                     spend[(asid, d)] += float(r.get("spend") or 0)
                     inst[(asid, d)] += float(r.get("minst") or 0)
                 elif _gcand_lead(nm):
@@ -523,7 +524,14 @@ def _gcand_source(brand, rule, since, until):
                 continue
             is_test = (row.get("stage") or "") == "testing"
             if not is_test:
-                if _gcand_lead(nm):
+                # ONLY if it was already in a trial campaign ON OR BEFORE the day being
+                # judged. `stage` is a property of the whole artifact, which reaches
+                # past `until` -- counting it regardless let an ad set the team
+                # graduated two days LATER disqualify itself retrospectively, and every
+                # candidate the guardrail actually found then vanished from its own day.
+                if _gcand_lead(nm) and any(
+                        float((v or {}).get("spend") or 0) > 0
+                        for d, v in (row.get("days") or {}).items() if d <= until):
                     trial_nums.add(_gcand_lead(nm))
                 continue
             names.setdefault(asid, nm)
@@ -533,7 +541,7 @@ def _gcand_source(brand, rule, since, until):
                     continue
                 spend[(asid, d)] += float(v.get("spend") or 0)
                 inst[(asid, d)] += float(v.get("inst") or 0)
-    return spend, inst, names, trial_nums
+    return spend, inst, names, trial_nums, settled
 
 
 def grad_candidates(brand, day=None, store=True):
@@ -565,7 +573,7 @@ def grad_candidates(brand, day=None, store=True):
     # A little history behind the window, so "when did this ad set first spend" is not
     # answered by the window's own left edge.
     look = (d_end - timedelta(days=max(win, 30))).strftime("%Y-%m-%d")
-    spend, inst, names, trial_nums = _gcand_source(brand, rule, look, day)
+    spend, inst, names, trial_nums, settled = _gcand_source(brand, rule, look, day)
 
     first = {}
     for (asid, d) in sorted(spend):
@@ -635,7 +643,13 @@ def grad_candidates(brand, day=None, store=True):
                         if was else 0)
     rows.sort(key=lambda r: (0 if r["status"] == "NEW" else 1, r["q"]))
 
+    # A day the raw store has not taken yet is still gaining installs, and installs are
+    # what the call turns on: 446_Blank Pages came to 8.43 against the team's 7.87 on an
+    # unsettled day, purely because six installs had not landed -- enough to cross the
+    # Rs8 tier line. Say so rather than let the number read as final.
+    provisional = day not in settled
     out = {"shape": GCAND_SHAPE, "brand": brand, "date": day, "since": since,
+           "provisional": provisional,
            "rows": rows, "counts": dict(counts), "rule": {
                "min_spend": minsp, "tier1_cpi": t1, "tier2_cpi": t2,
                "window_days": win, "installs": rule.get("installs") or "meta"},
