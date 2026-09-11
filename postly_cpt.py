@@ -298,7 +298,7 @@ COHORT_TTL = int(os.environ.get("COHORT_TTL", "1800"))
 GRAD_STORE_DAYS = int(os.environ.get("GRAD_STORE_DAYS", "120"))
 # Bumped when the shape of a stored cohort row changes, so a new deploy rejects the old
 # artifact instead of rendering it with a column missing.
-GRAD_SHAPE = 2
+GRAD_SHAPE = 3          # 3: testing CPI counts Meta installs, not Branch
 _cohort_cache, _cohort_lock = {}, threading.Lock()
 
 
@@ -353,16 +353,15 @@ def _cohort_scan(brand, since, until):
                     test_spend[n] += sp
                     first_test.setdefault(n, d)
                     day_test_spend[d] += sp
+                    # Meta's own installs, not the vendor's. The graduation call is made
+                    # on CPI, and Branch runs about 17% below Meta here -- enough to move
+                    # an ad set across a bar. One source for the decision, and it is the
+                    # one the team decides on.
+                    test_inst[n] += float(r.get("minst") or 0)
         branch = day.get("branch") or {}
         for n, v in (branch.get(ev) or {}).items():
             if stage_of.get(n) == "trial":
                 trial_trials[n] += float(v or 0)
-        # Installs while the creative was still in TESTING. That is the denominator of the
-        # testing CPI the graduation decision is made on — installs it earns later, in a
-        # trial campaign, say nothing about how it tested.
-        for n, v in (branch.get("inst") or {}).items():
-            if stage_of.get(n) == "testing":
-                test_inst[n] += float(v or 0)
 
     # ---- the unsettled tail -------------------------------------------------------
     # The raw day store deliberately stops three days back: Meta bills late and Branch

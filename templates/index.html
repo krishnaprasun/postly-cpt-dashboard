@@ -637,6 +637,37 @@ a.mgr:hover{color:var(--accent-dk)}
 /* Fixed columns, because auto layout hands the slack to whichever column holds the most
    text — here the date — and 375px of it left the coloured bands floating over numbers
    they were not above. Percentages so the table still fills its panel at any width. */
+/* ---- the candidates board -------------------------------------------------
+   Nine columns, and the ad set name needs most of the room: they run to 50 characters
+   and the number at the front is the only part anyone reads aloud. The two CPI pairs sit
+   in matched widths so the eye can cross from cumulative to the day without re-aiming,
+   and the qualifying column -- the one the decision is read from -- is the only one that
+   is not muted. */
+table.coh.cand col.c-nm{width:30%}
+table.coh.cand col.c-st{width:10%}
+table.coh.cand col.c-cum{width:9%}
+table.coh.cand col.c-day{width:9%}
+table.coh.cand col.c-q{width:8%}
+table.coh.cand col.c-tier{width:9%}
+table.coh.cand col.c-sts{width:7%}
+table.coh.cand td.nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-size:12px}
+table.coh.cand td.q{background:var(--panel2)}
+table.coh.cand td.q b{font-size:14.5px;color:var(--navy)}
+table.coh.cand .sub2{display:block;font-size:10px;color:var(--faint);font-weight:400}
+table.coh.cand thead tr.sub-h th{font-size:9.5px;font-weight:600;color:var(--faint);
+  text-transform:uppercase;letter-spacing:.4px;padding-top:0;border-top:0}
+.pill.t1{color:var(--green-dk);border-color:#CBE8D8;background:var(--green-lt)}
+.pill.t2{color:var(--gold-dk);border-color:transparent;background:var(--gold-lt)}
+.pill.new{color:var(--green-dk);border-color:#CBE8D8;background:var(--green-lt)}
+.pill.pend{color:var(--muted);background:var(--panel2)}
+table.coh.cand .pill{margin-left:0}
+/* The funnel reads as a sentence rather than a chart: nearly everything is filtered out
+   before a call is made, and the counts say by what. */
+.cfun{display:flex;flex-wrap:wrap;gap:7px 16px;margin-top:10px;font-size:11.5px;
+  color:var(--muted)}
+.cfun b{color:var(--ink);font-size:13px;font-weight:700}
+.cfun .hit b{color:var(--green-dk)}
 table.coh{border-collapse:separate;border-spacing:0;table-layout:fixed}
 table.coh col.c-dt{width:20%}
 table.coh col.c-up{width:11%}
@@ -1173,8 +1204,11 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
         <option value="60">Last 60 days</option>
         <option value="90">Last 90 days</option>
       </select></label>
+    <label class="sel" id="cDayWrap"><span>Candidates for</span>
+      <input type="date" id="cDay" aria-label="Graduation candidates for"></label>
     <span class="meta" id="ccount"></span>
   </div>
+  <div id="candWrap" style="display:none"></div>
   <div id="cohortWrap" style="display:none"></div>
   <div id="trendsWrap" style="display:none"></div>
   <div id="matrixWrap" style="display:none"></div>
@@ -2515,6 +2549,132 @@ async function loadCohorts(force){
   }catch(_){ COH = null; }
   finally{ COHBUSY = false; }
   if(TAB === 'cohorts') renderCohorts();
+}
+
+/* ---- Graduation candidates -------------------------------------------------
+   The guardrail the team runs, reproduced rather than reinvented: per ad set, the LOWER
+   of its cumulative CPI and that day's, judged at Rs8 and Rs12, with a Rs300 floor on
+   both legs and no Tier 2 on a single day of data. Installs are Meta's own throughout.
+   The point of showing it is that the team acts on this list -- so when the dashboard
+   and the sheet disagree, somebody missed an ad set, rather than the two counting
+   different things. */
+let CAND = null, CANDKEY = null, CANDBUSY = false;
+
+/* Ad set names come from Meta and carry whatever the uploader typed, so they go through
+   this before they go into markup. There is no other escaper in this file because every
+   other string rendered here is a number the server produced. */
+const cesc = v => String(v == null ? '' : v)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
+const cn0 = v => v ? num(v) : '<span class="dimtxt">0</span>';
+
+function candDay(){
+  const el = document.getElementById('cDay');
+  return (el && el.value) ? el.value : '';
+}
+
+async function loadCand(force){
+  const key = `${BRAND}|${candDay()}`;
+  if(CANDKEY === key && CAND && !force) return;
+  CANDBUSY = true; renderCand();
+  try{
+    const d = candDay();
+    const r = await fetch(`/api/graduation/candidates?brand=${BRAND}${
+      d ? '&date=' + d : ''}${K}`);
+    const j = await r.json();
+    if(candKeyNow() !== key) return;
+    CAND = j.error ? null : j; CANDKEY = key;
+    /* The server decides which day "yesterday" is, so the picker follows the answer
+       rather than the browser's clock -- which is in whatever timezone the reader is. */
+    const el = document.getElementById('cDay');
+    if(el && !el.value && CAND && CAND.date) el.value = CAND.date;
+  }catch(_){ CAND = null; }
+  finally{ CANDBUSY = false; }
+  if(TAB === 'cohorts') renderCand();
+}
+const candKeyNow = () => `${BRAND}|${candDay()}`;
+
+function renderCand(){
+  const box = document.getElementById('candWrap');
+  if(!box) return;
+  if(CANDBUSY && !CAND){
+    box.innerHTML = `<div class="panel"><h3><span class="skl"
+      style="width:230px;display:inline-block"></span></h3>
+      <div class="mwrap"><table class="mx"><tbody>${
+        sklRows(['210px','64px','40px','70px','58px','70px','58px','62px','56px','64px'], 4)
+      }</tbody></table></div></div>`;
+    return;
+  }
+  const dayCtl = document.getElementById('cDayWrap');
+  if(!CAND || CAND.available === false){
+    /* Four of the five brands run no guardrail. Drawing a panel to say so would put an
+       apology above the funnel on every one of them, so the board and its date picker
+       simply are not there. */
+    box.innerHTML = '';
+    if(dayCtl) dayCtl.style.display = 'none';
+    return;
+  }
+  if(dayCtl) dayCtl.style.display = '';
+  const c = CAND.counts || {}, R = CAND.rule || {};
+  const money = v => 'Rs' + cn0(Math.round(v || 0));
+  const cpi = v => (v === null || v === undefined) ? '<span class="sub2">--</span>'
+                                                  : v.toFixed(2);
+  const tierPill = r => r.tier === 'TIER1'
+    ? `<span class="pill t1">Tier 1 · ${money(r.budget)}</span>`
+    : `<span class="pill t2">Tier 2 · ${money(r.budget)}</span>`;
+  const rows = (CAND.rows || []).map(r => `<tr>
+      <td class="nm" title="${cesc(r.n)}">${cesc(r.n)}</td>
+      <td>${dayLbl(r.start)}<span class="sub2">day ${r.days}</span></td>
+      <td class="num">${money(r.cs)}<span class="sub2">${cn0(r.ci)} inst</span></td>
+      <td class="num">${cpi(r.ccpi)}</td>
+      <td class="num">${money(r.ds)}<span class="sub2">${cn0(r.di)} inst</span></td>
+      <td class="num">${cpi(r.dcpi)}</td>
+      <td class="num q"><b>${cpi(r.q)}</b></td>
+      <td>${tierPill(r)}</td>
+      <td>${r.status === 'NEW' ? '<span class="pill new">New</span>'
+            : `<span class="pill pend">Pending ${r.pending}d</span>`}</td>
+    </tr>`).join('');
+  const none = `<tr><td colspan="9" class="sub" style="padding:14px">
+      Nothing cleared the bar on this day. ${cn0(c.judged || 0)} ad set(s) had enough
+      spend to be judged and ${cn0(c.over_bar || 0)} came in over Rs${R.tier2_cpi}.</td></tr>`;
+  box.innerHTML = `<div class="panel" style="padding-bottom:10px">
+      <div class="mcap"><h3>Graduation candidates · ${dayLbl(CAND.date)}</h3>
+        <span class="meta">${CAND.provisional ? PROV + ' · ' : ''}built ${
+          cesc(CAND.generated_at || '')}</span></div>
+      <p class="sub">Every ad set in a testing campaign, judged on the <b>lower</b> of its
+        cumulative CPI (trailing ${R.window_days} days) and that day's. Both legs must
+        clear ${money(R.min_spend)} first — without that floor an ad set qualifies on a
+        near-dead day and four installs. Tier 1 at ${money(R.tier1_cpi)}, Tier 2 at
+        ${money(R.tier2_cpi)}; an ad set with one day of data can reach Tier 1 but not
+        Tier 2, because a borderline call on a single day is not a call yet. Installs are
+        Meta's own, not the attribution SDK's.${CAND.provisional
+          ? ` <b>This day is not settled.</b> Installs are still arriving, and they are
+             what the call turns on — a handful can move an ad set across a tier line.`
+          : ''}</p>
+      <div class="cfun">
+        <span><b>${cn0(c.in_testing || 0)}</b> in testing</span>
+        <span><b>${cn0(c.under_min_spend || 0)}</b> under the ${money(R.min_spend)} floor</span>
+        <span><b>${cn0(c.already_in_trial || 0)}</b> already in a trial campaign</span>
+        <span><b>${cn0(c.over_bar || 0)}</b> over Rs${R.tier2_cpi}</span>
+        <span class="hit"><b>${cn0((CAND.rows || []).length)}</b> to graduate</span>
+      </div></div>
+    <div class="wrap"><table class="coh cand">
+      <colgroup><col class="c-nm"><col class="c-st"><col span="2" class="c-cum">
+        <col span="2" class="c-day"><col class="c-q"><col class="c-tier"><col class="c-sts">
+      </colgroup>
+      <thead><tr>
+        <th>Ad set</th><th>Started</th>
+        <th class="num" colspan="2">Cumulative (${R.window_days}d)</th>
+        <th class="num" colspan="2">${dayLbl(CAND.date)}</th>
+        <th class="num" title="The lower of the two CPIs — the one the tier is read
+          from">Qualifying</th>
+        <th>Tier</th><th title="New on this day, or still waiting from an earlier
+          one">Status</th>
+      </tr><tr class="sub-h">
+        <th></th><th></th><th class="num">spend</th><th class="num">CPI</th>
+        <th class="num">spend</th><th class="num">CPI</th><th></th><th></th><th></th>
+      </tr></thead>
+      <tbody>${rows || none}</tbody></table></div>`;
 }
 
 /* Read down the days: how many creatives went live in testing, how many of those reached
@@ -4762,6 +4922,7 @@ function renderTable(){
   }
   const isCohorts = TAB === 'cohorts';
   document.getElementById('cohortWrap').style.display = isCohorts ? 'block' : 'none';
+  document.getElementById('candWrap').style.display = isCohorts ? 'block' : 'none';
   if(isCohorts){
     document.getElementById('ctl').style.display = 'none';
     document.getElementById('gctl').style.display = 'none';
@@ -4772,7 +4933,8 @@ function renderTable(){
     document.getElementById('matrixWrap').style.display = 'none';
     document.getElementById('tblWrap').style.display = 'none';
     if(!COH && !COHBUSY) loadCohorts(false);
-    renderCohorts();
+    if(!CAND && !CANDBUSY) loadCand(false);
+    renderCohorts(); renderCand();
     return;
   }
   document.getElementById('cctl').style.display = 'none';
@@ -5780,6 +5942,7 @@ document.getElementById('tabs').onclick = e => {
   // Opening the tab is the request. Anything else means looking at an empty table and
   // wondering what to press.
   if(TAB==='cohorts' && !COH && !COHBUSY) loadCohorts(false);
+  if(TAB==='cohorts' && !CAND && !CANDBUSY) loadCand(false);
   if(TAB==='longevity' && !longFresh() && !LONGBUSY) loadLongevity(false);
   if((TAB==='trends' || TAB==='matrix') && !seriesFresh() && !SERIESBUSY) loadSeries(false);
 };
@@ -5832,6 +5995,7 @@ document.getElementById('sDim').onchange = () => {
   MPAGE = 0; MSORT = {key:'spend', dir:-1}; loadSeries(false);
 };
 document.getElementById('sHourMetric').onchange = () => renderTrends();
+document.getElementById('cDay').onchange = () => { loadCand(false); renderCand(); };
 document.getElementById('cWin').onchange = () => { loadCohorts(false); renderCohorts(); };
 document.getElementById('cBand').onchange = () => { loadCohorts(false); renderCohorts(); };
 /* Pick the shortest offered window that still reaches the day testing last ran, rather
@@ -5842,6 +6006,7 @@ function widenCohorts(day){
   const opt = [...sel.options].map(o => +o.value).find(v => v >= need);
   sel.value = String(opt || sel.options[sel.options.length - 1].value);
   loadCohorts(false); renderCohorts();
+  loadCand(true); renderCand();
 }
 document.getElementById('sGrain').onchange = () => {
   const hourly = grain() === 'hour';
@@ -5922,6 +6087,7 @@ document.getElementById('brandsw').onclick = e => {
   RAW = null;
   GOOG = null; GOOGKEY = null;       // Google is per-brand as well
   COH = null; COHKEY = null;         // and so is the graduation history
+  CAND = null; CANDKEY = null;       // and the candidate board with it
   for(const id of ['fAcct','fCamp']){   // another brand's accounts are not this one's
     const el = document.getElementById(id);
     if(el){ el.value = ''; el.dataset.sig = ''; }
