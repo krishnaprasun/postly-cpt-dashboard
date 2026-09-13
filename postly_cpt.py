@@ -1115,9 +1115,13 @@ def budget_slots(brand, date):
     return out
 
 
-# The hours the scheduler actually runs at. A snapshot taken at any other time rounds to
-# the nearest of these rather than inventing a fourth slot nobody reads.
-BUDGET_SLOTS = (9, 15, 23)
+# The hours the scheduler runs at -- every one of them, since 2026-09-14. It used to be
+# three (9, 15, 23), which meant a budget raised at 10am was invisible on the day-on-day
+# columns until 3pm: the KPI tile reads the roster live and moved with it, the stored
+# snapshot did not, and the two disagreeing by six hours is what "the budget is not
+# updating" actually was. The snapshot reads the CACHED roster, so an hourly run costs no
+# extra Meta call in the hour the page already refreshed.
+BUDGET_SLOTS = tuple(range(24))
 _open_cache, _open_lock = {}, threading.Lock()
 
 
@@ -1153,7 +1157,14 @@ def budget_open(brand, day):
 
 
 def _nearest_slot(hour):
-    return min(BUDGET_SLOTS, key=lambda h: abs(h - hour))
+    """The slot a reading taken at `hour` belongs to -- now the hour itself.
+
+    Kept as a function rather than inlined because the readers still ask for a slot, and
+    a day recorded under the old three-slot scheme keeps its 9/15/23 documents: this
+    only decides where NEW readings land.
+    """
+    return hour if hour in BUDGET_SLOTS else min(BUDGET_SLOTS,
+                                                 key=lambda h: abs(h - hour))
 
 
 def budget_diff(older, newer):
