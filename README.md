@@ -679,6 +679,19 @@ Configure with `CLASSPLUS_QUERIES="19695:key"` (or a `queries` list in
 `~/.anthropic/classplus_creds.json`). The older single-source `CLASSPLUS_QUERY_ID` /
 `CLASSPLUS_API_KEY` pair still works and is appended to the list.
 
+**Speakeasy's is a Mongo pipeline, not SQL.** Its product DB is MongoDB, so query `19855`
+is an aggregation in JSON and has no `bounds` CTE to read. `_cp_window()` tries the SQL
+reader first and then a Mongo one, which resolves the `$gte`/`$lt` sides of the `$match`
+back through the `$addFields` that built them (`$dateSubtract`/`$dateAdd` from today's
+IST midnight) to an offset in days — the same half-open pair the SQL path yields, closed
+the same way. Two smaller differences are absorbed at parse time: the pipeline writes the
+literal `"Unknown"` where the MySQL queries leave NULL (both land in Organic / Unknown),
+and it selects `d0_cancelled` but **not** `d0_active`. A column the query never selected
+is reported in `classplus.has` and the page **hides** it for that brand — a 0% there would
+be a claim that nobody stayed active, not a statement that it was never measured.
+Configure with `CLASSPLUS_QUERIES_SPEAKEASY="19855:key"`. Query `19856` (D0 active by
+*mandate* date, yesterday only) is a different measure and is not wired.
+
 ## Per-brand links
 
 Each brand has its own unguessable link — `/b/<value>` — because each brand is a different

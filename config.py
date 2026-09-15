@@ -351,7 +351,15 @@ BRANDS = {
             # Rs12 line -- the single reason our numbers and theirs used to disagree.
             "installs": "meta",
         },
-        "classplus": False,
+        # Query 19855, added 2026-09-15. Speakeasy's product DB is Mongo, so this is an
+        # aggregation pipeline rather than SQL; the window is read out of its $match.
+        # Like Postly's it rolls 30 days and reports per signup date, so it answers any
+        # window inside that on its own. It carries d0_cancelled but NOT d0_active —
+        # the page hides that column for this brand rather than showing 0%.
+        # Query 19856 is a different measure (D0 active by MANDATE date, yesterday
+        # only) and is deliberately not wired: it would put a mandate-cohort figure
+        # in a signup-cohort column.
+        "classplus": True,
         "logo": "brand/speakeasy.svg",
         # Their black-on-gold identity. `dark` is a deep bronze rather than the logo's
         # gold so it never reads as the amber "warn" colour in body text.

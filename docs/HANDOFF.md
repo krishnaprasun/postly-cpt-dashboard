@@ -70,7 +70,7 @@ Everything brand-specific lives in one table: `BRANDS` in `config.py`.
 | brand | Meta accounts | vendor | headline event | CPT target | Classplus |
 |---|---|---|---|---:|---|
 | Postly | `act_964790132585820`, `act_2383113182218548` | Branch | `postly_trial_started_backend` | ₹180 | yes |
-| Speakeasy | `act_874500498817876`, `act_909676394829541` | Branch | `speakeasy_trial_started` | ₹275 | no |
+| Speakeasy | `act_874500498817876`, `act_909676394829541` | Branch | `speakeasy_trial_started` | ₹275 | yes (Mongo, q19855) |
 | Funda | `act_1415034359774559`, `act_1662727118397158`, `act_826851770432701` | Branch | `trial_started_backend` | ₹180 | no |
 | PrepShots | `act_1361292779186355` | **AppsFlyer** | `prepshots_trial_started_backend` | none | no |
 | SuperPass | `act_770689872091817` | Branch | `super_trial_transaction` | none | no |

@@ -1322,6 +1322,11 @@ const pct = (n,d) => d>0 ? (100*n/d).toFixed(0)+'%' : '—';
    controls silently removed three tiles from the summary row. A checkbox that says it
    governs columns must govern columns. */
 const cpHave = () => !!(DATA && DATA.classplus && DATA.classplus.available);
+/* Whether the brand's query selects an OPTIONAL column (d0a, d0c). Speakeasy's carries
+   no d0_active. Absent is the same as unknown -- an older payload, or a window served
+   wholly from the store -- and both keep the column, as they always did. */
+const cpHas = k => { const h = DATA && DATA.classplus && DATA.classplus.has;
+                     return !h || h[k] !== false; };
 /* And whether the reader also wants those COLUMNS in the table below. */
 const cpOn = () => cpHave() && !!document.getElementById('cpCols').checked;
 
@@ -2352,12 +2357,14 @@ installs</span></div>
    })()}
    <div class="kpi" title="Both are a share of that day's MANDATES — not of signups —
      and they do NOT add to 100%: a mandate can be neither active nor cancelled on day
-     zero. Today ${pct(c.cp_d0a,m)} and ${pct(c.cp_d0c,m)} leave ${
-     m ? (100 - 100*((c.cp_d0a||0)+(c.cp_d0c||0))/m).toFixed(0) : 0}% in neither state.
+     zero. ${cpHas('d0a') && cpHas('d0c') ? `Today ${pct(c.cp_d0a,m)} and ${pct(c.cp_d0c,m)} leave ${
+     m ? (100 - 100*((c.cp_d0a||0)+(c.cp_d0c||0))/m).toFixed(0) : 0}% in neither state.`
+     : `This brand's query reports only one of the two; the other is not measured.`}
      ${CP_SRC}"><div class="k">Day-0</div>
-     <div class="v">${pct(c.cp_d0a,m)}<span class="vsub">(of ${num(m)} mandates)</span>\
+     <div class="v">${cpHas('d0a') ? pct(c.cp_d0a,m) : '—'}<span class="vsub">${
+       cpHas('d0a') ? `(of ${num(m)} mandates)` : 'not in this brand\u2019s query'}</span>\
 <span class="vlab">still active</span></div>
-     <div class="v2">${pct(c.cp_d0c,m)}<span class="vlab neg">cancelled</span></div>
+     <div class="v2">${cpHas('d0c') ? pct(c.cp_d0c,m) : '—'}<span class="vlab neg">cancelled</span></div>
      <div class="s">${p.age_min === null ? ''
        : `${DATA.brand_label || 'Product'} DB · ${p.age_min} min old`}</div></div>`;
 }
@@ -4620,7 +4627,8 @@ function colsFor(tab){
   const base = hasTrials() ? COLS[tab]
                            : COLS[tab].filter(c => c.k!=='trials' && c.k!=='cpt');
   const withNc = ncOn() ? base.concat(NC_COLS) : base;
-  const withCp = cpOn() ? withNc.concat(CP_COLS) : withNc;
+  const withCp = cpOn() ? withNc.concat(CP_COLS.filter(c =>
+    (c.k !== 'd0a' || cpHas('d0a')) && (c.k !== 'd0c' || cpHas('d0c')))) : withNc;
   const withRet = retOn() ? withCp.concat(RET_COLS) : withCp;
   return sgOn() ? withRet.concat(FUNNEL_COLS) : withRet;
 }
@@ -5778,9 +5786,11 @@ function expCols(level){
          ['ctr_pct', o=>o.ctr], ['cpm', o=>o.cpmille]);
   if(level==='accounts' || level==='campaigns') c.push(['active_adsets', o=>o.active_adsets]);
   if(level!=='ads') c.push(['active_ads', o=>o.active_ads]);
-  if(DATA && DATA.classplus && DATA.classplus.available)
-    c.push(['signups', o=>o.cp_signups], ['cost_per_signup', o=>o.cps],
-           ['d0_active_pct', o=>o.d0a], ['d0_cancel_pct', o=>o.d0c]);
+  if(DATA && DATA.classplus && DATA.classplus.available){
+    c.push(['signups', o=>o.cp_signups], ['cost_per_signup', o=>o.cps]);
+    if(cpHas('d0a')) c.push(['d0_active_pct', o=>o.d0a]);
+    if(cpHas('d0c')) c.push(['d0_cancel_pct', o=>o.d0c]);
+  }
   return c;
 }
 

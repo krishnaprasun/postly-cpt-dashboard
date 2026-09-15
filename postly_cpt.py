@@ -1908,23 +1908,107 @@ def _cp_bound(seg, today):
     return today + timedelta(days=days)
 
 
-def _cp_window(sql, today=None):
-    """The query's own IST bounds -> inclusive (since, until) dates, or None.
+def _cp_window_sql(sql, today):
+    """The `bounds` CTE of a MySQL query -> (start, end_exclusive) dates, or None.
 
     Handles both shapes the Classplus queries use: literal dates written into the SQL,
     and a rolling window expressed as UTC_TIMESTAMP() +/- INTERVAL n DAY. The bounds
-    are read positionally from the `bounds` CTE — the text up to `AS start_utc` gives
-    the start, the text between the two aliases gives the end.
+    are read positionally — the text up to `AS start_utc` gives the start, the text
+    between the two aliases gives the end.
     """
-    sql = sql or ""
     a, b = sql.find("AS start_utc"), sql.find("AS end_utc")
     if a < 0 or b < a:
         return None
-    today = today or datetime.strptime(today_ist(), "%Y-%m-%d").date()
     start, end = _cp_bound(sql[:a], today), _cp_bound(sql[a:b], today)
-    if not start or not end:
+    return (start, end) if start and end else None
+
+
+def _cp_window_mongo(text, today):
+    """The `$match` bounds of a Mongo aggregation -> (start, end_exclusive), or None.
+
+    Speakeasy's product DB is Mongo, not MySQL, so its Redash query is a pipeline in
+    JSON and there is no CTE to read. The window is instead a pair of fields built in
+    `$addFields` from today's IST midnight — `$dateSubtract`/`$dateAdd` by some days —
+    and then used as the `$gte`/`$lt` sides of a `$match`. Each side is resolved back
+    through those definitions to an offset from today; any condition that does not
+    resolve to a date (an `$eq` on a flag, say) is simply not a bound.
+    """
+    try:
+        q = json.loads(text)
+    except ValueError:
         return None
-    end -= timedelta(days=1)                       # the SQL end bound is exclusive
+    stages = q.get("aggregate") if isinstance(q, dict) else None
+    if not isinstance(stages, list):
+        return None
+
+    defs = {}
+    for st in stages:
+        if isinstance(st, dict) and isinstance(st.get("$addFields"), dict):
+            defs.update(st["$addFields"])
+
+    def days(expr, seen=()):
+        """Offset in days from today's IST midnight, or None if it is not a date."""
+        if isinstance(expr, str):
+            if expr == "$$NOW":
+                return 0
+            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", expr):
+                return (datetime.strptime(expr, "%Y-%m-%d").date() - today).days
+            if expr.startswith("$") and expr[1:] in defs and expr not in seen:
+                return days(defs[expr[1:]], seen + (expr,))
+            return None
+        if not isinstance(expr, dict) or len(expr) != 1:
+            return None
+        op, arg = next(iter(expr.items()))
+        if op in ("$dateToString", "$dateFromString"):
+            # A round-trip through a string is how the pipeline snaps NOW to midnight;
+            # the date underneath is whichever field it was made from.
+            return days(arg.get("date", arg.get("dateString")), seen) if isinstance(arg, dict) else None
+        if op in ("$dateSubtract", "$dateAdd") and isinstance(arg, dict):
+            base = days(arg.get("startDate"), seen)
+            n = arg.get("amount")
+            if base is None or arg.get("unit") != "day" or not isinstance(n, int):
+                return None
+            return base + (n if op == "$dateAdd" else -n)
+        return None
+
+    for st in stages:
+        expr = (st.get("$match") or {}).get("$expr") if isinstance(st, dict) else None
+        if not isinstance(expr, dict):
+            continue
+        conds = expr.get("$and") if isinstance(expr.get("$and"), list) else [expr]
+        lo = hi = None
+        for c in conds:
+            if not isinstance(c, dict) or len(c) != 1:
+                continue
+            op, args = next(iter(c.items()))
+            if op not in ("$gte", "$lt") or not isinstance(args, list) or len(args) != 2:
+                continue
+            d = days(args[1])
+            if d is None:
+                continue
+            if op == "$gte":
+                lo = d
+            else:
+                hi = d
+        if lo is not None and hi is not None:
+            return today + timedelta(days=lo), today + timedelta(days=hi)
+    return None
+
+
+def _cp_window(sql, today=None):
+    """The query's own IST bounds -> inclusive (since, until) dates, or None.
+
+    One reader per query language: the MySQL brands write theirs into a `bounds` CTE,
+    the Mongo brand into a `$match`. Both give a half-open [start, end) pair, which is
+    closed here so the two shapes are indistinguishable to everything downstream.
+    """
+    sql = sql or ""
+    today = today or datetime.strptime(today_ist(), "%Y-%m-%d").date()
+    win = _cp_window_sql(sql, today) or _cp_window_mongo(sql, today)
+    if not win:
+        return None
+    start, end = win
+    end -= timedelta(days=1)                       # the query's end bound is exclusive
     if end < start:
         return None
     return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
@@ -1956,7 +2040,12 @@ def _cp_parse(qr, qid=""):
                "cp_d0a": int(r.get("d0_active") or 0),
                "cp_d0c": int(r.get("d0_cancelled") or 0)}
         day = str(r.get(datecol) or "")[:10] if datecol else ""
-        name = r.get("ad_name") or "Organic / Unknown"
+        # The MySQL queries leave a missing ad name NULL; the Mongo one writes the
+        # literal "Unknown" ($ifNull). Both are organic, and must land in the same
+        # bucket or Speakeasy would show an ad called "Unknown" beside its real ads.
+        name = r.get("ad_name")
+        if not name or str(name).strip().lower() == "unknown":
+            name = "Organic / Unknown"
         slot = by_day.setdefault(day, {}).setdefault(name, _cp_blank())
         for k in CP_KEYS:
             slot[k] += rec[k]
@@ -1968,6 +2057,9 @@ def _cp_parse(qr, qid=""):
     except ValueError:
         at, age = None, None
     return {"qid": qid, "window": win, "daily": bool(datecol), "by_day": by_day,
+            # Which of the OPTIONAL columns this query selects. Speakeasy's carries no
+            # d0_active, and a column it never had must be hidden, not shown as 0%.
+            "has": {"d0a": "d0_active" in cols, "d0c": "d0_cancelled" in cols},
             "runtime": qr.get("runtime"),
             "retrieved_at": at.astimezone(IST).strftime("%H:%M IST") if at else "",
             "age_min": age}
@@ -1986,6 +2078,7 @@ def _cp_slice(src, since, until):
                 tgt[k] += rec[k]
     return {"window": [since, until], "by_ad": by_ad, "organic": organic,
             "retrieved_at": src["retrieved_at"], "age_min": src["age_min"],
+            "has": src.get("has"),
             "totals": {k: sum(v[k] for v in by_ad.values()) + organic[k]
                        for k in CP_KEYS}}
 
@@ -2101,7 +2194,7 @@ def cp_days(brand, dates):
     return out
 
 
-def _cp_fold(per_day, since, until, retrieved_at, age_min):
+def _cp_fold(per_day, since, until, retrieved_at, age_min, has=None):
     """Days of {ad_name: {cp_*}} folded into the shape build() consumes."""
     by_ad, organic = {}, _cp_blank()
     for rows in per_day.values():
@@ -2111,7 +2204,7 @@ def _cp_fold(per_day, since, until, retrieved_at, age_min):
             for k in CP_KEYS:
                 tgt[k] += int(rec.get(k) or 0)
     return {"window": [since, until], "by_ad": by_ad, "organic": organic,
-            "retrieved_at": retrieved_at, "age_min": age_min,
+            "retrieved_at": retrieved_at, "age_min": age_min, "has": has,
             "totals": {k: sum(v[k] for v in by_ad.values()) + organic[k]
                        for k in CP_KEYS}}
 
@@ -2164,9 +2257,11 @@ def classplus(since, until, brand=None):
         fresh = max(seen, key=lambda x: (x.get("age_min") is not None,
                                          -(x.get("age_min") or 0)), default=None) \
             if seen else None
+        has = ({k: any((s.get("has") or {}).get(k) for s in seen) for k in ("d0a", "d0c")}
+               if seen else None)
         data = _cp_fold(per_day, since, until,
                         (fresh or {}).get("retrieved_at", ""),
-                        (fresh or {}).get("age_min"))
+                        (fresh or {}).get("age_min"), has)
         gap = [d for d in wanted if d not in per_day]
         note = None
         if gap:
@@ -5306,6 +5401,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
             # store. On Funda that is two days live and the rest stored, and a reader
             # who does not know that cannot tell a stored day from a fresh one.
             "days": cp.get("days"),
+            # Optional columns the brand's query selects; the page hides the rest.
+            "has": cp.get("has"),
             "matched": {k: round(v, 1) for k, v in cp_matched.items()},
             "unmatched": {k: round(cp["totals"][k] - cp_matched[k], 1) for k in CP_KEYS},
         } if cp else {"available": False, "note": cp_note}),
