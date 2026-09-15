@@ -412,7 +412,10 @@ def _cohort_scan(brand, since, until):
                             test_spend[n] += sp
                             day_test_spend[d] += sp
                             first_test.setdefault(n, d)
-                        test_inst[n] += float(v.get("inst") or 0)
+                        # Meta's installs here too, so the tail and the settled days
+                        # agree on what a CPI is made of.
+                        test_inst[n] += float(v.get("minst") if v.get("minst") is not None
+                                              else (v.get("inst") or 0))
                     else:
                         if sp:
                             trial_spend[n] += sp
@@ -562,7 +565,11 @@ def _gcand_source(brand, rule, since, until):
                 if not v:
                     continue
                 spend[(asid, d)] += float(v.get("spend") or 0)
-                inst[(asid, d)] += float(v.get("inst") or 0)
+                # Meta's installs, the same number the settled path reads out of the raw
+                # store. `inst` on this fold is the vendor's, and a fold made before
+                # minst was carried is the only reason to fall back to it.
+                inst[(asid, d)] += float(v.get("minst") if v.get("minst") is not None
+                                         else (v.get("inst") or 0))
     return spend, inst, names, trial_nums, settled
 
 
@@ -3933,7 +3940,7 @@ SERIES_MAX_ROWS = int(os.environ.get("SERIES_MAX_ROWS", "20000"))
 # Bumped when the SHAPE of a folded row changes. Checked alongside dates and row_cap
 # before a stored fold is reused, for the same reason: a fold from before rows carried
 # their account gives the Matrix a grid with no links and no way to tell why.
-SERIES_SHAPE = 6
+SERIES_SHAPE = 7        # 7: per-day `minst`, Meta's own installs, beside the vendor's
 # The levels a budget belongs to. A script is an ad name and a stage is a bucket; neither
 # is a thing Meta holds a budget against.
 BUDGET_DIMS = {"adset": "adsets", "campaign": "campaigns", "account": "accounts"}
@@ -4030,8 +4037,13 @@ def _dim_day(meta_rows, branch_day, keys, dim, testing_re, acct_names):
                                "spend": 0.0, "acct": acct, "acct_spend": 0.0,
                                "ad": None, "ad_spend": 0.0,
                                "imp": 0.0, "clk": 0.0, "isp": 0.0, "impn": 0,
-                               "vv": 0.0, "tp": 0.0, "vimp": 0.0,
+                               "vv": 0.0, "tp": 0.0, "vimp": 0.0, "minst": 0.0,
                                **dict(blank)}
+            # Meta's own installs, kept beside the vendor's `inst`. They are a row-level
+            # field on the insights, so unlike Branch they need no name split. The
+            # graduation guardrail is judged on these, and reading the vendor's for the
+            # unsettled tail put every provisional day 10-20% high on CPI.
+            e["minst"] += _num(r.get("minst"))
             if sp > e["acct_spend"]:
                 e["acct"], e["acct_spend"] = acct, sp
             # The biggest-spending ad behind this row, so a Script row can open the
@@ -4261,6 +4273,8 @@ def series(brand, since, until, dim="script", force=False, store_only=False):
                 row["total_" + x] += e[x]
             rec = row["days"][day] = {"spend": round(e["spend"], 2),
                                       **{x: round(e[x], 2) for x in keys}}
+            if e.get("minst"):
+                rec["minst"] = round(e["minst"], 2)
             if e.get("impn"):
                 rec["imp"] = e["imp"]
                 rec["clk"] = e["clk"]

@@ -873,13 +873,20 @@ def api_hour_snapshot():
     # list to have been WRITTEN -- a view that only computes when someone opens it can
     # never say how long a candidate has been waiting.
     yday = (datetime.strptime(today, "%Y-%m-%d") - timedelta(days=1)).strftime("%Y-%m-%d")
+    # And the day that has just SETTLED, re-scored from the raw store. Yesterday's list
+    # is provisional -- its installs are still arriving -- and a call made at the Rs12
+    # line on provisional installs can flip once they land. Re-scoring it three days on
+    # replaces the provisional artifact with the final one, in place.
+    settled = (datetime.strptime(today, "%Y-%m-%d")
+               - timedelta(days=H.SETTLE_DAYS)).strftime("%Y-%m-%d")
     for b in list(C.BRANDS):
         if not C.brand(b).get("graduation_rule"):
             continue
-        try:
-            P.grad_candidates(b, yday)
-        except Exception:
-            traceback.print_exc()
+        for d in (yday, settled):
+            try:
+                P.grad_candidates(b, d)
+            except Exception:
+                traceback.print_exc()
     # A brand whose payload is already fresh is skipped, so a second pass later in the
     # hour costs nothing for the brands that succeeded and retries only the ones Meta
     # refused. Without it a throttled hour meant no refresh at all until the next one.
