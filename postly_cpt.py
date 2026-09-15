@@ -1875,7 +1875,15 @@ def branch_trials_by_ad(since, until, B):
 #    not the same question, which is why they stay in separate columns.
 CP_TTL = int(os.environ.get("CP_TTL", "600"))            # insist the result is this fresh
 CP_POLL_BUDGET = int(os.environ.get("CP_POLL_BUDGET", "20"))
-CP_KEYS = ("cp_signups", "cp_mandates", "cp_d0a", "cp_d0c")
+# Two cohorts, kept apart by name. cp_* are BY SIGNUP DATE: the signups a day produced
+# and what those people went on to do. md_* are BY MANDATE DATE: the mandates a day
+# produced and how many were still active at day zero. Speakeasy reports the second
+# from its own query (19856), because its signup query cannot see d0_active. A ratio
+# is only honest when numerator and denominator come from the same cohort, so the
+# page divides md_d0a by md_mandates and never by cp_mandates.
+CP_KEYS = ("cp_signups", "cp_mandates", "cp_d0a", "cp_d0c", "md_mandates", "md_d0a")
+CP_SIGNUP_KEYS = ("cp_signups", "cp_mandates", "cp_d0a", "cp_d0c")
+CP_MANDATE_KEYS = ("md_mandates", "md_d0a")
 # Retention, for a brand whose trial feed carries it (PrepShots, from the product DB).
 # Counts, not rates -- see redash.RETENTION for why -- so they roll up like any other
 # number and the percentage is divided out at the level being displayed.
@@ -2016,7 +2024,7 @@ def _cp_window(sql, today=None):
 
 # Any of these, if the query selects one, turns the result from a single block into a
 # per-day table — which is what lets one query answer every window the page offers.
-CP_DATE_COLS = ("signup_date", "signup_date_ist", "date", "day", "dt")
+CP_DATE_COLS = ("signup_date", "signup_date_ist", "mandate_date", "date", "day", "dt")
 
 
 def _cp_blank():
@@ -2025,9 +2033,18 @@ def _cp_blank():
 
 def _cp_parse(qr, qid=""):
     cols = {c["name"] for c in qr["data"]["columns"]}
-    need = {"ad_name", "signups", "trial_mandates"}
-    if not need <= cols:
-        raise RuntimeError(f"Classplus query {qid} is missing {sorted(need - cols)}")
+    # Which cohort this query reports decides which keys it OWNS -- the ones it is
+    # allowed to write when its days are merged with another query's over the same
+    # dates. A signup query never touches md_*, a mandate query never touches cp_*.
+    if {"ad_name", "signups", "trial_mandates"} <= cols:
+        owns = CP_SIGNUP_KEYS
+    elif {"ad_name", "mandates", "d0_active", "mandate_date"} <= cols:
+        owns = CP_MANDATE_KEYS
+    else:
+        raise RuntimeError(f"Classplus query {qid} is neither a signup query "
+                           f"(ad_name, signups, trial_mandates) nor a mandate-date one "
+                           f"(ad_name, mandates, d0_active, mandate_date); it has "
+                           f"{sorted(cols)}")
     win = _cp_window(qr.get("query"))
     if not win:
         raise RuntimeError(f"Classplus query {qid} has no readable date bounds")
@@ -2035,10 +2052,15 @@ def _cp_parse(qr, qid=""):
 
     by_day = {}
     for r in qr["data"]["rows"]:
-        rec = {"cp_signups": int(r.get("signups") or 0),
-               "cp_mandates": int(r.get("trial_mandates") or 0),
-               "cp_d0a": int(r.get("d0_active") or 0),
-               "cp_d0c": int(r.get("d0_cancelled") or 0)}
+        rec = _cp_blank()
+        if owns is CP_SIGNUP_KEYS:
+            rec.update(cp_signups=int(r.get("signups") or 0),
+                       cp_mandates=int(r.get("trial_mandates") or 0),
+                       cp_d0a=int(r.get("d0_active") or 0),
+                       cp_d0c=int(r.get("d0_cancelled") or 0))
+        else:
+            rec.update(md_mandates=int(r.get("mandates") or 0),
+                       md_d0a=int(r.get("d0_active") or 0))
         day = str(r.get(datecol) or "")[:10] if datecol else ""
         # The MySQL queries leave a missing ad name NULL; the Mongo one writes the
         # literal "Unknown" ($ifNull). Both are organic, and must land in the same
@@ -2059,7 +2081,10 @@ def _cp_parse(qr, qid=""):
     return {"qid": qid, "window": win, "daily": bool(datecol), "by_day": by_day,
             # Which of the OPTIONAL columns this query selects. Speakeasy's carries no
             # d0_active, and a column it never had must be hidden, not shown as 0%.
-            "has": {"d0a": "d0_active" in cols, "d0c": "d0_cancelled" in cols},
+            "has": {"d0a": "d0_active" in cols, "d0c": "d0_cancelled" in cols,
+                    # d0a here is by MANDATE date; the page labels it so.
+                    "md": owns is CP_MANDATE_KEYS},
+            "owns": list(owns),
             "runtime": qr.get("runtime"),
             "retrieved_at": at.astimezone(IST).strftime("%H:%M IST") if at else "",
             "age_min": age}
@@ -2172,12 +2197,25 @@ def cp_store(brand, src):
         _cp_stored.add(stamp)
         if len(_cp_stored) > 500:
             _cp_stored.clear()
+    owns = tuple(src.get("owns") or CP_SIGNUP_KEYS)
+    days = [d for d in (src.get("by_day") or {}) if d]
+    # Merge, not overwrite. Two queries can report the same day -- Speakeasy's signups
+    # by signup date and its D0 by mandate date -- and each may only rewrite the keys
+    # it owns, or the second to run would erase the first's cohort from the day.
+    have = H.fetch_raw(cp_ns(brand), days) or {}
     n = 0
-    for day, rows in (src.get("by_day") or {}).items():
-        if not day:
-            continue
-        if H.put_agg(cp_ns(brand), day, {"date": day, "qid": src["qid"],
-                                         "at": now_ist_str(), "ads": rows}):
+    for day in days:
+        rows = src["by_day"][day]
+        merged = dict(((have.get(day) or {}).get("ads")) or {})
+        for name, rec in rows.items():
+            cur = dict(merged.get(name) or {})
+            cur.update({k: rec.get(k, 0) for k in owns})
+            merged[name] = cur
+        qids = sorted(set((((have.get(day) or {}).get("qids")) or
+                           ([(have.get(day) or {}).get("qid")] if (have.get(day) or {}).get("qid") else []))
+                          + [src["qid"]]))
+        if H.put_agg(cp_ns(brand), day, {"date": day, "qid": src["qid"], "qids": qids,
+                                         "at": now_ist_str(), "ads": merged}):
             n += 1
     return n
 
@@ -2225,7 +2263,8 @@ def classplus(since, until, brand=None):
     ns = cp_ns(brand) if brand else None
 
     wanted = date_range(since, until)
-    per_day, seen, dead, live_days = {}, [], 0, 0
+    per_day, seen, dead = {}, [], 0
+    live_touched = set()
     for qid, key in queries:
         src, ok = _part(ns or "classplus", f"q{qid}",
                         lambda q=qid, k=key, m=max_age: classplus_fetch(q, k, m), CP_TTL)
@@ -2241,24 +2280,37 @@ def classplus(since, until, brand=None):
             continue
         if brand:
             cp_store(brand, src)
-        for d, rows in (src["by_day"] or {}).items():
-            if since <= d <= until and d not in per_day:
-                per_day[d] = rows
-                live_days += 1
 
-    missing = [d for d in wanted if d not in per_day]
-    from_store = 0
-    if missing and brand:
-        for d, rows in cp_days(brand, missing).items():
-            per_day[d] = rows
-            from_store += 1
+    # The store is the BASE and the live results are laid over it, key by key. It used
+    # to be the other way round -- live first, the store only for days nothing live
+    # covered -- which broke the moment a brand had two queries on different cohorts:
+    # a day Speakeasy's signup query covered live was "not missing", so its mandate-date
+    # D0 (a different query, yesterday only) was never read back for that day at all.
+    if brand:
+        for d, rows in cp_days(brand, wanted).items():
+            per_day[d] = {nm: dict(rec) for nm, rec in rows.items()}
+    for src in seen:
+        if not src["daily"]:
+            continue
+        owns = tuple(src.get("owns") or CP_SIGNUP_KEYS)
+        for d, rows in (src["by_day"] or {}).items():
+            if not (since <= d <= until):
+                continue
+            live_touched.add(d)
+            day = per_day.setdefault(d, {})
+            for nm, rec in rows.items():
+                cur = day.setdefault(nm, {})
+                for k in owns:
+                    cur[k] = rec.get(k, 0)
+    live_days = len(live_touched)
+    from_store = sum(1 for d in per_day if d not in live_touched)
 
     if per_day:
         fresh = max(seen, key=lambda x: (x.get("age_min") is not None,
                                          -(x.get("age_min") or 0)), default=None) \
             if seen else None
-        has = ({k: any((s.get("has") or {}).get(k) for s in seen) for k in ("d0a", "d0c")}
-               if seen else None)
+        has = ({k: any((s.get("has") or {}).get(k) for s in seen)
+                for k in ("d0a", "d0c", "md")} if seen else None)
         data = _cp_fold(per_day, since, until,
                         (fresh or {}).get("retrieved_at", ""),
                         (fresh or {}).get("age_min"), has)
