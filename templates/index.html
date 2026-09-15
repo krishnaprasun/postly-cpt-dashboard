@@ -2374,10 +2374,9 @@ installs</span></div>
        const mm = L ? L.md_mandates : c.md_mandates, ma = L ? L.md_d0a : c.md_d0a;
        return `<div class="v">${cpMd() ? pct(ma, mm)
                      : cpHas('d0a') ? pct(c.cp_d0a,m) : '—'}<span class="vsub">${
-         cpMd() ? (L ? `(of ${num(mm)} mandates on ${dayLbl(L.date)})`
-                     : `(of ${num(mm)} mandates, by mandate date)`)
-         : cpHas('d0a') ? `(of ${num(m)} mandates)` : 'not in this brand\u2019s query'}</span>\
-<span class="vlab">still active${L ? ' · ' + dayLbl(L.date) : ''}</span></div>`;
+         cpMd() || cpHas('d0a') ? `(of ${num(cpMd() ? mm : m)} mandates)`
+         : 'not in this brand\u2019s query'}</span>\
+<span class="vlab">still active${L ? ' · ' + shortDay(L.date) : ''}</span></div>`;
      })()}
      <div class="v2">${cpHas('d0c') ? pct(c.cp_d0c,m) : '—'}<span class="vlab neg">cancelled</span></div>
      <div class="s">${p.age_min === null ? ''
@@ -2820,6 +2819,11 @@ function renderCohorts(){
 /* "20 Aug" reads faster than "2026-08-20" in a column of forty dates, and the year is
    already in the caption. */
 const PROV = '<span class="pill prov">provisional</span>';
+
+/* "14 Sep" -- for a label that has room for one word and a number, not a weekday. */
+function shortDay(d){
+  return new Date(d + 'T00:00:00').toLocaleDateString('en-GB', {day:'numeric', month:'short'});
+}
 
 function dayLbl(d){
   const dt = new Date(d + 'T00:00:00');
