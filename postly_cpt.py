@@ -2324,6 +2324,23 @@ def classplus(since, until, brand=None):
                     f"({span}) — those days are not in the query's range and were never "
                     f"stored, so the columns count the rest of the window only.")
         data["days"] = {"live": live_days, "stored": from_store, "missing": len(gap)}
+        # D0 by mandate date is only ever known for a FINISHED day -- the query reports
+        # yesterday, and today's mandates have no day-zero outcome yet. So a window that
+        # ends today has none, and "--" there reads as broken rather than as not-yet. Hand
+        # the page the latest day that does have it, and let it say which day that is.
+        if brand and (has or {}).get("md") and not data["totals"].get("md_mandates"):
+            back = date_range((datetime.strptime(since, "%Y-%m-%d").date()
+                               - timedelta(days=7)).strftime("%Y-%m-%d"),
+                              (datetime.strptime(since, "%Y-%m-%d").date()
+                               - timedelta(days=1)).strftime("%Y-%m-%d"))
+            prior = cp_days(brand, back)
+            for d in sorted(prior, reverse=True):
+                mm = sum(int(v.get("md_mandates") or 0) for v in prior[d].values())
+                if mm:
+                    data["md_latest"] = {
+                        "date": d, "md_mandates": mm,
+                        "md_d0a": sum(int(v.get("md_d0a") or 0) for v in prior[d].values())}
+                    break
         return data, note
 
     if not seen:
@@ -5455,6 +5472,9 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
             "days": cp.get("days"),
             # Optional columns the brand's query selects; the page hides the rest.
             "has": cp.get("has"),
+            # The most recent finished day with mandate-date D0, for a window that has
+            # none of its own (Today). Absent otherwise.
+            "md_latest": cp.get("md_latest"),
             "matched": {k: round(v, 1) for k, v in cp_matched.items()},
             "unmatched": {k: round(cp["totals"][k] - cp_matched[k], 1) for k in CP_KEYS},
         } if cp else {"available": False, "note": cp_note}),

@@ -2359,20 +2359,26 @@ installs</span></div>
        num(su)} &rarr; ${num(Math.round(trM))})</span><span class="vlab">signup \
 &rarr; trial</span></div></div>`;
    })()}
-   <div class="kpi" title="Both are a share of that day's MANDATES — not of signups —
-     and they do NOT add to 100%: a mandate can be neither active nor cancelled on day
-     zero. ${cpMd() ? `On this brand the two are different cohorts: active is a share of the
-     mandates TAKEN that day (by mandate date), cancelled a share of the mandates from that
-     day's SIGNUPS. They are not two halves of one number.`
+   <div class="kpi" title="${[
+     `Both are a share of that day's MANDATES — not of signups — and they do NOT add to 100%: a mandate can be neither active nor cancelled on day zero.`,
+     cpMd() ? `On this brand the two are different cohorts: active is a share of the mandates TAKEN that day (by mandate date, known only once the day is over — so Today shows the latest finished day); cancelled is a share of the mandates from that day's SIGNUPS. They are not two halves of one number.`
      : cpHas('d0a') && cpHas('d0c') ? `Today ${pct(c.cp_d0a,m)} and ${pct(c.cp_d0c,m)} leave ${
-     m ? (100 - 100*((c.cp_d0a||0)+(c.cp_d0c||0))/m).toFixed(0) : 0}% in neither state.`
-     : `This brand's query reports only one of the two; the other is not measured.`}
-     ${CP_SRC}"><div class="k">Day-0</div>
-     <div class="v">${cpMd() ? pct(c.md_d0a, c.md_mandates)
+       m ? (100 - 100*((c.cp_d0a||0)+(c.cp_d0c||0))/m).toFixed(0) : 0}% in neither state.`
+     : `This brand's query reports only one of the two; the other is not measured.`,
+     CP_SRC].join(' ')}"><div class="k">Day-0</div>
+     ${(() => {
+       /* By mandate date, D0 is only known for a FINISHED day. A window that ends today
+          has no such row yet, so show the latest day that does and name it -- "of 0
+          mandates" read as broken when it meant not-yet. */
+       const L = cpMd() && !(c.md_mandates > 0) && p.md_latest ? p.md_latest : null;
+       const mm = L ? L.md_mandates : c.md_mandates, ma = L ? L.md_d0a : c.md_d0a;
+       return `<div class="v">${cpMd() ? pct(ma, mm)
                      : cpHas('d0a') ? pct(c.cp_d0a,m) : '—'}<span class="vsub">${
-       cpMd() ? `(of ${num(c.md_mandates)} mandates, by mandate date)`
-       : cpHas('d0a') ? `(of ${num(m)} mandates)` : 'not in this brand\u2019s query'}</span>\
-<span class="vlab">still active</span></div>
+         cpMd() ? (L ? `(of ${num(mm)} mandates on ${dayLbl(L.date)})`
+                     : `(of ${num(mm)} mandates, by mandate date)`)
+         : cpHas('d0a') ? `(of ${num(m)} mandates)` : 'not in this brand\u2019s query'}</span>\
+<span class="vlab">still active${L ? ' · ' + dayLbl(L.date) : ''}</span></div>`;
+     })()}
      <div class="v2">${cpHas('d0c') ? pct(c.cp_d0c,m) : '—'}<span class="vlab neg">cancelled</span></div>
      <div class="s">${p.age_min === null ? ''
        : `${DATA.brand_label || 'Product'} DB · ${p.age_min} min old`}</div></div>`;
