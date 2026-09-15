@@ -360,6 +360,11 @@ BRANDS = {
         # only) and is deliberately not wired: it would put a mandate-cohort figure
         # in a signup-cohort column.
         "classplus": True,
+        # 19855 runs ~58s (measured 2026-09-15) -- not Funda's 39 minutes, but a Mongo
+        # aggregation over 617k signups is not something six page loads an hour should
+        # each restart. An hour matches the job that already refreshes the brand, and the
+        # day store means nothing is lost between runs.
+        "cp_max_age": 3600,
         "logo": "brand/speakeasy.svg",
         # Their black-on-gold identity. `dark` is a deep bronze rather than the logo's
         # gold so it never reads as the amber "warn" colour in body text.
