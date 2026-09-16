@@ -3212,7 +3212,10 @@ def google_window(brand, since, until, force=False):
     across one, so clicking Google is a read rather than a rebuild.
     """
     key = (brand, since, until)
-    skey = _gser_key(since, until, "window")
+    # "window2": the payload gained budgets. A stored "window" from before that would be
+    # served for up to GSER_MAX_AGE and render the new tile as "Google did not answer",
+    # which it never was asked. A new key means a rebuild the first time, then the store.
+    skey = _gser_key(since, until, "window2")
     if not force:
         hit, age = _gcache_get(_gwin_cache, key, GSERIES_TTL)
         if hit is not None:
@@ -3286,6 +3289,9 @@ def _google_window_build(brand, since, until, force=False):
     spend_days, spend_err = 0, None
     conv_days, conv_err = set(), None
     asset_groups, asset_err = set(), None
+    # Budgets are current state, keyed by campaign name (the only key Branch shares).
+    # `bud_rows` is what Google answered; empty means unknown, never "no budget".
+    bud_rows, bud_err = [], None
     cust, how = ([], "no credentials")
     if GA.available():
         cust, how = google_customers(brand)
@@ -3331,10 +3337,20 @@ def _google_window_build(brand, since, until, force=False):
                     c[k] += a[k]
                 asset_groups.add((camp, group))
         asset_err = GA.last_error()
+        # ---- and what each campaign is budgeted to spend today ------------------
+        # The Google half of the Budget/day tile. Current state, like the assets: Google
+        # reports a budget as it is now and never as it stood on a past day. One cheap
+        # call per customer (a few dozen rows), so it rides on the window rather than
+        # being a fetch of its own -- which also keeps the tile and the table from
+        # disagreeing about which campaigns are live.
+        for cid in cust:
+            bud_rows.extend(GA.budgets(cid))
+        bud_err = GA.last_error()
     else:
         spend_err = GA.last_error() or "no Google Ads credentials on this instance"
         conv_err = spend_err
         asset_err = spend_err
+        bud_err = spend_err
 
     out_rows = sorted(rows.values(),
                       key=lambda r: (-r["spend"], -r.get(ev_keys[0], 0)))
@@ -3360,6 +3376,41 @@ def _google_window_build(brand, since, until, force=False):
     tot["cre"] = sum(_cre) if _cre else None
     for k in ("cre_off", "best", "good", "low"):
         tot[k] = sum(r[k] for r in out_rows)
+    # ---- budget: per campaign on the rows, and one total for the tile ---------------
+    # The tile counts only LIVE campaigns, the same population Meta's Budget/day tile
+    # counts: a paused campaign's daily budget is not money that will go out today.
+    # A shared budget sits on several campaigns; it is added to the total once, on the
+    # first live campaign that carries it, and each row still shows the full figure it
+    # is allowed to draw on -- which is the number a person sees in Google's own UI.
+    bud_by_name = {}
+    for b in bud_rows:
+        bud_by_name.setdefault(b["campaign"], b)
+    for name, c in camps.items():
+        b = bud_by_name.get(name)
+        c["budget"] = b["budget"] if b else None
+        c["lifetime"] = b["lifetime"] if b else None
+        c["status"] = b["status"] if b else None
+        c["live"] = bool(b and b["live"])
+        c["budget_shared"] = bool(b and b["shared"])
+    live_total, all_total = 0.0, 0.0
+    seen_live, seen_all = set(), set()
+    live_n = 0
+    for b in bud_rows:
+        if b["budget"] is None:
+            continue
+        key = b["budget_id"] or ("c:" + b["campaign_id"])
+        if key not in seen_all:
+            all_total += b["budget"]
+            seen_all.add(key)
+        if b["live"]:
+            live_n += 1
+            if key not in seen_live:
+                live_total += b["budget"]
+                seen_live.add(key)
+    tot["budget"] = round(live_total, 2) if bud_rows else None
+    tot["budget_all"] = round(all_total, 2) if bud_rows else None
+    tot["live_campaigns"] = live_n
+    tot["campaigns_all"] = len(bud_rows)
     return {
         "brand": brand, "since": since, "until": until,
         "events": list(B["events"]), "event_labels": B["labels"],
@@ -3382,6 +3433,11 @@ def _google_window_build(brand, since, until, force=False):
         "asset_groups": len(asset_groups),
         "assets_ok": bool(asset_groups),
         "asset_error": None if asset_groups else asset_err,
+        # Budget is current state with its own ok/error pair, so a budget read that
+        # fails can neither zero the tile nor take spend down with it.
+        "budget_ok": bool(bud_rows),
+        "budget_error": None if bud_rows else bud_err,
+        "budget_as_of": now_ist_str(),
         "trials_error": err,
         "stored_days": len(stored),
         "generated_at": now_ist_str(),

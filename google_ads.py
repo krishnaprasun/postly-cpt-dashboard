@@ -440,6 +440,74 @@ def assets_by_group(customer_id, login=None):
     return out
 
 
+GAQL_BUDGETS = """
+SELECT campaign.id, campaign.name, campaign.status, campaign.serving_status,
+       campaign_budget.id, campaign_budget.amount_micros,
+       campaign_budget.total_amount_micros, campaign_budget.period,
+       campaign_budget.explicitly_shared
+FROM campaign
+WHERE campaign.status != 'REMOVED'
+"""
+
+# A campaign that is switched on AND actually delivering. `status` alone is not enough:
+# a campaign whose end date has passed, or one Google has suspended, still reads ENABLED
+# while spending nothing -- and its budget is not money that will go out today.
+_LIVE_SERVING = ("SERVING",)
+
+
+def budgets(customer_id, login=None):
+    """[{campaign_id, campaign, status, serving, live, budget, lifetime, budget_id,
+    shared}] -- every campaign's budget AS IT STANDS NOW, in the account currency.
+
+    The Google half of the Budget/day tile. Like Meta, Google reports a budget only as it
+    is right now, never as it stood on a past day, so this is current state and the tile
+    says so. Money arrives in micros; `budget` is the per-day figure (or None when the
+    budget is a lifetime one, which App campaigns do not use) and `lifetime` the total
+    for a custom-period budget.
+
+    **Shared budgets are carried, not resolved.** A budget marked `explicitly_shared` sits
+    on several campaigns at once, so summing per campaign would count it once per
+    campaign. `budget_id` is returned so the caller can count each shared budget once.
+    """
+    global _last_error
+    c = creds()
+    if not c:
+        _last_error = "no Google Ads credentials"
+        return []
+    cid = str(customer_id).replace("-", "")
+    try:
+        j = _post(f"/customers/{cid}/googleAds:searchStream", {"query": GAQL_BUDGETS},
+                  c, login=login)
+    except urllib.error.HTTPError as e:
+        _last_error = _err(e)
+        return []
+    except Exception as e:
+        _last_error = f"Google Ads: {str(e)[:200]}"
+        return []
+    out = []
+    for chunk in (j if isinstance(j, list) else [j]):
+        for row in (chunk.get("results") or []):
+            cp = row.get("campaign") or {}
+            b = row.get("campaignBudget") or {}
+            period = b.get("period") or "DAILY"
+            daily = int(b.get("amountMicros") or 0) / 1_000_000
+            total = int(b.get("totalAmountMicros") or 0) / 1_000_000
+            status = cp.get("status") or ""
+            serving = cp.get("servingStatus") or ""
+            out.append({
+                "customer_id": cid,
+                "campaign_id": str(cp.get("id") or ""),
+                "campaign": cp.get("name") or "",
+                "status": status, "serving": serving,
+                "live": status == "ENABLED" and serving in _LIVE_SERVING,
+                "budget": daily if period == "DAILY" else None,
+                "lifetime": total if period != "DAILY" else None,
+                "budget_id": str(b.get("id") or ""),
+                "shared": bool(b.get("explicitlyShared"))})
+    _last_error = None
+    return out
+
+
 def status():
     """A one-shot health read for the page and for the ops endpoint."""
     c = creds()

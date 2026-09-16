@@ -2069,6 +2069,7 @@ function kpis(){
        <div class="kpi"><div class="k">Spend${srcBtn('google')}</div>
          <div class="v">${sp ? rs(sp) : dash}</div>
          <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
+       ${googBudgetTile(gt, waiting)}
        <div class="kpi"><div class="k">Trials<span class="src branch">${ATTRIB()}</span>${srcBtn('google')}</div>
          <div class="v">${(waiting || tr === null) ? dash : num(tr)}</div>
          <div class="s">${waiting ? '<span class="spin"></span>loading Google'
@@ -2095,6 +2096,7 @@ function kpis(){
      <div class="kpi"><div class="k">Spend${srcBtn('both')}</div>
        <div class="v">${sp ? rs(sp) : dash}</div>
        <div class="s">${sp ? `${rs(sp/days)}/day avg over ${days} days` : 'no spend read'}</div></div>
+     ${blendBudgetTile(mc, gt, waiting)}
      <div class="kpi"><div class="k">Trials${srcBtn('both')}</div>
        <div class="v">${(waiting || tr === null) ? dash : num(tr)}</div>
        <div class="s">${waiting ? '<span class="spin"></span>loading Google'
@@ -2271,6 +2273,42 @@ they are running right now is unknown.'
    ad set listing. Two numbers in one line, one a minute old and one possibly half an hour
    old, must not look equally live. Silent under two minutes, because saying "as of now"
    on every render is noise. */
+/* Google's Budget/day, on the Google channel. The same rule as Meta's tile: live
+   campaigns only, because a paused campaign's budget is not money going out today. And
+   the same rule as every other Google figure: no answer is a dash with the reason under
+   it, never a confident Rs0. Google also reads a budget only as it stands NOW, so the
+   tile is stamped with when it was read rather than pretending to cover the window. */
+function googBudgetTile(gt, waiting){
+  const dash = '<span class="dimtxt">—</span>';
+  const known = gt && gt.budgetKnown;
+  const paused = known ? gt.campaignsAll - gt.liveCampaigns : 0;
+  return `<div class="kpi"><div class="k">Budget/day<span class="src gads">Google Ads</span></div>
+     <div class="v">${known ? rs(gt.budget) : dash}</div>
+     <div class="s">${waiting ? '<span class="spin"></span>loading Google'
+       : !known ? `unavailable — ${(gt && gt.bwhy) || 'Google did not answer'}`
+       : `${num(gt.liveCampaigns)} live campaign${gt.liveCampaigns === 1 ? '' : 's'}${
+           paused > 0 ? ` · ${num(paused)} paused (${rs(gt.budgetAll - gt.budget)} not counted)` : ''
+         } across ${num(gt.customers)} account${gt.customers === 1 ? '' : 's'}${
+           gt.budgetAsOf ? ` · as of ${gt.budgetAsOf}` : ''}`}</div></div>`;
+}
+
+/* Blended: the two budgets added, with each half named under the sum. Either half
+   missing makes the sum unknown -- a "blended" budget that quietly dropped Google's
+   would read as a real, smaller number, which is the one thing this switch must not do.
+   Meta's half is the LIVE figure the Meta tile shows, for the same reason it shows it. */
+function blendBudgetTile(mc, gt, waiting){
+  const dash = '<span class="dimtxt">—</span>';
+  const mKnown = !!DATA.budgets_known;
+  const gKnown = !!(gt && gt.budgetKnown);
+  const both = mKnown && gKnown;
+  return `<div class="kpi"><div class="k">Budget/day</div>
+     <div class="v">${both ? rs((mc.budget || 0) + gt.budget) : dash}</div>
+     <div class="s">${waiting ? '<span class="spin"></span>loading Google'
+       : `Meta ${mKnown ? rs(mc.budget || 0) : '—'} · Google ${gKnown ? rs(gt.budget) : '—'}${
+           both ? '' : !mKnown ? ' · Meta budget unavailable'
+                : ` · Google unavailable — ${(gt && gt.bwhy) || 'no answer'}`}`}</div></div>`;
+}
+
 function budgetAge(){
   const a = pullAge('budget_age_sec');
   if(a === null || a < 120) return '';
@@ -3000,12 +3038,20 @@ function googTotals(){
   const chG = RAW && RAW.channels && RAW.channels[ev] && RAW.channels[ev].google;
   const gUp = (proOn() && pr && typeof pr.google === 'number' && chG > 0)
     ? pr.google / chG : 1;
+  /* Budget is a third reading with its own ok flag. Google not answering the budget
+     query is not a Rs0 budget, so it stays null and the tile says why. */
+  const bKnown = !!GOOG.budget_ok && t.budget !== null && t.budget !== undefined;
   return {spend: t.spend || 0, ok: !!GOOG.spend_ok,
           trials: known ? (t[ev] || 0) * gUp : null,
           inst: known ? (t.inst || 0) : null,
           gconv: gKnown ? (t.gconv || 0) : null,
           gconvKnown: gKnown, gwhy: GOOG.conv_error || '',
           convEvent: GOOG.conv_event || '',
+          budget: bKnown ? t.budget : null, budgetKnown: bKnown,
+          budgetAll: bKnown ? t.budget_all : null,
+          liveCampaigns: t.live_campaigns || 0, campaignsAll: t.campaigns_all || 0,
+          budgetAsOf: GOOG.budget_as_of || '', bwhy: GOOG.budget_error || '',
+          customers: (GOOG.customers || []).length,
           trialsKnown: known, why: GOOG.trials_error || ''};
 }
 const googKey = () => `${BRAND}|${RANGE}|${CUSTOM ? CUSTOM.since+CUSTOM.until : ''}`;
@@ -3115,20 +3161,30 @@ function renderGoogle(){
   document.getElementById('gcount').textContent =
     `${GOOG.campaigns.length} campaign(s) · ${GOOG.ad_groups.length} ad group(s)`;
   const nameCols = byCamp ? 1 : 2;
+  /* Budget is a CAMPAIGN thing on Google -- an ad group has none -- so the column only
+     exists in the campaign view. Current state, like the creatives column, and labelled
+     as such: it is what the campaign may spend today, not what it spent in the window. */
+  const budTh = byCamp
+    ? `<th title="Daily budget as it stands right now — NOT a figure for the selected window. A paused campaign's budget is shown greyed and is not in the total.">Budget/day</th>`
+    : '';
+  const budTd = o => !byCamp ? ''
+    : `<td class="${o.live ? '' : 'dimtxt'}" title="${o.status ? o.status.toLowerCase()
+        + (o.live ? ', serving' : ', not serving') + (o.budget_shared ? ' · shared budget' : '') : 'no budget read'}">${
+        (o.budget === null || o.budget === undefined) ? '<span class="dimtxt">—</span>' : rs(o.budget)}</td>`;
   tbl.querySelector('thead').innerHTML =
-    `<tr class="grp"><th colspan="${nameCols}"></th><th>Cost</th>
+    `<tr class="grp"><th colspan="${nameCols}"></th><th colspan="${byCamp ? 2 : 1}">Cost</th>
       <th class="gA gsep" colspan="4">${ATTRIB()} attribution</th>
       <th class="gsep" colspan="2">Google attribution</th>
       <th class="gsep">Running now</th></tr>` +
     '<tr>' + `<th class="l">Campaign</th>` + (byCamp ? '' : `<th class="l">Ad group</th>`) +
-    `<th>Spend</th><th class="gsep">Trials</th><th>CPT</th><th>Installs</th><th>CPI</th>
+    `<th>Spend</th>${budTh}<th class="gsep">Trials</th><th>CPT</th><th>Installs</th><th>CPI</th>
      <th class="gsep">Conv.</th><th>CPT</th>
      <th class="gsep" title="Video and image assets serving right now — NOT a figure for the selected window">Creatives</th></tr>`;
   const money = v => v ? rs(v) : '<span class="dimtxt">—</span>';
   tbl.querySelector('tbody').innerHTML = r.map(o => `<tr>
       <td class="name" title="${(o.campaign||'').replace(/"/g,'&quot;')}">${o.campaign}</td>
       ${byCamp ? '' : `<td class="sub" title="${(o.ad_group||'').replace(/"/g,'&quot;')}">${o.ad_group}</td>`}
-      <td>${money(o.spend)}</td>
+      <td>${money(o.spend)}</td>${budTd(o)}
       <td class="gsep">${num(o.trials)}</td>
       <td class="${o.gcpt===null?'':cls(o.gcpt)}">${o.gcpt===null?'<span class="dimtxt">—</span>':rs(o.gcpt)}</td>
       <td>${num(o.inst||0)}</td>
@@ -3136,7 +3192,7 @@ function renderGoogle(){
       <td class="gsep">${o.conv===null?'<span class="dimtxt">—</span>':num(Math.round(o.conv))}</td>
       <td>${o.acpt===null?'<span class="dimtxt">—</span>':rs(o.acpt)}</td>
       <td class="gsep"${creTitle(o)}>${o.cre===null?'<span class="dimtxt">—</span>':num(o.cre)}</td></tr>`).join('')
-    || `<tr><td class="l" colspan="10">No rows match.</td></tr>`;
+    || `<tr><td class="l" colspan="${byCamp ? 11 : 10}">No rows match.</td></tr>`;
   const sum = k => r.reduce((a,o)=>a+(o[k]||0),0);
   const sp = sum('spend'), tr = sum('trials'), ins = sum('inst');
   const gc = GOOG.conv_ok ? sum('gconv') : null;
@@ -3144,9 +3200,15 @@ function renderGoogle(){
      summing unknowns as zero would under-report the total creative count. */
   const creKnown = r.filter(o => o.cre !== null);
   const cre = creKnown.length ? creKnown.reduce((a,o)=>a+o.cre,0) : null;
+  /* Live campaigns only, matching the tile -- and read off the payload total rather
+     than summed here, because a shared budget must be counted once, not once per row. */
+  const budFoot = !byCamp ? ''
+    : `<td title="Live campaigns only, shared budgets counted once">${
+        (GOOG.budget_ok && GOOG.totals && GOOG.totals.budget !== null)
+          ? rs(GOOG.totals.budget) : '<span class="dimtxt">—</span>'}</td>`;
   tbl.querySelector('tfoot').innerHTML = `<tr>
       <td class="l">${r.length} row(s)</td>${byCamp ? '' : '<td></td>'}
-      <td>${money(sp)}</td><td class="gsep">${num(tr)}</td>
+      <td>${money(sp)}</td>${budFoot}<td class="gsep">${num(tr)}</td>
       <td>${sp && tr ? rs(sp/tr) : '<span class="dimtxt">—</span>'}</td>
       <td>${num(ins)}</td>
       <td>${sp && ins ? rs(sp/ins) : '<span class="dimtxt">—</span>'}</td>
