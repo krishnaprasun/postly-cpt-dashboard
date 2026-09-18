@@ -1694,7 +1694,10 @@ def _branch(body, tries=5, url=None):
                 return json.load(r)
         except urllib.error.HTTPError as e:
             b = e.read().decode()
-            if e.code in (429, 500, 502, 503) and i < tries - 1:
+            # 504 belongs here too: it is Branch's gateway giving up on a heavy query,
+            # which the next attempt usually answers. Without it one 504 failed the
+            # window outright and the hourly job cached "Branch 504" for the hour.
+            if e.code in (429, 500, 502, 503, 504) and i < tries - 1:
                 # 10/20/30/40s totalled 100s, which was not enough: a backfill hit a 429
                 # that outlasted it and then lost eight consecutive days, each attempt
                 # feeding the limiter that caused the last one. Back off properly, and
