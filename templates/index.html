@@ -1311,8 +1311,18 @@ const cls = c => (T===null || c===null) ? 'dimtxt'
    assert that no trials happened. */
 const hasTrials = () => !!(DATA && DATA.events && DATA.events.length
                            && !DATA.trials_error);
-const cpt = (sp,tr) => tr>0 ? sp/tr : null;
-const cptTxt = (sp,tr) => tr>0 ? rs(sp/tr) : (sp>0 ? 'no trials' : '—');
+/* Below half a trial there is nothing to price. Branch counts trials per AD NAME, and a
+   name running in several ad sets has its count split by spend share -- so an ad that
+   spent Rs2 under a name whose other copy spent Rs5,000 holds 0.0004 of a trial. Divide
+   its ad set's Rs600 by that and the table prints a CPT in lakhs, rounds the trial to
+   "0", and sorts the row to the very top as the worst ad set on the account. It earned
+   a slice of someone else's trial, which is not a cost per anything. */
+const MIN_TR = 0.5;
+const cpt = (sp,tr) => tr>=MIN_TR ? sp/tr : null;
+const fracTr = tr => `<span class="dimtxt" title="${tr.toFixed(3)} of a trial: a spend-share \
+slice of a trial earned under an ad name several ads use. Too little to price.">&lt;1 trial</span>`;
+const cptTxt = (sp,tr) => tr>=MIN_TR ? rs(sp/tr)
+  : tr>0 ? fracTr(tr) : (sp>0 ? 'no trials' : '—');
 const pct = (n,d) => d>0 ? (100*n/d).toFixed(0)+'%' : '—';
 /* Classplus columns show only when the query's own window matches the one on screen —
    see `classplus()` in postly_cpt.py. Never guess: a mandate count from another day
@@ -4574,7 +4584,7 @@ function renderLongevity(){
     if(c.kind==='name') return `<td>${r.length} ad sets</td>`;
     if(c.k==='spend') return `<td>${rs(sp)}</td>`;
     if(c.k==='trials') return `<td>${num(tr)}</td>`;
-    if(c.kind==='cpt') return `<td class="${cls(sp&&tr?sp/tr:null)}">${cptTxt(sp,tr)}</td>`;
+    if(c.kind==='cpt') return `<td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`;
     if(c.k==='days') return `<td>${num(Math.round(sum('days')/(r.length||1)))} avg</td>`;
     return '<td></td>';
   }).join('') + '</tr>';
@@ -4889,7 +4899,9 @@ function cell(o, c){
   }
   if(c.kind==='sub') return `<td class="sub" title="${o[c.k]||''}">${o[c.k]||'—'}</td>`;
   if(c.kind==='rs')  return `<td>${o[c.k] ? rs(o[c.k]) : '—'}</td>`;
-  if(c.kind==='num') return `<td>${o[c.k] ? num(o[c.k]) : '<span class="dimtxt">0</span>'}</td>`;
+  if(c.kind==='num') return `<td>${
+    (o[c.k] > 0 && o[c.k] < MIN_TR) ? `<span class="dimtxt" title="${o[c.k].toFixed(3)}">&lt;1</span>`
+    : o[c.k] ? num(o[c.k]) : '<span class="dimtxt">0</span>'}</td>`;
   /* `heat` tints the cell, not just the figure. A column of green and amber NUMBERS is
      read one row at a time; a column of tinted cells is read at a glance, which is the
      question this table exists to answer — which of these is expensive. Only the cost
