@@ -1784,7 +1784,7 @@ function editorRows(){
      run more than one editor's ads, so a per-editor budget can only ever be a split of
      someone else's number -- and a budget column reads as a figure somebody set, not as a
      model. Every other metric here is summed from measured ad rows. */
-  const SUM = ['spend','t101','t10m','inst','imp','clk','imp_spend','vv','tp','vimp',
+  const SUM = ['spend','t101','t10m','inst','minst','imp','clk','imp_spend','vv','tp','vimp',
                'cp_signups','cp_mandates','cp_d0a','cp_d0c','md_mandates','md_d0a',
                'rt_base','rt_signups','rt_renew','rt_d1e','rt_d0c','rt_canc'];
   const out = new Map();
@@ -2352,6 +2352,11 @@ function budgetAge(){
    trust decides what gets killed. {VENDOR} is filled in per brand at render time --
    Branch, AppsFlyer or Classplus, whichever that brand measures on. */
 const SRC_META = 'From Meta Ads — what Meta itself reported for this ad.';
+const SRC_MINST = 'From Meta Ads — installs Meta attributes to this ad (mobile_app_install), \
+under Meta\u2019s own attribution window. Not the vendor\u2019s count: Branch attributes the \
+same install by its own rules, and the two do not agree.';
+const SRC_CPIM = 'Spend from Meta over Meta\u2019s own attributed installs. A cost per \
+install under Meta\u2019s attribution, comparable with Ads Manager\u2019s figure.';
 const SRC_ROSTER = 'From Meta Ads — the ad set roster, not the insights call, so it '
                  + 'describes right now and can be up to an hour old.';
 const SRC_VENDOR = 'From {VENDOR} — attributed to this ad by {VENDOR}, not by Meta.';
@@ -4625,6 +4630,8 @@ const COLS = {
     {k:'cpmille', t:'CPM', kind:'rs', src:SRC_META},
     {k:'hook', t:'Hook', kind:'ctr', src:SRC_META},
     {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META},
+    {k:'minst', t:'Installs (Meta)', kind:'num', src:SRC_MINST},
+    {k:'cpim', t:'CPI (Meta)', kind:'rs', src:SRC_CPIM},
     {k:'active_adsets', t:'Ad sets', kind:'num', src:SRC_ROSTER},
     {k:'active_ads', t:'Ads', kind:'num', src:SRC_ROSTER}],
   campaigns: [
@@ -4638,6 +4645,8 @@ const COLS = {
     {k:'cpmille', t:'CPM', kind:'rs', src:SRC_META},
     {k:'hook', t:'Hook', kind:'ctr', src:SRC_META},
     {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META},
+    {k:'minst', t:'Installs (Meta)', kind:'num', src:SRC_MINST},
+    {k:'cpim', t:'CPI (Meta)', kind:'rs', src:SRC_CPIM},
     {k:'active_adsets', t:'Ad sets', kind:'num', src:SRC_ROSTER},
     {k:'active_ads', t:'Ads', kind:'num', src:SRC_ROSTER}],
   adsets: [
@@ -4651,6 +4660,8 @@ const COLS = {
     {k:'cpmille', t:'CPM', kind:'rs', src:SRC_META},
     {k:'hook', t:'Hook', kind:'ctr', src:SRC_META},
     {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META},
+    {k:'minst', t:'Installs (Meta)', kind:'num', src:SRC_MINST},
+    {k:'cpim', t:'CPI (Meta)', kind:'rs', src:SRC_CPIM},
     {k:'active_ads', t:'Ads', kind:'num', src:SRC_ROSTER}],
   editors: [
     /* Live ads leads, ahead of spend: it is the question asked of this table first --
@@ -4664,7 +4675,9 @@ const COLS = {
     {k:'ctr', t:'CTR', kind:'ctr', src:SRC_META},
     {k:'cpmille', t:'CPM', kind:'rs', src:SRC_META},
     {k:'hook', t:'Hook', kind:'ctr', src:SRC_META},
-    {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META}],
+    {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META},
+    {k:'minst', t:'Installs (Meta)', kind:'num', src:SRC_MINST},
+    {k:'cpim', t:'CPI (Meta)', kind:'rs', src:SRC_CPIM}],
   ads: [
     {k:'name', t:'Ad', kind:'name'},
     {k:'adset', t:'Ad set', kind:'sub'},
@@ -4674,7 +4687,9 @@ const COLS = {
     {k:'ctr', t:'CTR', kind:'ctr', src:SRC_META},
     {k:'cpmille', t:'CPM', kind:'rs', src:SRC_META},
     {k:'hook', t:'Hook', kind:'ctr', src:SRC_META},
-    {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META}],
+    {k:'thru', t:'ThruPlay', kind:'ctr', src:SRC_META},
+    {k:'minst', t:'Installs (Meta)', kind:'num', src:SRC_MINST},
+    {k:'cpim', t:'CPI (Meta)', kind:'rs', src:SRC_CPIM}],
 };
 
 /* Appended to whichever tab is showing, so signups and mandates sit on the same row as
@@ -4798,6 +4813,9 @@ function rows(tab, filtered){
          video, and dividing by `imp` would dilute both rates by exactly that fraction. */
       hook: o.vimp ? 100 * o.vv / o.vimp : null,
       thru: o.vimp ? 100 * o.tp / o.vimp : null,
+      /* Meta's own installs and the CPI they imply. A row with none shows a dash for the
+         cost, not Rs0 -- and `cpt` already refuses to price a fraction. */
+      cpim: cpt(o.spend, o.minst || 0),
       /* Retention. Divided at the level being shown, never averaged from the level
          below -- and divided by rt_base, the MEASURED mandate count, not by trials:
          trials carry the pro-rata uplift and a rate whose denominator has been modelled
@@ -5229,6 +5247,12 @@ function renderTable(){
     if(c.k==='trials') return `<td>${num(tr)}</td>`;
     if(c.kind==='cpt') return `<td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`;
     if(c.k==='cps') return `<td>${cptTxt(sp,su)}</td>`;
+    /* Every cost-per in the footer is spend over the SUMMED count. These three were
+       falling through to the generic `rs` branch, which summed the rows' costs -- a
+       footer CPI that was the total of every row's CPI, not a CPI of anything. */
+    if(c.k==='cpim') return `<td>${cptTxt(sp, sum('minst'))}</td>`;
+    if(c.k==='cpnc') return `<td>${cptTxt(sp, sum('nc10'))}</td>`;
+    if(c.k==='cpsg') return `<td>${cptTxt(sp, sum('rt_signups'))}</td>`;
     if(c.k==='hook') return `<td>${vi ? (100*vv/vi).toFixed(2)+'%'
                                       : '<span class="dimtxt">—</span>'}</td>`;
     if(c.k==='thru') return `<td>${vi ? (100*tp/vi).toFixed(2)+'%'
@@ -5892,7 +5916,8 @@ function expCols(level){
   if(level==='accounts' || level==='campaigns') c.push(['budget_per_day', o=>o.budget]);
   if(hasTrials()) c.push(['trials', o=>o.trials], ['cpt', o=>o.cpt]);
   c.push(['impressions', o=>o.imp], ['clicks', o=>o.clk],
-         ['ctr_pct', o=>o.ctr], ['cpm', o=>o.cpmille]);
+         ['ctr_pct', o=>o.ctr], ['cpm', o=>o.cpmille],
+         ['installs_meta', o=>o.minst], ['cpi_meta', o=>o.cpim]);
   if(level==='accounts' || level==='campaigns') c.push(['active_adsets', o=>o.active_adsets]);
   if(level!=='ads') c.push(['active_ads', o=>o.active_ads]);
   if(DATA && DATA.classplus && DATA.classplus.available){

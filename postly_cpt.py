@@ -4952,7 +4952,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         accounts[a["id"]] = {"id": a["id"], "name": a["name"], "spend": 0.0,
                              "budget": 0.0, "t101": 0.0, "t10m": 0.0,
                              "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
-                "vv": 0.0, "tp": 0.0, "vimp": 0.0,
+                "vv": 0.0, "tp": 0.0, "vimp": 0.0, "minst": 0.0,
                              "active_adsets": 0, "active_ads": 0}
         cstat = {c["id"]: c for c in camps}
         live_set_ids = {s["id"] for s in live_sets}
@@ -4964,7 +4964,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                 "id": c["id"], "name": c["name"], "status": c.get("effective_status", ""),
                 "account": a["name"], "account_id": a["id"], "spend": 0.0, "budget": 0.0,
                 "t101": 0.0, "t10m": 0.0, "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
-                "vv": 0.0, "tp": 0.0, "vimp": 0.0,
+                "vv": 0.0, "tp": 0.0, "vimp": 0.0, "minst": 0.0,
                 "active_adsets": 0, "active_ads": 0}
         for s in live_sets:
             adsets[s["id"]] = {
@@ -4980,7 +4980,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                 "created": (s.get("created_time") or "")[:10],
                 "spend": 0.0, "t101": 0.0, "t10m": 0.0,
                 "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
-                "vv": 0.0, "tp": 0.0, "vimp": 0.0, "active_ads": 0}
+                "vv": 0.0, "tp": 0.0, "vimp": 0.0, "minst": 0.0, "active_ads": 0}
         for x in live_ads:
             ads[x["id"]] = {
                 "id": x["id"], "name": x["name"], "status": x.get("effective_status", ""),
@@ -5000,7 +5000,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                                   "status": set_status, "account": a["name"],
                                   "account_id": a["id"], "spend": 0.0, "budget": 0.0,
                                   "t101": 0.0, "t10m": 0.0, "imp": 0.0, "clk": 0.0,
-                                  "imp_spend": 0.0,
+                                  "imp_spend": 0.0, "minst": 0.0,
                                   "active_adsets": 0, "active_ads": 0}
             if sid and sid not in adsets:
                 adsets[sid] = {"id": sid, "name": r.get("adset_name", ""),
@@ -5009,7 +5009,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                                "account": a["name"], "account_id": a["id"],
                                "spend": 0.0, "t101": 0.0, "t10m": 0.0,
                                "imp": 0.0, "clk": 0.0, "imp_spend": 0.0,
-                "vv": 0.0, "tp": 0.0, "vimp": 0.0,
+                "vv": 0.0, "tp": 0.0, "vimp": 0.0, "minst": 0.0,
                                "active_ads": 0}
             if aid and aid not in ads:
                 ads[aid] = {"id": aid, "name": r.get("ad_name", ""), "status": ad_status,
@@ -5207,8 +5207,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
             s[INSTALL_KEY] += x[INSTALL_KEY]
             for k in CP_KEYS + RET_KEYS:
                 s[k] += x[k]
-            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp"):
-                s[k] += x[k]
+            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp", "minst"):
+                s[k] += x.get(k, 0.0) or 0.0
             if x["active"]:
                 s["active_ads"] += 1
     for s in adsets.values():
@@ -5218,8 +5218,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
             c[INSTALL_KEY] += s[INSTALL_KEY]
             for k in CP_KEYS + RET_KEYS:
                 c[k] += s[k]
-            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp"):
-                c[k] += s[k]
+            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp", "minst"):
+                c[k] += s.get(k, 0.0) or 0.0
             c["active_ads"] += s["active_ads"]
             if s["active"]:
                 c["active_adsets"] += 1; c["budget"] += s["budget"]
@@ -5230,8 +5230,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
             a[INSTALL_KEY] += c[INSTALL_KEY]
             for k in CP_KEYS + RET_KEYS:
                 a[k] += c[k]
-            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp"):
-                a[k] += c[k]
+            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp", "minst"):
+                a[k] += c.get(k, 0.0) or 0.0
             a["budget"] += c["budget"]
 
     combined = {"spend": sum(a["spend"] for a in accounts.values()),
@@ -5245,6 +5245,10 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                 "vv": sum(a["vv"] for a in accounts.values()),
                 "tp": sum(a["tp"] for a in accounts.values()),
                 "vimp": sum(a["vimp"] for a in accounts.values()),
+                # Meta's OWN attributed installs (`mobile_app_install`), at every level,
+                # beside the vendor's. Two attribution models of the same event; neither
+                # is the other's error, and the page shows both labelled by source.
+                "minst": sum(a.get("minst", 0.0) for a in accounts.values()),
                 "active_adsets": sum(a["active_adsets"] for a in accounts.values()),
                 "active_ads": sum(a["active_ads"] for a in accounts.values())}
     for k in CP_KEYS + RET_KEYS:
@@ -5256,7 +5260,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
     # tables are filtered client-side by the `seg` tag instead, because those rows exist
     # already and shipping three copies of them would treble the payload.
     NUM = (("spend", "budget", "t101", "t10m", INSTALL_KEY,
-            "imp", "clk", "imp_spend", "vv", "tp", "vimp",
+            "imp", "clk", "imp_spend", "vv", "tp", "vimp", "minst",
             "active_adsets", "active_ads") + CP_KEYS + RET_KEYS)
 
     def _acct_rows(seg):
