@@ -1907,6 +1907,10 @@ function applyAttr(src){
     if(typeof o[ev] === 'number') o[ev] = o[ev] * U[ev]; }); };
   ['ads','adsets','campaigns','accounts'].forEach(k => (d[k] || []).forEach(mul));
   mul(d.combined);
+  /* The discovery/settled cohorts are sums of the same ad-set rows, and were the one
+     place the uplift was not applied: the tile printed MEASURED cohort CPTs beside a
+     MODELLED hero, so both halves read higher than the whole and nothing added up. */
+  if(d.discovery) ['discovery','mature','unknown'].forEach(k => mul(d.discovery[k]));
   Object.values(d.segments || {}).forEach(mul);
   Object.values(d.accounts_by_seg || {}).forEach(rows => (rows || []).forEach(mul));
   return d;
@@ -2188,11 +2192,20 @@ function kpis(){
                 clipped at "live now" and the reader lost the number the sentence was
                 built around. The morning budget and its percentage stay; the live figure
                 moves to the tooltip, where the explanation of it already lived. */
-             ? `<span class="vsub" title="Budgeted at ${bOpen.at}.${
-                  DATA.budget_is_today ? ' ' + rs(c.budget) + ' is live right now — lower \
-than the morning\u2019s whenever ad sets have been paused during the day.' : ''}">(${
-                  rs(bOpen.total)} budget)</span><span class="pct ${
-                  paceOpen > 100 ? 'warn' : ''}">${paceOpen.toFixed(0)}% used</span>`
+             /* The LIVE budget is the figure on the tile -- it is the number people
+                check against Ads Manager, and printing the morning's here read as the
+                dashboard being an hour behind every time an ad set was paused. The
+                percentage is still measured against the budget in force when the day
+                opened, because that is what the money was spent against; the tooltip
+                names it. A past day has no live figure, so it keeps the opening one. */
+             ? `<span class="vsub" title="${DATA.budget_is_today
+                  ? `Live right now, across the ad sets switched on at this minute. The day \
+opened at ${bOpen.at} with ${rs(bOpen.total)} budgeted; the percentage is of that.`
+                  : `Budgeted at ${bOpen.at}, when the day opened.`}">(${
+                  rs(DATA.budget_is_today ? c.budget : bOpen.total)} budget)</span><span class="pct ${
+                  paceOpen > 100 ? 'warn' : ''}" title="Of ${rs(bOpen.total)}, the budget in \
+force at ${bOpen.at} when the day opened. Spend is measured against what was running while \
+it was spent, not against what is live now.">${paceOpen.toFixed(0)}% used</span>`
        /* A past day with no snapshot gets no budget line rather than today's. The live
           roster was the only number to hand, and against yesterday's spend it produced a
           percentage of the wrong thing. */
@@ -2226,8 +2239,7 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
        const dc = DATA.discovery;
        if(!dc || !chanIsMeta() || !hasTrials()) return '';
        const a = dc.discovery, b = dc.mature;
-       const ca = a[EV] > 0 ? a.spend / a[EV] : null;
-       const cb = b[EV] > 0 ? b.spend / b[EV] : null;
+       const ca = cpt(a.spend, a[EV]), cb = cpt(b.spend, b[EV]);
        if(ca === null && cb === null) return '';
        const unk = (dc.unknown && dc.unknown.adsets) || 0;
        /* The bracket answers "how much of TODAY'S budget sits on each side" -- the amount
