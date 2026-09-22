@@ -5067,6 +5067,7 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                                   "account_id": a["id"], "spend": 0.0, "budget": 0.0,
                                   "t101": 0.0, "t10m": 0.0, "imp": 0.0, "clk": 0.0,
                                   "imp_spend": 0.0, "minst": 0.0,
+                                  "vv": 0.0, "tp": 0.0, "vimp": 0.0,
                                   "active_adsets": 0, "active_ads": 0}
             if sid and sid not in adsets:
                 adsets[sid] = {"id": sid, "name": r.get("adset_name", ""),
@@ -5266,26 +5267,31 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
                 g["shared_name"] = True
 
     # ---- roll up ad -> adset -> campaign -> account -------------------------
+    # Rows reach here from two places: the live roster, which builds them complete, and
+    # the insights fallback, which builds a thinner one for an object that spent in the
+    # window but is no longer in the roster. Indexing a key that only the first kind has
+    # is a KeyError mid-build -- it was 'vv' on a campaign that had been deleted since --
+    # and a crash here loses the whole payload, so every rollup adds through this.
+    ROLL = ("imp", "clk", "imp_spend", "vv", "tp", "vimp", "minst")
+
+    def _roll(dst, src, keys=ROLL):
+        for k in keys:
+            dst[k] = (dst.get(k) or 0.0) + (src.get(k) or 0.0)
+
     for x in ads.values():
         s = adsets.get(x["adset_id"])
         if s:
             s["spend"] += x["spend"]; s["t101"] += x["t101"]; s["t10m"] += x["t10m"]
-            s[INSTALL_KEY] += x[INSTALL_KEY]
-            for k in CP_KEYS + RET_KEYS:
-                s[k] += x[k]
-            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp", "minst"):
-                s[k] += x.get(k, 0.0) or 0.0
+            _roll(s, x, (INSTALL_KEY,) + CP_KEYS + RET_KEYS)
+            _roll(s, x)
             if x["active"]:
                 s["active_ads"] += 1
     for s in adsets.values():
         c = campaigns.get(s["campaign_id"])
         if c:
             c["spend"] += s["spend"]; c["t101"] += s["t101"]; c["t10m"] += s["t10m"]
-            c[INSTALL_KEY] += s[INSTALL_KEY]
-            for k in CP_KEYS + RET_KEYS:
-                c[k] += s[k]
-            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp", "minst"):
-                c[k] += s.get(k, 0.0) or 0.0
+            _roll(c, s, (INSTALL_KEY,) + CP_KEYS + RET_KEYS)
+            _roll(c, s)
             c["active_ads"] += s["active_ads"]
             if s["active"]:
                 c["active_adsets"] += 1; c["budget"] += s["budget"]
@@ -5293,11 +5299,8 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         a = accounts.get(c["account_id"])
         if a:
             a["spend"] += c["spend"]; a["t101"] += c["t101"]; a["t10m"] += c["t10m"]
-            a[INSTALL_KEY] += c[INSTALL_KEY]
-            for k in CP_KEYS + RET_KEYS:
-                a[k] += c[k]
-            for k in ("imp", "clk", "imp_spend", "vv", "tp", "vimp", "minst"):
-                a[k] += c.get(k, 0.0) or 0.0
+            _roll(a, c, (INSTALL_KEY,) + CP_KEYS + RET_KEYS)
+            _roll(a, c)
             a["budget"] += c["budget"]
 
     combined = {"spend": sum(a["spend"] for a in accounts.values()),
