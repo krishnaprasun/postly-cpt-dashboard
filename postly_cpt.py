@@ -1146,21 +1146,87 @@ def budget_open(brand, day):
         hit = _open_cache.get(key)
     if hit and time.time() - hit["at"] < 900:
         return hit["val"]
+    got = _budget_open_snap(brand, day)
     val = None
-    if H.available():
-        for hour in BUDGET_SLOTS:
-            try:
-                got, ok = H.get_day_raw(budget_slot_ns(brand, hour), day)
-            except Exception:
-                continue
-            if ok and isinstance(got, dict) and got.get("total"):
-                val = {"total": round(float(got["total"]), 2),
-                       "at": (got.get("at") or "")[11:16] or f"{hour:02d}:00",
-                       "slot": hour}
-                break
+    if got:
+        val = {"total": round(float(got["total"]), 2),
+               "at": (got.get("at") or "")[11:16] or f"{got['_slot']:02d}:00",
+               "slot": got["_slot"]}
     with _open_lock:
         _open_cache[key] = {"at": time.time(), "val": val}
     return val
+
+
+def _budget_open_snap(brand, day):
+    """The whole opening snapshot for a day, or None. `_slot` is the hour it came from."""
+    if not H.available():
+        return None
+    for hour in BUDGET_SLOTS:
+        try:
+            got, ok = H.get_day_raw(budget_slot_ns(brand, hour), day)
+        except Exception:
+            continue
+        if ok and isinstance(got, dict) and got.get("total"):
+            return dict(got, _slot=hour)
+    return None
+
+
+# How the discovery/settled tile gets a budget for a PAST day. The live roster cannot
+# answer it -- it is today's, and the tile beside it shows the budget that past day
+# OPENED with -- so the two could only ever disagree, by exactly the ad sets launched or
+# paused since. The opening snapshot carries every live ad set of that day with its own
+# budget and its campaign, and a launch date never changes, so the same cut can be made
+# over the snapshot instead: same day, same population, same rule, and the two cohorts
+# add back up to the total on the Spend tile.
+def budget_open_cohorts(brand, day, ddays):
+    """{seg: {phase: {budget, live}}} for the budget that day opened with, or None.
+
+    Segments are derived from the snapshot's own campaign names, exactly as build() does
+    it, so a Trial view gets Trial's budget and not the brand's.
+    """
+    if not ddays:
+        return None
+    snap = _budget_open_snap(brand, day)
+    if not snap:
+        return None
+    sets_ = snap.get("adsets") or {}
+    camps_ = snap.get("campaigns") or {}
+    if not sets_:
+        return None
+    B = C.brand(brand)
+    testing_re = re.compile(B.get("testing_re") or C.TESTING_RE_DEFAULT)
+    seg_of_camp = {cid: ("testing" if testing_re.search(c.get("n") or "") else "trial")
+                   for cid, c in camps_.items()}
+    live = {k: v for k, v in sets_.items() if is_live(v.get("st") or "")}
+    created = created_dates(brand, list(live))
+    try:
+        end = datetime.strptime(day, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+    out = {sg: {ph: {"budget": 0.0, "live": 0}
+                for ph in ("discovery", "mature", "unknown")}
+           for sg in ("trial", "testing", "blended")}
+    for sid, v in live.items():
+        seg = seg_of_camp.get(v.get("c") or "", "trial")
+        c = (created.get(sid) or "")[:10]
+        ph = "unknown"
+        if c:
+            try:
+                age = (end - datetime.strptime(c, "%Y-%m-%d").date()).days
+                # An ad set that did not exist on this day cannot be in either phase of
+                # it. It cannot be in the snapshot either -- this is belt and braces.
+                ph = "unknown" if age < 0 else (
+                    "discovery" if age < ddays else "mature")
+            except ValueError:
+                ph = "unknown"
+        b = float(v.get("b") or 0)
+        for sg in (seg, "blended"):
+            out[sg][ph]["budget"] += b
+            out[sg][ph]["live"] += 1
+    for sg in out:
+        for ph in out[sg]:
+            out[sg][ph]["budget"] = round(out[sg][ph]["budget"], 2)
+    return out
 
 
 def _nearest_slot(hour):
@@ -5522,7 +5588,10 @@ def build(since, until, brand=C.DEFAULT_BRAND, force=False, only=None):
         # to do with what was running then — Yesterday was reading today's budget, taken at
         # 02:02 this morning, against yesterday's whole spend. Over a multi-day window the
         # tile shows a per-day average and this would answer a question nobody asked.
-        "budget_open": budget_open(brand, until) if since == until else None,
+        "budget_open": (dict(budget_open(brand, until) or {},
+                             cohorts=budget_open_cohorts(
+                                 brand, until, B.get("discovery_days")))
+                        if since == until and budget_open(brand, until) else None),
         "budget_day": until if since == until else None,
         "budget_is_today": since == until == today_ist(),
         "budget_age_sec": budget_age,
