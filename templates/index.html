@@ -2291,7 +2291,11 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
        const a = dc.discovery, b = dc.mature;
        const ca = cpt(a.spend, a[EV]), cb = cpt(b.spend, b[EV]);
        if(ca === null && cb === null) return '';
-       const unk = (dc.unknown && dc.unknown.adsets) || 0;
+       /* Undated ad sets are in NEITHER cohort, so without this the two brackets
+          quietly fail to add up to the budget they are a share of. Named with their
+          money, and counted from whichever source the budget came from. */
+       const unk = (dc.unknown && (dc.fromSnap ? dc.unknown.live : dc.unknown.adsets)) || 0;
+       const unkB = (dc.unknown && dc.unknown.budget) || 0;
        /* Only worth naming when the cohorts are cut from the live roster. Against a
           past day's snapshot they are not in the budget at all, which is the point. */
        const fut = dc.fromSnap ? 0 : ((dc.future && dc.future.adsets) || 0);
@@ -2320,7 +2324,8 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
        rs(b.budget || 0)} budget${bTot ? ' · ' + (100 * (b.budget || 0) / bTot).toFixed(0)
        + '%' : ''})</span><span class="vlab sett">settled · ${num(b.live || 0)} live ad sets\
 </span></div>
-     <div class="s">${[unk ? `${num(unk)} ad sets undated` : '',
+     <div class="s">${[unk ? `${num(unk)} ad sets undated${
+         unkB ? ` · ${rs(unkB)} in neither` : ''}` : '',
        fut ? `${num(fut)} launched after this window` : ''].filter(Boolean).join(' · ')
        }</div></div>`;
      })()
