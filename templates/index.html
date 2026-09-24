@@ -411,6 +411,21 @@ tfoot td{position:sticky;bottom:0;background:var(--panel2);font-weight:700;color
   color:var(--muted);margin-left:7px;background:var(--panel2);font-weight:600;
   text-transform:uppercase;letter-spacing:.4px}
 .pill.live{color:var(--green-dk);border-color:#CBE8D8;background:var(--green-lt)}
+/* The phase cell. Same two colours the discovery/settled TILE uses, so the tile and the
+   column are visibly the same fact -- gold is the exploring phase, green the settled
+   one. The age rides along in a small pill because "discovery" without "since when" is
+   half an answer. */
+/* The tile halves are links into the table, and have to look it. */
+.kpi .ph-go{cursor:pointer;border-radius:6px;transition:background .12s}
+.kpi .ph-go:hover{background:var(--panel2)}
+.kpi .ph-go:focus-visible{outline:2px solid var(--navy);outline-offset:2px}
+td.ph{font-weight:600;white-space:nowrap}
+td.ph.discovery{color:var(--gold-dk)}
+td.ph.settled{color:var(--green-dk)}
+td.ph.undated, td.ph.not-yet-live{color:var(--faint);font-weight:500}
+.agepill{font-size:9.5px;padding:1px 5px;border-radius:20px;margin-left:6px;
+  border:1px solid var(--line);background:var(--panel2);color:var(--muted);
+  font-weight:600;letter-spacing:.3px}
 .note{font-size:12.5px;color:var(--muted);line-height:1.7}
 .note b{color:var(--ink)}
 .notebar{display:flex;align-items:center;gap:10px;margin-top:14px;flex-wrap:wrap}
@@ -1072,6 +1087,14 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
       <select id="fAcct"><option value="">All accounts</option></select></label>
     <label class="sel" id="fCampWrap"><span>Campaign</span>
       <select id="fCamp"><option value="">All campaigns</option></select></label>
+    <!-- Ad sets only: an ad or a campaign has no launch date of its own to be cut by. -->
+    <label class="sel" id="fPhaseWrap" style="display:none"><span>Phase</span>
+      <select id="fPhase">
+        <option value="">All phases</option>
+        <option value="discovery">Discovery only</option>
+        <option value="settled">Settled only</option>
+        <option value="undated">Undated only</option>
+      </select></label>
     <label class="chk"><input type="checkbox" id="activeOnly" checked> active only</label>
     <label class="chk"><input type="checkbox" id="spentOnly"> spent &gt; 0 only</label>
     <label class="chk" id="cpWrap" style="display:none"><input type="checkbox" id="cpCols" checked> signups &amp; mandates</label>
@@ -2006,6 +2029,26 @@ addEventListener('resize', () => {
    figure for the segment on screen. The third cannot be: a cohort split of a past day's
    snapshot does not exist, because cohorts are cut by launch date against the live
    roster. So the tooltip says which number is which instead. */
+/* The cohort an ad set belongs to, from its launch date against the window end. ONE
+   definition, used by the tile, the Phase column and the Phase filter -- three readings
+   of the same rule that could otherwise drift apart. Returns null for a brand that does
+   not split its first days out, so the column and filter simply never appear. */
+function phaseOf(o){
+  const dc = DATA && DATA.discovery;
+  if(!dc) return null;
+  const cr = (o.created || '').slice(0, 10);
+  if(!cr) return 'undated';
+  const age = ageOf(o);
+  return age < 0 ? 'not yet live' : age < dc.days ? 'discovery' : 'settled';
+}
+function ageOf(o){
+  const cr = (o.created || '').slice(0, 10);
+  if(!cr || !DATA) return null;
+  return Math.round((new Date(DATA.until + 'T00:00:00') - new Date(cr + 'T00:00:00')) / 864e5);
+}
+const PHASE_LBL = {discovery: 'Discovery', settled: 'Settled',
+                   undated: 'Undated', 'not yet live': 'Not yet live'};
+
 function cohorts(){
   const dc = DATA.discovery;
   if(!dc || !DATA.adsets) return null;
@@ -2020,15 +2063,11 @@ function cohorts(){
   const snap = (!DATA.budget_is_today && DATA.budget_open && DATA.budget_open.cohorts)
     ? DATA.budget_open.cohorts[SEG === 'blended' ? 'blended' : SEG] : null;
   out.fromSnap = !!snap;
+  const BUCKET = {discovery: 'discovery', settled: 'mature',
+                  undated: 'unknown', 'not yet live': 'future'};
   for(const o of DATA.adsets){
     if(!inSeg(o)) continue;
-    const cr = (o.created || '').slice(0, 10);
-    let k = 'unknown';
-    if(cr){
-      const age = Math.round((end - new Date(cr + 'T00:00:00')) / 864e5);
-      k = age < 0 ? 'future' : age < dc.days ? 'discovery' : 'mature';
-    }
-    const b = out[k];
+    const b = out[BUCKET[phaseOf(o)] || 'unknown'];
     b.spend += o.spend || 0;
     b[EV] += o[EV] || 0;
     b.adsets += 1;
@@ -2316,11 +2355,13 @@ this carries last night's, because a trial started at 23:55 fires its ten-minute
      Spend and CPT count every ad set in this window. Budget and the ad set counts are
      LIVE ones only -- a paused ad set has a daily budget on paper and spends none of
      it."><div class="k">CPT · discovery vs settled</div>
-     <div class="v">${ca === null ? '—' : rs(ca)}<span class="vsub">(${
+     <div class="v ph-go" data-ph="discovery" role="button" tabindex="0"
+       title="See these ad sets">${ca === null ? '—' : rs(ca)}<span class="vsub">(${
        rs(a.budget || 0)} budget${bTot ? ' · ' + (100 * (a.budget || 0) / bTot).toFixed(0)
        + '%' : ''})</span><span class="vlab disc">discovery · ${num(a.live || 0)} live ad sets\
 </span></div>
-     <div class="v2">${cb === null ? '—' : rs(cb)}<span class="vsub">(${
+     <div class="v2 ph-go" data-ph="settled" role="button" tabindex="0"
+       title="See these ad sets">${cb === null ? '—' : rs(cb)}<span class="vsub">(${
        rs(b.budget || 0)} budget${bTot ? ' · ' + (100 * (b.budget || 0) / bTot).toFixed(0)
        + '%' : ''})</span><span class="vlab sett">settled · ${num(b.live || 0)} live ad sets\
 </span></div>
@@ -2416,6 +2457,11 @@ function budgetAge(){
    trust decides what gets killed. {VENDOR} is filled in per brand at render time --
    Branch, AppsFlyer or Classplus, whichever that brand measures on. */
 const SRC_META = 'From Meta Ads — what Meta itself reported for this ad.';
+const SRC_PHASE = 'Discovery or settled, from Meta\u2019s own created_time for the ad \
+set measured against the end of the window on screen. Discovery is the first days of an \
+ad set\u2019s life, while Meta is still exploring; settled is everything after. The two \
+buy different things, so their cost per trial is not comparable \u2014 which is why the \
+tile above splits them and this column says which side a row is on.';
 const SRC_MINST = 'From Meta Ads — installs Meta attributes to this ad (mobile_app_install), \
 under Meta\u2019s own attribution window. Not the vendor\u2019s count: Branch attributes the \
 same install by its own rules, and the two do not agree.';
@@ -4716,6 +4762,7 @@ const COLS = {
   adsets: [
     {k:'name', t:'Ad set', kind:'name'},
     {k:'campaign', t:'Campaign', kind:'sub'},
+    {k:'phase', t:'Phase', kind:'phase', src:SRC_PHASE},
     {k:'spend', t:'Spend', kind:'rs', src:SRC_META},
     {k:'budget', t:'Budget', kind:'rs', src:SRC_ROSTER},
     {k:'trials', t:'Trials', kind:'num', src:SRC_VENDOR},
@@ -4832,6 +4879,10 @@ function fillScopes(base){
   const wantCamp = TAB === 'adsets' || TAB === 'ads';
   document.getElementById('fAcctWrap').style.display = wantAcct ? '' : 'none';
   document.getElementById('fCampWrap').style.display = wantCamp ? '' : 'none';
+  /* Only on ad sets, and only for a brand that HAS a discovery window. */
+  const wantPhase = TAB === 'adsets' && !!(DATA && DATA.discovery);
+  document.getElementById('fPhaseWrap').style.display = wantPhase ? '' : 'none';
+  if(!wantPhase) document.getElementById('fPhase').value = '';
   if(!wantAcct){ return; }
   const aSel = document.getElementById('fAcct'), cSel = document.getElementById('fCamp');
   const accts = new Map(), camps = new Map();
@@ -4863,6 +4914,11 @@ function rows(tab, filtered){
   const inScope = base.filter(inSeg);
   if(filtered && tab === TAB) fillScopes(inScope);
   let r = inScope.map(o => Object.assign({}, o, {
+      /* Which side of the discovery line this ad set falls on, and how old it is. Null
+         on every level but ad sets, and on a brand with no discovery window -- the
+         column is dropped rather than printing a dash down the whole table. */
+      phase: tab === 'adsets' ? phaseOf(o) : null,
+      age: tab === 'adsets' ? ageOf(o) : null,
       trials: o[EV], cpt: cpt(o.spend, o[EV]),
       /* CTR and CPM divide by impressions, and CPM divides the spend that CAME WITH
          those impressions -- `imp_spend`, not total spend. Over a window whose older
@@ -4925,6 +4981,8 @@ function rows(tab, filtered){
     if(fa) r = r.filter(o => o.account_id === fa);
     const fc = document.getElementById('fCamp').value;
     if(fc) r = r.filter(o => o.campaign_id === fc);
+    const fp = document.getElementById('fPhase').value;
+    if(fp && tab === 'adsets') r = r.filter(o => o.phase === fp);
   }
   if(tab !== TAB) return r;
   const k = SORT.key, d = SORT.dir;
@@ -5000,6 +5058,20 @@ function cell(o, c){
      read one row at a time; a column of tinted cells is read at a glance, which is the
      question this table exists to answer — which of these is expensive. Only the cost
      columns get it: tinting everything would be wallpaper. */
+  /* The phase, with the age that produced it. A bare "discovery" invites the question
+     "since when", and the answer is already on the row. */
+  if(c.kind==='phase'){
+    if(!o.phase) return '<td><span class="dimtxt">—</span></td>';
+    const d = DATA.discovery ? DATA.discovery.days : 0;
+    const tip = o.age === null ? 'Meta gave no launch date for this ad set.'
+      : `Launched ${o.created} \u2014 D${o.age} on ${DATA.until}. `
+        + (o.phase === 'discovery' ? `Still in its first ${d} days (D0\u2013D${d-1}).`
+           : o.phase === 'settled' ? `Past its first ${d} days.`
+           : 'Launched after this window ended.');
+    return `<td class="ph ${o.phase.replace(/ /g,'-')}" title="${tip}">${
+      PHASE_LBL[o.phase] || o.phase}${o.age === null ? ''
+        : `<span class="agepill">D${o.age}</span>`}</td>`;
+  }
   if(c.kind==='cpt') return `<td class="heat ${cls(o.cpt)}">${cptTxt(o.spend, o.trials)}</td>`;
   if(c.kind==='pct') return `<td>${o[c.k]===null ? '<span class="dimtxt">—</span>'
                                                  : o[c.k].toFixed(0)+'%'}</td>`;
@@ -5290,6 +5362,8 @@ function renderTable(){
                 document.getElementById('q').value.trim()}</b>` : '',
               document.getElementById('fAcct').value ? '<b>an account filter</b>' : '',
               document.getElementById('fCamp').value ? '<b>a campaign filter</b>' : '',
+              document.getElementById('fPhase').value
+                ? `the <b>${document.getElementById('fPhase').value}</b> phase` : '',
               SEG === 'blended' ? '' : `the <b>${SEG}</b> segment`,
             ].filter(Boolean).join(' · ')
           : 'Nothing in this window.'}</td></tr>`;
@@ -5307,6 +5381,11 @@ function renderTable(){
   const vv = sum('vv'), tp = sum('tp'), vi = sum('vimp');
   tbl.querySelector('tfoot').innerHTML = '<tr>' + cols.map(c => {
     if(c.kind==='name') return `<td>${r.length} rows shown</td>`;
+    if(c.kind==='phase'){
+      const n = p => r.filter(o => o.phase === p).length;
+      const d = n('discovery'), st = n('settled');
+      return `<td title="Of the rows on screen">${d} disc · ${st} sett</td>`;
+    }
     if(c.k==='spend') return `<td>${rs(sp)}</td>`;
     if(c.k==='trials') return `<td>${num(tr)}</td>`;
     if(c.kind==='cpt') return `<td class="${cls(cpt(sp,tr))}">${cptTxt(sp,tr)}</td>`;
@@ -6131,10 +6210,20 @@ document.getElementById('cGo').onclick = () => {
 /* Delegated: the tiles are rebuilt from scratch on every render, so a handler bound to
    the button itself would be gone a second later. */
 document.getElementById('kpis').addEventListener('click', e => {
+  /* Checked BEFORE the hourly-mode return: the phase links are navigation, not a
+     refresh, and hourly mode only takes the per-source refresh buttons away. */
+  const ph = e.target.closest && e.target.closest('.ph-go');
+  if(ph && ph.dataset.ph){ openPhase(ph.dataset.ph); return; }
   if(HOURLY_MODE) return;
   const b = e.target.closest('button[data-rfr]');
   if(!b || b.disabled) return;
   refreshPart(b.dataset.rfr, b);
+});
+/* Keyboard too: the tile halves are role="button", so they have to answer to one. */
+document.getElementById('kpis').addEventListener('keydown', e => {
+  if(e.key !== 'Enter' && e.key !== ' ') return;
+  const ph = e.target.closest && e.target.closest('.ph-go');
+  if(ph && ph.dataset.ph){ e.preventDefault(); openPhase(ph.dataset.ph); }
 });
 document.getElementById('tabs').onclick = e => {
   /* closest(), not e.target. Every tab carries its row count in an <i> inside the
@@ -6483,6 +6572,24 @@ try{
     TAB = btn.dataset.t;
   }
 }catch(_){}
+
+/* The tile's two halves are the question; the Ad sets tab is where it gets answered.
+   Clicking either one opens that tab with the Phase filter already set, so the number
+   and the rows behind it are never more than one click apart. */
+function openPhase(p){
+  const btn = document.querySelector('#tabs button[data-t="adsets"]');
+  if(!btn) return;
+  [...document.getElementById('tabs').children].forEach(b => b.classList.remove('on'));
+  btn.classList.add('on');
+  TAB = 'adsets';
+  SORT = {key: 'spend', dir: -1};
+  /* Set after the tab, before the render: fillScopes unhides the control on the ad sets
+     tab and would otherwise clear a value set while it was still hidden. */
+  renderTable();
+  document.getElementById('fPhase').value = p;
+  renderTable(); noteFor(); attrAvail();
+  document.getElementById('tabs').scrollIntoView({behavior: 'smooth', block: 'start'});
+}
 
 /* `?attr=` used to carry the mode. There is only one mode now, so it is accepted and
    ignored rather than 404-ing an old bookmark; localStorage('cpt_attr') is left to rot
