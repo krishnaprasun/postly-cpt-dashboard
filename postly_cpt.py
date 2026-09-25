@@ -1444,6 +1444,146 @@ def budget_snapshot(brand, force=False, store=True):
     return snap
 
 
+# ---- hourly performance, per ad set and per ad --------------------------------
+# The budget slots beside this one record what was SWITCHED ON each hour; they carry no
+# money and no results, so "this ad set's spend climbed all afternoon while its trials
+# did not" could not be asked of the store at all -- only of the brand as a whole
+# (hour_ns) or of a whole day (the daily payload). Two of the three dimensions existed,
+# never together.
+#
+# This costs NO extra Meta or Branch call. The hourly job has just built the full payload
+# to serve it; every number below is already in memory and was being thrown away at ad
+# set and ad level. All this does is write it down under the hour it was true.
+#
+# CUMULATIVE for the day, not per-hour deltas, for the same reason the budget slots are:
+# a missed hour leaves a gap a reader can see and step over, where a stored delta would
+# silently swallow the missing hour into the next one. Subtracting consecutive slots is
+# the reader's job and is exact whenever both are present.
+#
+# MEASURED trials, never the pro-rata lift. The model is a property of a WINDOW -- it is
+# recomputed per day from that day's unclaimed pool -- so storing lifted numbers would
+# bake one afternoon's model into a permanent record. The uplift for any day is in the
+# daily payload; apply it at read time if it is wanted.
+PERF_SHAPE = 1
+
+
+def hour_perf_ns(brand, hour):
+    return f"{brand}perf{hour:02d}"
+
+
+def _perf_rows(rows, evs, cap=0):
+    """{id: {n, s, <event>, i}} for rows that actually did something.
+
+    A row with no spend and no result is not recorded: on Postly that is most of 1,400
+    ads every hour, and an id mapped to nothing but zeros is bytes that say nothing. Its
+    absence reads the same as the zero would.
+    """
+    out = {}
+    for r in rows or []:
+        rid = r.get("id")
+        if not rid:
+            continue
+        sp = round(float(r.get("spend") or 0), 2)
+        rec = {}
+        for ev in evs:
+            v = float(r.get(ev) or 0)
+            if v:
+                rec[ev] = round(v, 1)
+        iv = float(r.get(INSTALL_KEY) or 0)
+        if sp <= 0 and not rec and iv <= 0:
+            continue
+        if sp:
+            rec["s"] = sp
+        if iv:
+            rec["i"] = round(iv, 1)
+        # The name travels with the row so the document can be read on its own. It is the
+        # single biggest field here and it gzips almost to nothing -- these names share
+        # long prefixes by construction.
+        if r.get("name"):
+            rec["n"] = r["name"]
+        out[rid] = rec
+        if cap and len(out) >= cap:
+            break
+    return out
+
+
+def hour_perf_snapshot(brand, data, store=True):
+    """Write spend, trials and installs per AD SET and per AD under this hour's slot.
+
+    Never raises and never blocks the job: a failure here must not cost the hourly
+    refresh, which is the thing everyone actually reads.
+    """
+    # The store being absent must not stop the document being BUILT: `store=False` is a
+    # dry run and has to work on a machine with no history service, exactly as
+    # budget_snapshot does.
+    if not data:
+        return False
+    if store and not H.available():
+        return False
+    try:
+        # The event keys come from the PAYLOAD, not from config. config.brand() blanks
+        # `events` whenever the attribution vendor has no credentials, so deriving them
+        # there would silently write spend-only rows on exactly the runs where the trial
+        # feed was in trouble -- and nothing in the document would say so. Taking them
+        # from the payload means the slot always describes the build it came from.
+        evs = list(data.get("events") or C.brand(brand)["events"])
+        now = datetime.now(IST)
+        doc = {
+            "v": PERF_SHAPE, "brand": brand, "date": today_ist(),
+            "at": now_ist_str(), "hour": now.hour,
+            # Which trial keys this slot was built with. An hour written while the trial
+            # feed was down carries [] here, which is a different fact from an hour where
+            # every ad set genuinely earned nothing, and the two must not look alike.
+            "events": evs,
+            # What the page was showing when this was written, so a reader can tell a
+            # thin hour from a broken one without re-deriving it.
+            "combined": {k: round(float((data.get("combined") or {}).get(k) or 0), 2)
+                         for k in ("spend",) + tuple(evs) + (INSTALL_KEY,)},
+            "adsets": _perf_rows(data.get("adsets"), evs),
+            "ads": _perf_rows(data.get("ads"), evs),
+        }
+        doc["n_adsets"], doc["n_ads"] = len(doc["adsets"]), len(doc["ads"])
+        if not store:
+            return doc
+        return bool(H.put_agg(hour_perf_ns(brand, now.hour), doc["date"], doc))
+    except Exception:
+        traceback.print_exc()
+        return False
+
+
+def hour_perf_day(brand, date, hours=None):
+    """{hour: document} for the slots that have one. A missing hour is simply absent."""
+    out = {}
+    if not H.available():
+        return out
+    for h in (hours if hours is not None else range(24)):
+        try:
+            got, ok = H.get_day_raw(hour_perf_ns(brand, h), date)
+        except Exception:
+            continue
+        if ok and isinstance(got, dict) and got.get("adsets") is not None:
+            out[h] = got
+    return out
+
+
+def hour_perf_series(brand, date, level="adsets", ids=None):
+    """{id: {"n": name, "hours": {hour: {s, <event>, i}}}} across the day's slots.
+
+    Cumulative as stored. `delta=True` on the caller's side is one subtraction; it is not
+    done here because which pair of hours matters is the caller's question.
+    """
+    out = {}
+    for h, doc in sorted(hour_perf_day(brand, date).items()):
+        for rid, rec in (doc.get(level) or {}).items():
+            if ids and rid not in ids:
+                continue
+            e = out.setdefault(rid, {"n": rec.get("n", ""), "hours": {}})
+            if rec.get("n"):
+                e["n"] = rec["n"]
+            e["hours"][h] = {k: v for k, v in rec.items() if k != "n"}
+    return out
+
+
 def budget_days(brand, dates):
     """{date: snapshot} for the dates that have one. Missing days are simply absent."""
     if not (H.available() and dates):

@@ -939,6 +939,10 @@ def api_hour_snapshot():
             trials = pr.get("meta", ch.get("meta"))
             ok = P.hour_snapshot(b, trials, comb.get("spend"),
                                  (data.get("installs") or {}).get("meta"))
+            # And the same hour at AD SET and AD level. Free: `data` is the payload this
+            # job has just built, so every figure is already in hand -- the job used to
+            # keep the brand totals and drop the rest. Never allowed to fail the refresh.
+            perf = P.hour_perf_snapshot(b, data)
             # Warm Google too. Its series lived only in the gunicorn process, so the
             # first person to open the Google tab after any restart paid a full Google
             # Ads pull -- and on a free instance that is every wake. Building it here
@@ -961,7 +965,7 @@ def api_hour_snapshot():
                 gwarm = [f"error: {str(ex)[:80]}"]
             out.append({"brand": b, "stored": ok, "trials": trials,
                         "spend": comb.get("spend"), "refreshed": built,
-                        "skipped": skipped, "google": gwarm})
+                        "skipped": skipped, "google": gwarm, "hour_perf": perf})
         except Exception as e:
             traceback.print_exc()
             out.append({"brand": b, "error": str(e)[:200]})
