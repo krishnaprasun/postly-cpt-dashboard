@@ -2705,11 +2705,24 @@ def branch_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
 # A separate query rather than another dimension on the main one: adding campaign and ad
 # group there would multiply every Meta row by two dimensions it already implies, for no
 # gain, and push far more days into Branch's 1000-row paging.
+# Kept for reference and for anything that still wants the narrow list. The TEST below
+# no longer uses it -- see is_google.
 GOOGLE_PARTNERS = ("google adwords", "google ads", "googleadwords", "adwords")
 
 
 def is_google(partner):
-    return (partner or "").strip().lower() in GOOGLE_PARTNERS
+    """Whether Branch named Google as the partner on this trial.
+
+    Delegates to partner_slug, which is the SAME test the Meta-side channel index
+    already applies to the same field. It used to be an exact match against four
+    spellings, and the two disagreeing is a silent hole: a partner Branch spells
+    "Google Ads ACI", "googleads", "YouTube" or plain "Google" was counted as Google in
+    `channels` -- so the brand's blended figures saw those trials -- and dropped here, so
+    the GOOGLE TAB divided real spend by nothing and showed no CPT at all.
+
+    One definition, used by both, so the two can never disagree again.
+    """
+    return partner_slug(partner) == "google"
 
 
 def google_trials_daily(since, until, B, tries=BRANCH_LIVE_TRIES):
@@ -3284,7 +3297,10 @@ def google_window(brand, since, until, force=False):
     # "window2": the payload gained budgets. A stored "window" from before that would be
     # served for up to GSER_MAX_AGE and render the new tile as "Google did not answer",
     # which it never was asked. A new key means a rebuild the first time, then the store.
-    skey = _gser_key(since, until, "window2")
+    # "window3": is_google widened, so a payload stored under the old test can be missing
+    # Google trials that the same window would now find. A new key rebuilds once rather
+    # than serving the old answer for up to GSER_MAX_AGE.
+    skey = _gser_key(since, until, "window3")
     if not force:
         hit, age = _gcache_get(_gwin_cache, key, GSERIES_TTL)
         if hit is not None:
