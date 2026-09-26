@@ -1664,6 +1664,13 @@ def _vid(rows):
     for r in rows:
         if r.get("impressions") is None:
             continue
+        # A row fetched WITHOUT the action breakdown (see _insights' lean fallback) has
+        # no video keys because none were asked for -- not because nothing was watched.
+        # Meta omits them in both cases, so absence alone cannot tell the two apart and
+        # the fetcher has to say which it was. Setting vv=0 here would have printed a
+        # measured 0% hook rate off a question never asked.
+        if r.pop("_novid", False):
+            continue
         r["vv"] = _action(r, "actions", "video_view") or 0.0
         r["tp"] = _action(r, "video_thruplay_watched_actions", "video_view") or 0.0
         # Meta's OWN install count. Absent means none, exactly as the video keys do.
@@ -1720,9 +1727,32 @@ def _insights(acct, params):
                   f"{(len(ids) + per - 1) // per} campaign batches of {per}", flush=True)
             return rows
         except RuntimeError as ex:
-            if _REDUCE not in str(ex) or per == 1:
+            if _REDUCE not in str(ex):
                 raise
-            per = max(1, per // 4)
+            if per > 1:
+                per = max(1, per // 4)
+                continue
+            # One campaign at a time and STILL refused. What is heavy is not the rows,
+            # it is `actions`: asking Meta to break every ad down by action type. Drop
+            # that and the same query becomes cheap -- at the price of hook rate,
+            # ThruPlay and Meta's own install count for this account.
+            #
+            # Spend, impressions and clicks are what CPT is built from, so this keeps the
+            # number everyone reads and loses the three nobody has asked about all week.
+            # Rows come back WITHOUT `vv`, which is exactly how has_vid() already marks a
+            # row as carrying no video -- so the page leaves those columns empty instead
+            # of printing a zero that would read as "nothing was watched".
+            if params.get("fields", "").endswith(VIDEO_FIELDS):
+                print(f"Meta insights on {acct}: still refused per campaign, "
+                      f"retrying without action breakdowns", flush=True)
+                lean = dict(params)
+                lean["fields"] = params["fields"][:-len(VIDEO_FIELDS)]
+                lean.pop("filtering", None)
+                out = _insights(acct, lean)
+                for r in out:
+                    r["_novid"] = True
+                return out
+            raise
 
 
 def meta_insights(acct, since, until):
