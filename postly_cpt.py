@@ -1673,9 +1673,61 @@ def _vid(rows):
     return rows
 
 
+def _campaign_ids(acct):
+    """Every campaign id on the account, off the cached roster listing so this costs
+    nothing on a warm instance."""
+    camps, ok = _part(acct, "campaigns", lambda: _graph(
+        f"{acct}/campaigns", {"fields": "id,name,effective_status,daily_budget,"
+                                        "lifetime_budget"}, rl_retries=0),
+        ROSTER_TTL, False)
+    return [c["id"] for c in (camps or []) if c.get("id")] if ok else []
+
+
+# An account's ad-level insights is ONE aggregation over every ad it has ever run, and on
+# a big account Meta refuses to compute it at all -- "reduce the amount of data" -- however
+# small a page you ask for. Funda's main account and SpeakEasy Install both crossed that
+# line, and because build() then raised, the dashboard served the last good payload for
+# six hours while every job reported 200.
+#
+# Asking per CAMPAIGN is the same question in pieces Meta will answer. It is only ever
+# reached after the whole-account call has been refused, so the accounts that work keep
+# costing exactly one request.
+def _insights(acct, params):
+    try:
+        return _graph(f"{acct}/insights", params)
+    except RuntimeError as ex:
+        if _REDUCE not in str(ex):
+            raise
+    ids = _campaign_ids(acct)
+    if not ids:
+        # Without the campaign list there is nothing to split BY, and returning [] here
+        # would read as "this account spent nothing" -- which is the one answer that must
+        # never be invented.
+        raise RuntimeError(f"Meta {acct}/insights: too heavy to compute, and the campaign "
+                           f"listing needed to split it is unavailable")
+    per = 8
+    while True:
+        try:
+            rows = []
+            for i in range(0, len(ids), per):
+                chunk = ids[i:i + per]
+                p = dict(params)
+                filt = json.loads(p.get("filtering") or "[]")
+                filt.append({"field": "campaign.id", "operator": "IN", "value": chunk})
+                p["filtering"] = json.dumps(filt)
+                rows += _graph(f"{acct}/insights", p)
+            print(f"Meta insights on {acct}: split into "
+                  f"{(len(ids) + per - 1) // per} campaign batches of {per}", flush=True)
+            return rows
+        except RuntimeError as ex:
+            if _REDUCE not in str(ex) or per == 1:
+                raise
+            per = max(1, per // 4)
+
+
 def meta_insights(acct, since, until):
     """Ad-level spend for the window. Re-pulled on every refresh; this is the number."""
-    return _vid(_graph(f"{acct}/insights", {
+    return _vid(_insights(acct, {
         "level": "ad", "time_range": json.dumps({"since": since, "until": until}),
         "filtering": VIDEO_FILTER,
         "fields": "ad_id,ad_name,adset_id,adset_name,campaign_id,campaign_name,spend,"
@@ -2699,7 +2751,7 @@ def meta_insights_daily(acct, since, until):
     call it replaces: 933 aggregate rows and 1697 per-day rows over the same 3 days both
     total 828,048.30 exactly.
     """
-    return _vid(_graph(f"{acct}/insights", {
+    return _vid(_insights(acct, {
         "level": "ad", "time_increment": 1,
         "time_range": json.dumps({"since": since, "until": until}),
         "filtering": VIDEO_FILTER,
