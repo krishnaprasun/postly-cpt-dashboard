@@ -1699,7 +1699,38 @@ def _campaign_ids(acct):
 # Asking per CAMPAIGN is the same question in pieces Meta will answer. It is only ever
 # reached after the whole-account call has been refused, so the accounts that work keep
 # costing exactly one request.
+# An account that has been refused once will be refused again: its size is a property of
+# the account, not of the minute. Without remembering, every window of every hourly run
+# re-walked the whole ladder -- one account call, then batches of 8, 2 and 1, all refused
+# -- before reaching the lean call that works. That took the job past Cloud Run's 900s
+# limit and turned a stale dashboard into a 504. Re-tested every few hours so an account
+# that gets smaller, or a Meta that gets more generous, is picked up on its own.
+_heavy, _heavy_lock = {}, threading.Lock()
+HEAVY_TTL = int(os.environ.get("HEAVY_TTL", "21600"))       # 6 hours
+
+
+def _is_heavy(acct):
+    with _heavy_lock:
+        at = _heavy.get(acct)
+    return bool(at and time.time() - at < HEAVY_TTL)
+
+
+def _mark_heavy(acct):
+    with _heavy_lock:
+        _heavy[acct] = time.time()
+
+
 def _insights(acct, params):
+    # Known too heavy: skip straight to the call that works rather than spending four
+    # refusals to rediscover it.
+    if _is_heavy(acct) and params.get("fields", "").endswith(VIDEO_FIELDS):
+        lean = dict(params)
+        lean["fields"] = params["fields"][:-len(VIDEO_FIELDS)]
+        lean.pop("filtering", None)
+        out = _graph(f"{acct}/insights", lean)
+        for r in out:
+            r["_novid"] = True
+        return out
     try:
         return _graph(f"{acct}/insights", params)
     except RuntimeError as ex:
@@ -1743,8 +1774,10 @@ def _insights(acct, params):
             # row as carrying no video -- so the page leaves those columns empty instead
             # of printing a zero that would read as "nothing was watched".
             if params.get("fields", "").endswith(VIDEO_FIELDS):
+                _mark_heavy(acct)
                 print(f"Meta insights on {acct}: still refused per campaign, "
-                      f"retrying without action breakdowns", flush=True)
+                      f"retrying without action breakdowns (remembered for "
+                      f"{HEAVY_TTL // 3600}h)", flush=True)
                 lean = dict(params)
                 lean["fields"] = params["fields"][:-len(VIDEO_FIELDS)]
                 lean.pop("filtering", None)
