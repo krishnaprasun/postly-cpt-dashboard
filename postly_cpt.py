@@ -153,9 +153,27 @@ def _clear_throttle(acct, edge):
         _throttle.pop((acct, edge), None)
 
 
+# Meta says this when the PAGE is too heavy to assemble, not when anything is wrong with
+# the request. It arrives as code 1 -- the same code as "Service temporarily unavailable",
+# which IS transient -- so the retry below used to re-send the identical request six times
+# and fail identically six times. On Funda's main account that is what it did every hour:
+# 45 seconds of sleeping, then a raise, then get_data quietly served the last good payload
+# and the dashboard sat frozen. Asking for a smaller page is the actual fix.
+_REDUCE = "reduce the amount of data"
+
+
+def _relimit(url, lim):
+    """The same request, asking for a smaller page."""
+    u = urllib.parse.urlsplit(url)
+    q = dict(urllib.parse.parse_qsl(u.query, keep_blank_values=True))
+    q["limit"] = str(lim)
+    return urllib.parse.urlunsplit(u._replace(query=urllib.parse.urlencode(q)))
+
+
 def _graph(path, params, tries=6, rl_retries=2, raw=False):
     pr = dict(params); pr["access_token"] = C.META_TOKEN; pr.setdefault("limit", "500")
     url = f"{C.GRAPH}/{path}?" + urllib.parse.urlencode(pr)
+    lim = int(pr["limit"])
     acct, edge = _acct_of(path), path.split("/")[-1]
     out = []
     while url:
@@ -189,6 +207,16 @@ def _graph(path, params, tries=6, rl_retries=2, raw=False):
                     _mark_throttle(acct, edge, regain)
                     raise RateLimited(f"Meta rate limit on {edge}", account=acct,
                                       regain_min=regain, usage=usage)
+                # Code 1 also carries "reduce the amount of data", which is NOT
+                # transient: the same request will be refused for ever. Ask for a
+                # quarter of the page instead and try again -- paging then just takes
+                # more round trips, which is strictly better than no numbers at all.
+                if code == 1 and _REDUCE in body and lim > 25 and i < tries - 1:
+                    lim = max(25, lim // 4)
+                    url = _relimit(url, lim)
+                    print(f"Meta {edge} on {acct}: page too heavy, retrying at limit={lim}",
+                          flush=True)
+                    continue
                 # 1 / 2 = Meta-side transient ("Service temporarily unavailable"). Short
                 # lived and common; retrying is right. Not retrying these turned a blip
                 # into a 500 on a cold cache, which is how this branch got written.

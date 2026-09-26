@@ -348,6 +348,13 @@ def get_data(since, until, brand, force=False, hard=False, job=False):
     try:
         data = P.build(since, until, brand, force=hard)
     except Exception as e:
+        # LOG IT. This branch serves the last good payload and returns 200, so a brand
+        # whose build fails every hour looks healthy from outside while its numbers sit
+        # frozen -- which is exactly what Funda did for six hours before anyone could see
+        # why, because the traceback died here. The fallback is right; the silence was not.
+        print(f"build failed for {brand} {since}..{until}: {type(e).__name__}: {e}",
+              flush=True)
+        traceback.print_exc()
         # A throttle or a blip must not blank the dashboard. If any figures were ever
         # fetched for this window, serve those and say how old they are; only a cold
         # cache with nothing to fall back on is a real error.
