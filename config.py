@@ -400,7 +400,15 @@ BRANDS = {
     },
     "prepshots": {
         "label": "PrepShots",
-        "testing_re": TESTING_RE_DEFAULT,
+        # NOT the default. PrepShots runs exactly two live campaigns and only one of them
+        # is the trial buy: `Prepshots_TrialNC1hour_270626` is what the CPT on this page
+        # is about, and `Y2G_AppInstall_...` is an App Install campaign whose budget is
+        # committed and judged separately. The default pattern matches neither name, so
+        # both landed in Trial and the Trial view answered for a buy nobody was asking
+        # about -- Rs1,61,000 of budget where Rs83,000 is committed, and a CPT diluted by
+        # installs. Matching AppInstall puts it in Testing, where the page already knows
+        # to hold it apart, so budget, spend, trials and CPT all move together.
+        "testing_re": r"(?i)testing|appinstall|app[ _-]install",
         "accounts": [{"id": "act_1361292779186355", "name": "PrepShots"}],
         # The product DB through Redash, not an attribution vendor — the only brand of
         # the five that measures this way. AppsFlyer answers the current day only from a
