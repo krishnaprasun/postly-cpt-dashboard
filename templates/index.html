@@ -65,8 +65,37 @@ html[data-theme="dark"]{
 /* The literals the token sweep cannot reach: chips and pills that carry their own
    colour. Each is the same hue with the lightness swapped, so a "shared name" pill still
    reads as the same pill. */
-.themebtn{padding:0;width:30px;display:inline-flex;align-items:center;
-  justify-content:center;font-size:14px;line-height:1}
+/* ---------- theme switch ----------
+   Sized off the same 30px the header buttons use so the row keeps one height. */
+.tsw{position:relative;width:52px;height:28px;flex:none;padding:0;cursor:pointer;
+  border:1px solid var(--line);border-radius:999px;background:var(--panel2);
+  transition:background .18s,border-color .18s}
+.tsw:hover{border-color:var(--accent)}
+.tsw:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.tsw-ico{position:absolute;top:50%;transform:translateY(-50%);font-size:11px;
+  line-height:1;pointer-events:none;transition:opacity .18s}
+.tsw-sun{left:7px;color:var(--gold-dk);opacity:1}
+.tsw-moon{right:7px;color:var(--faint);opacity:.55}
+.tsw-knob{position:absolute;top:2px;left:2px;width:22px;height:22px;border-radius:50%;
+  background:var(--white);border:1px solid var(--line);
+  box-shadow:0 1px 3px rgba(26,28,46,.18);
+  transition:transform .2s cubic-bezier(.4,0,.2,1)}
+html[data-theme="dark"] .tsw{background:var(--accent-lt);border-color:var(--accent)}
+html[data-theme="dark"] .tsw-knob{transform:translateX(24px);
+  background:var(--accent);border-color:var(--accent)}
+html[data-theme="dark"] .tsw-sun{opacity:.4;color:var(--faint)}
+html[data-theme="dark"] .tsw-moon{opacity:1;color:var(--navy)}
+@media (prefers-reduced-motion:reduce){.tsw,.tsw-knob,.tsw-ico{transition:none}}
+/* The per-brand accent trio is set on body[data-brand=...] LOWER DOWN this stylesheet.
+   Same specificity as html[data-theme="dark"], so source order decided it and the brand's
+   LIGHT tint won -- which is why the hero tile came out as a pale wash on a dark page.
+   Qualifying with body outranks it, and the tints are derived from whatever accent the
+   brand set rather than being frozen per brand: one rule, right for all five. */
+html[data-theme="dark"] body{
+  --accent-lt:#1B2A22;
+  --accent-lt:color-mix(in srgb, var(--accent) 16%, var(--cream));
+  --accent-dk:color-mix(in srgb, var(--accent) 62%, #FFFFFF);
+}
 html[data-theme="dark"] .pill.t2{color:#F0C36B}
 html[data-theme="dark"] .chansw button[data-c="google"].on{background:#2B6FD4}
 html[data-theme="dark"] .skl{background:linear-gradient(90deg,#232735 25%,#2C3140 37%,#232735 63%)}
@@ -289,15 +318,27 @@ main{padding:20px 22px 60px;max-width:1500px;margin:0 auto}
      there is no other option, so ordinary prose still wraps at spaces. */
   overflow-wrap:anywhere;min-width:0;
   display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.kpi.hero{background:linear-gradient(150deg,var(--accent-lt) 0%,var(--white) 62%);
+/* This tile answers the question the page exists for, so it is allowed to shout. The
+   wash is thrown from the top-left corner rather than straight down, which keeps the
+   number sitting on flat ground instead of halfway up a ramp. */
+.kpi.hero{background:
+    radial-gradient(130% 100% at 0% 0%, var(--accent-lt) 0%, transparent 62%),
+    var(--white);
   /* plain fallback first; browsers that understand color-mix take the tinted edge */
   border-color:var(--line);
-  border-color:color-mix(in srgb, var(--accent) 30%, var(--white));
+  border-color:color-mix(in srgb, var(--accent) 34%, var(--white));
+  box-shadow:var(--shadow);
+  box-shadow:var(--shadow), 0 0 0 4px color-mix(in srgb, var(--accent) 9%, transparent);
   position:relative;overflow:hidden}
 /* The stripe was two hardcoded Postly greens, so the hero card stayed green on brands
    themed gold and violet. It follows the accent now, like everything else in the chrome. */
-.kpi.hero::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
-  background:linear-gradient(180deg,var(--accent-dk),var(--accent))}
+.kpi.hero::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px;
+  background:linear-gradient(180deg,var(--accent),var(--accent-dk))}
+/* A glow, not a glare: the number carries it, the label stays quiet. Only in dark, where
+   there is room for light to register -- on cream it would read as a print smudge. */
+html[data-theme="dark"] .kpi.hero .v{
+  text-shadow:0 0 22px color-mix(in srgb, var(--accent) 45%, transparent)}
+.kpi.hero .k{color:var(--muted)}
 
 .tabhead{margin:2px 0 4px}
 .tabhead>label{font-size:9.5px;letter-spacing:.8px;text-transform:uppercase;
@@ -982,8 +1023,15 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <div class="acts">
       <div id="toolBtns" class="toolbtns"></div><!-- tools: Competitor Intel + Meta Control (static/*.js) -->
       <span class="hsep tall"></span>
-      <button class="btn themebtn" id="themeBtn" type="button"
-        aria-pressed="false" title="Switch to dark mode"><span id="themeIcon">☾</span></button>
+      <!-- A switch, not a button: it has two states and shows which one it is in. The
+           role and aria-checked are what make it one to a screen reader; the sun and moon
+           are painted inside the track so the off position is not a blank slot. -->
+      <button class="tsw" id="themeBtn" type="button" role="switch"
+        aria-checked="false" aria-label="Dark mode" title="Switch to dark mode">
+        <span class="tsw-ico tsw-sun">☀</span>
+        <span class="tsw-ico tsw-moon">☾</span>
+        <span class="tsw-knob"></span>
+      </button>
       {% if can_export %}<div class="expwrap" id="expwrap">
         <button class="btn" id="expBtn" disabled>Export ▾</button>
         <div class="expmenu" id="expMenu">
@@ -6541,11 +6589,10 @@ function applyTheme(dark, remember){
   document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
   const b = document.getElementById('themeBtn');
   if(b){
-    b.setAttribute('aria-pressed', dark ? 'true' : 'false');
+    /* The knob slides off the data-theme attribute in CSS, so nothing here has to know
+       where it sits -- this owns the state and the words, not the geometry. */
+    b.setAttribute('aria-checked', dark ? 'true' : 'false');
     b.title = dark ? 'Switch to light mode' : 'Switch to dark mode';
-    /* The icon shows what you GET, not what you are in: a moon on the light theme is
-       the one everyone reads as "go dark". */
-    document.getElementById('themeIcon').textContent = dark ? '☀' : '☾';
   }
   if(remember){
     try{ localStorage.setItem('cpt_theme', dark ? 'dark' : 'light'); }catch(_){}

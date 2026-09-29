@@ -19,7 +19,10 @@
     '.toolbtn{position:relative;display:inline-flex;align-items:center;gap:6px;',
     '  padding:6px 13px;border-radius:999px;cursor:pointer;font:inherit;font-size:12.5px;',
     '  font-weight:650;white-space:nowrap;border:1px solid var(--line,#e0e0e0);',
-    '  background:var(--panel,#fff);color:var(--ink,#12333a)}',
+    /* --panel is not a token this dashboard defines, so this fell through to the #fff
+       fallback and painted a white pill on the dark theme. --panel2 is the real one; the
+       old name is kept in the chain for any host page that does define it. */
+    '  background:var(--panel2,var(--panel,#fff));color:var(--ink,#12333a)}',
     '.toolbtn:hover{color:var(--accent,#0b5c63);border-color:var(--accent,#0b5c63)}',
     '.toolbtn.ci{border:0}',
     '.toolbtn.ci::before{content:"";position:absolute;inset:-1px;border-radius:999px;padding:2px;',
