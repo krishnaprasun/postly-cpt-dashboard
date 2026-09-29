@@ -340,6 +340,37 @@ html[data-theme="dark"] .kpi.hero .v{
   text-shadow:0 0 22px color-mix(in srgb, var(--accent) 45%, transparent)}
 .kpi.hero .k{color:var(--muted)}
 
+/* A sheen that crosses the tile every eight seconds. Slow and mostly transparent on
+   purpose: this sits on a screen people keep open all day, so it has to catch the eye
+   on arrival and then be ignorable. A fast or opaque one is a strobe by lunchtime. */
+.kpi.hero::after{content:"";position:absolute;inset:0;pointer-events:none;
+  background:linear-gradient(105deg,transparent 38%,
+    color-mix(in srgb, var(--accent) 22%, transparent) 50%, transparent 62%);
+  transform:translateX(-120%);
+  animation:heroSheen 8s ease-in-out infinite}
+@keyframes heroSheen{
+  0%{transform:translateX(-120%)}
+  55%,100%{transform:translateX(120%)}
+}
+/* And a real flash when the NUMBER moves -- the one moment the tile has something new to
+   say. Data-driven, so it fires on an hourly refresh and never on a re-render that
+   changed nothing. */
+.kpi.hero.bump{animation:heroBump .9s ease-out}
+@keyframes heroBump{
+  0%{box-shadow:var(--shadow), 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent)}
+  100%{box-shadow:var(--shadow), 0 0 0 16px transparent}
+}
+.kpi.hero.bump .v{animation:heroBumpV .9s ease-out}
+@keyframes heroBumpV{
+  0%{transform:scale(1)} 28%{transform:scale(1.06)} 100%{transform:scale(1)}
+}
+.kpi.hero .v{display:inline-block;transform-origin:left center}
+/* Somebody who has asked for less motion gets the tile, not the theatre. */
+@media (prefers-reduced-motion:reduce){
+  .kpi.hero::after{animation:none;opacity:0}
+  .kpi.hero.bump,.kpi.hero.bump .v{animation:none}
+}
+
 .tabhead{margin:2px 0 4px}
 .tabhead>label{font-size:9.5px;letter-spacing:.8px;text-transform:uppercase;
   color:var(--faint);font-weight:800;padding-left:2px}
@@ -2180,6 +2211,25 @@ function cohorts(){
   if(snap) ['discovery','mature','unknown'].forEach(k => {
     out[k].budget = snap[k].budget; out[k].live = snap[k].live; });
   return out;
+}
+
+/* The last headline figure we showed, so a re-render that changes nothing stays quiet.
+   Null until the first paint: arriving at the page is not a change. */
+let HEROWAS = null;
+function heroBump(){
+  const el = document.querySelector('#kpis .kpi.hero');
+  if(!el) return;
+  const v = el.querySelector('.v');
+  const now = v ? v.textContent.trim() : '';
+  if(HEROWAS !== null && now && now !== HEROWAS){
+    /* Restart the animation rather than relying on the class still being off: two
+       refreshes inside a second would otherwise show the flash once. */
+    el.classList.remove('bump');
+    void el.offsetWidth;
+    el.classList.add('bump');
+    setTimeout(() => el.classList.remove('bump'), 1000);
+  }
+  HEROWAS = now;
 }
 
 function kpis(){
@@ -5551,7 +5601,7 @@ function render(){
   }
   document.getElementById('cpWrap').style.display =
     (DATA.classplus && DATA.classplus.available) ? 'inline-flex' : 'none';
-  renderLimits(); kpis(); fitValues(); renderTable();
+  renderLimits(); kpis(); fitValues(); heroBump(); renderTable();
   if(CAN_EXPORT){
     document.getElementById('expBtn').disabled = false;
     if(expWrap.classList.contains('on')) expCounts();
