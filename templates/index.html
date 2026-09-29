@@ -4,6 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Ads Performance</title>
+<script>
+/* BEFORE the stylesheet, deliberately. Setting the attribute after first paint means a
+   dark-mode reader gets a white flash on every single load -- brief, but on a page opened
+   twenty times a day it is the most visible thing about the feature.
+
+   Light is the default: an unset preference, an unreadable one, or a browser with no
+   storage at all all land on light, which is what this dashboard has always looked like.
+   The OS preference is deliberately NOT consulted -- somebody whose laptop is dark all day
+   has not thereby asked for this page to be, and the ask was an explicit switch. */
+try{
+  var t = localStorage.getItem('cpt_theme');
+  if(t === 'dark') document.documentElement.setAttribute('data-theme', 'dark');
+}catch(_){}
+</script>
 <style>
 /* Postly brand palette — values taken from postly-insta-daily/brandkit.py so the
    dashboard matches the creatives: cream ground, navy ink, green primary, gold
@@ -24,13 +38,52 @@
 
   --red:#B3342C; --red-lt:#FBECEA;
   --shadow:0 1px 2px rgba(26,28,46,.05), 0 4px 14px rgba(26,28,46,.045);
+  --header-bg:rgba(253,252,247,.93);
 }
+
+/* ---------- dark ----------
+   Only the TOKENS move. Every rule below this block is written against them, so the two
+   themes cannot drift apart the way a second stylesheet would -- there is one set of
+   rules and two sets of values.
+
+   The semantic three do NOT simply invert. `good` has to stay green and `bad` red on
+   both themes, because those are the colours people act on; what changes is how much
+   light they carry, since #127A42 on near-black is unreadable and #B3342C is worse.
+   They are lifted, not re-hued. */
+html[data-theme="dark"]{
+  --cream:#14161F; --white:#1B1E29; --panel2:#232735;
+  --navy:#E9EBF2; --ink:#C4C9D8; --muted:#949BAF; --faint:#6C7488;
+  --line:#2E3342; --line2:#262A37;
+  --green:#34C77B; --green-dk:#43D488; --green-lt:#15301F;
+  --accent:#34C77B; --accent-dk:#43D488; --accent-lt:#15301F;
+  --gold:#E8A017; --gold-dk:#F0B84B; --gold-lt:#332813;
+  --red:#FF7A6E; --red-lt:#3A1C19;
+  --shadow:0 1px 2px rgba(0,0,0,.35), 0 4px 16px rgba(0,0,0,.30);
+  --header-bg:rgba(20,22,31,.93);
+  color-scheme:dark;
+}
+/* The literals the token sweep cannot reach: chips and pills that carry their own
+   colour. Each is the same hue with the lightness swapped, so a "shared name" pill still
+   reads as the same pill. */
+.themebtn{padding:0;width:30px;display:inline-flex;align-items:center;
+  justify-content:center;font-size:14px;line-height:1}
+html[data-theme="dark"] .pill.t2{color:#F0C36B}
+html[data-theme="dark"] .chansw button[data-c="google"].on{background:#2B6FD4}
+html[data-theme="dark"] .skl{background:linear-gradient(90deg,#232735 25%,#2C3140 37%,#232735 63%)}
+html[data-theme="dark"] .scope[data-c="google"]{background:#17253D;color:#8CB4F5;border-color:#28436F}
+html[data-theme="dark"] .pill.live,
+html[data-theme="dark"] .pill.t1,
+html[data-theme="dark"] .pill.new{border-color:#1F5138}
+html[data-theme="dark"] .warnbox b,
+html[data-theme="dark"] .limitbox b,
+html[data-theme="dark"] .lhead{color:#F0C36B}
+html[data-theme="dark"] .src.gads{background:#232735;color:#AEB5C6}
 *{box-sizing:border-box}
 body{margin:0;background:var(--cream);color:var(--navy);
   font:14px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",Inter,Segoe UI,sans-serif;
   -webkit-font-smoothing:antialiased}
 
-header{position:sticky;top:0;z-index:20;background:rgba(253,252,247,.93);
+header{position:sticky;top:0;z-index:20;background:var(--header-bg);
   backdrop-filter:blur(10px);border-bottom:1px solid var(--line);padding:11px 22px}
 .hrow{display:flex;gap:13px;align-items:center;flex-wrap:wrap;row-gap:9px}
 /* The timestamp, Export and Refresh belong together. Previously they were separate flex
@@ -929,6 +982,8 @@ body.veiled main,body.veiled header{pointer-events:none;user-select:none}
     <div class="acts">
       <div id="toolBtns" class="toolbtns"></div><!-- tools: Competitor Intel + Meta Control (static/*.js) -->
       <span class="hsep tall"></span>
+      <button class="btn themebtn" id="themeBtn" type="button"
+        aria-pressed="false" title="Switch to dark mode"><span id="themeIcon">☾</span></button>
       {% if can_export %}<div class="expwrap" id="expwrap">
         <button class="btn" id="expBtn" disabled>Export ▾</button>
         <div class="expmenu" id="expMenu">
@@ -6475,6 +6530,39 @@ function shutMenus(){
     document.getElementById('whoBtn').setAttribute('aria-expanded', 'false');
   }
 }
+/* ---------- light / dark ----------
+   The attribute is the single source of truth: the pre-paint script in <head> sets it
+   from storage, this keeps it and the button's label in step, and every colour on the
+   page is a token that follows it. Nothing else needs to know the theme exists.
+
+   Light unless the reader has explicitly chosen dark -- a browser with storage disabled
+   or a first visit both fall through to light rather than to whatever the OS prefers. */
+function applyTheme(dark, remember){
+  document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+  const b = document.getElementById('themeBtn');
+  if(b){
+    b.setAttribute('aria-pressed', dark ? 'true' : 'false');
+    b.title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+    /* The icon shows what you GET, not what you are in: a moon on the light theme is
+       the one everyone reads as "go dark". */
+    document.getElementById('themeIcon').textContent = dark ? '☀' : '☾';
+  }
+  if(remember){
+    try{ localStorage.setItem('cpt_theme', dark ? 'dark' : 'light'); }catch(_){}
+  }
+  /* No redraw needed: the charts are SVG whose axes, gridlines and points are styled by
+     CSS class off the same tokens, so they re-colour themselves. The series colours are
+     a fixed palette chosen to hold up on either background. */
+}
+const themeBtn = document.getElementById('themeBtn');
+if(themeBtn){
+  /* Reflect whatever the head script decided, without writing it back: reading the page
+     is not choosing a theme, and storing it here would turn a default into a decision. */
+  applyTheme(document.documentElement.getAttribute('data-theme') === 'dark', false);
+  themeBtn.onclick = () =>
+    applyTheme(document.documentElement.getAttribute('data-theme') !== 'dark', true);
+}
+
 document.addEventListener('click', shutMenus);
 document.addEventListener('keydown', e => { if(e.key === 'Escape') shutMenus(); });
 
