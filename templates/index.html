@@ -2725,7 +2725,7 @@ installs</span></div>
 /* Its own fetch, its own cache, loaded on demand. It reads a far wider window than the
    rest of the page and costs ~30s cold, so making every page load pay for a view most
    people open occasionally would be the wrong trade. */
-let LONG = null, LONGKEY = null, LONGBUSY = false;
+let LONG = null, LONGKEY = null, LONGBUSY = false, LONGAT = 0;
 /* What the loaded longevity payload MUST match to be shown. Clearing LONG on brand switch
    would also fix the bug that prompted this, but only until the next place that forgets;
    checking at the point of USE cannot be forgotten, because nothing renders without it.
@@ -2859,7 +2859,11 @@ function cacheAge(v, held){
 }
 
 const longKey = () => `${BRAND}|${document.getElementById('lWin').value}`;
-const longFresh = () => !!(LONG && LONGKEY === longKey());
+/* Same split, same reason, as googUsable/googFresh above: without an age these were
+   trusted for the life of the page, so re-opening the tab showed the first answer it had
+   ever been given. */
+const longUsable = () => !!(LONG && LONGKEY === longKey());
+const longFresh = () => longUsable() && (Date.now() - LONGAT) < CACHE_SOFT;
 
 function sparkline(daily){
   if(!daily || !daily.length) return '';
@@ -2876,7 +2880,7 @@ function sparkline(daily){
    dimension with a value per day, the chart draws the top six and the grid prints the
    top twenty. They share a fetch because they share a fold, and that fold is the
    expensive part. */
-let SERIES = null, SERIESKEY = null, SERIESBUSY = false;
+let SERIES = null, SERIESKEY = null, SERIESBUSY = false, SERIESAT = 0;
 /* Hourly is its own payload and its own question: spend by hour of day, one line per
    day, so today can be read against the last three at the same hour. Trials ride along
    where we have recorded them — Branch has no hourly source, so they only exist from the
@@ -3317,7 +3321,7 @@ function chanTabsAvail(){
 }
 
 function googTotals(){
-  if(!GOOG || !googFresh()) return null;
+  if(!googUsable()) return null;
   const ev = (GOOG.events || [])[0];
   const t = GOOG.totals || {};
   /* Branch refusing is not zero trials. `trial_days` counts the days that actually
@@ -3355,23 +3359,44 @@ function googTotals(){
           trialsKnown: known, why: GOOG.trials_error || ''};
 }
 const googKey = () => `${BRAND}|${RANGE}|${CUSTOM ? CUSTOM.since+CUSTOM.until : ''}`;
-const googFresh = () => !!(GOOG && GOOGKEY === googKey());
+/* USABLE and FRESH are different questions and were one test, which is the whole bug:
+   `GOOG && key matches` has no age in it, so a payload fetched once was trusted for the
+   life of the page. Switching Meta -> Google -> Meta -> Google re-showed the first
+   answer for ever, and only a reload -- which empties the variable -- went and asked
+   again.
 
-async function loadGoogle(force){
+   Usable: the right brand and window, whatever its age. That is what RENDERING wants,
+   because numbers with a timestamp beat an empty tile.
+   Fresh: usable AND recent. That is what FETCHING wants.
+
+   The threshold is the same 90s the browser cache already uses to decide a held copy is
+   worth revalidating, so the two layers cannot disagree about what counts as recent. */
+const googUsable = () => !!(GOOG && GOOGKEY === googKey());
+const googFresh = () => googUsable() && (Date.now() - GOOGAT) < CACHE_SOFT;
+
+async function loadGoogle(force, quiet){
   const key = googKey();
   if(googFresh() && !force) return;
-  GOOGBUSY = true;                         // before the first await; see loadSeries
+  /* TWO questions, and collapsing them breaks the Refresh button. `quiet` is the caller
+     saying "this is a background revalidation, the server may serve its own cache" --
+     only the internal retry passes it. `keep` is purely about the screen: a payload we
+     still hold for this window stays visible while the new one is fetched, instead of
+     blanking to "loading Google" over numbers that were good a second earlier. */
+  const keep = quiet || googUsable();
+  if(!keep) GOOGBUSY = true;               // before the first await; see loadSeries
   const hit = force ? null : await cacheGet('goog|' + key);
   if(hit){
     GOOG = hit.v; GOOGKEY = key; GOOGBUSY = false; GOOGAT = Date.now();
     googPaint();
     if(hit.held < CACHE_SOFT) return;
-    return loadGoogle(true);
+    return loadGoogle(true, true);         // refresh behind the numbers on screen
   }
-  GOOG = null; GOOGKEY = null; GOOGBUSY = true;
-  document.getElementById('gcount').innerHTML = CNT;
+  if(!keep){ GOOG = null; GOOGKEY = null; }
+  GOOGBUSY = !keep;
+  document.getElementById('gcount').innerHTML = keep
+    ? '<span class="spin"></span>updating' : CNT;
   try{
-    const r = await fetch(`/api/google?${apiQuery()}${force?'&force=1':''}${K}`);
+    const r = await fetch(`/api/google?${apiQuery()}${force && !quiet ?'&force=1':''}${K}`);
     const j = await r.json();
     if(j.error){ document.getElementById('gcount').textContent = 'failed: ' + j.error; return; }
     cachePut('goog|' + key, j);
@@ -3578,7 +3603,8 @@ const seriesKey = () => `${CHAN}|${BRAND}|${sWin()}|${
    trials and CPT to begin with: the three every conversation here starts from. */
 let SHAPE = 'day';
 let MCOLS = ['spend', 't101', 'cpt'];
-const seriesFresh = () => !!(SERIES && SERIESKEY === seriesKey());
+const seriesUsable = () => !!(SERIES && SERIESKEY === seriesKey());
+const seriesFresh = () => seriesUsable() && (Date.now() - SERIESAT) < CACHE_SOFT;
 const sDim = () => document.getElementById('sDim').value;
 const sMetric = () => document.getElementById('sMetric').value;
 
@@ -3825,26 +3851,27 @@ async function loadSeries(force, quiet){
   /* Set synchronously, BEFORE the first await. An async cache read is still an await:
      the render that happens in between finds no payload and no busy flag, and draws the
      empty state at someone who is in fact waiting for data. */
-  if(!quiet) SERIESBUSY = true;
+  const keep = quiet || seriesUsable();   // see loadGoogle: the screen, not the server
+  if(!keep) SERIESBUSY = true;
   const hit = force ? null : await cacheGet('ser|' + key);
   if(hit){
     /* Straight onto the screen, no spinner and no round trip. */
-    SERIES = hit.v; SERIESKEY = key; SERIESBUSY = false;
+    SERIES = hit.v; SERIESKEY = key; SERIESBUSY = false; SERIESAT = Date.now();
     if(TAB === 'trends' || TAB === 'matrix'){ seriesControls(); renderTable(); noteFor(); }
     if(hit.held < CACHE_SOFT) return;
     return loadSeries(true, true);          // refresh behind the numbers on screen
   }
   /* Only blank the view when there is nothing to show. A background refresh must never
      replace real rows with "Loading…" -- that is the flicker this whole layer removes. */
-  if(!quiet){ SERIES = null; SERIESKEY = null; }
-  SERIESBUSY = !quiet;
-  document.getElementById('scount').innerHTML = quiet
+  if(!keep){ SERIES = null; SERIESKEY = null; }
+  SERIESBUSY = !keep;
+  document.getElementById('scount').innerHTML = keep
     ? '<span class="spin"></span>updating' : CNT;
   /* Repaint NOW. Without this the old dimension's grid sat on screen, unchanged and
      unlabelled, for the thirty to sixty seconds the new fold takes -- so changing
      Dimension looked like it had done nothing, and the numbers being read were the
      previous dimension's. */
-  if(!quiet && (TAB === 'trends' || TAB === 'matrix')) renderTable();
+  if(!keep && (TAB === 'trends' || TAB === 'matrix')) renderTable();
   try{
     /* Google's series is a different endpoint returning the SAME shape, so everything
        below this line -- the chart, the grid, paging, sorting, the hover read-out, the
@@ -3859,7 +3886,7 @@ async function loadSeries(force, quiet){
        under a heading that now means something else. */
     cachePut('ser|' + key, j);
     if(seriesKey() !== key) return;
-    SERIES = j; SERIESKEY = key;
+    SERIES = j; SERIESKEY = key; SERIESAT = Date.now();
   }catch(e){
     if(!quiet) document.getElementById('scount').textContent = 'failed: ' + e;
   }finally{
@@ -4714,10 +4741,11 @@ async function loadLongevity(force, quiet){
   const days = document.getElementById('lWin').value;
   const key = longKey();
   if(longFresh() && !force) return;
-  if(!quiet) LONGBUSY = true;              // before the first await; see loadSeries
+  const keep = quiet || longUsable();     // see loadGoogle: the screen, not the server
+  if(!keep) LONGBUSY = true;               // before the first await; see loadSeries
   const hit = force ? null : await cacheGet('long|' + key);
   if(hit){
-    LONG = hit.v; LONGKEY = key; LONGBUSY = false;
+    LONG = hit.v; LONGKEY = key; LONGBUSY = false; LONGAT = Date.now();
     renderTable(); noteFor();
     if(hit.held < CACHE_SOFT) return;
     /* Always worth a quiet refresh: the today column and the live/paused status are
@@ -4727,12 +4755,12 @@ async function loadLongevity(force, quiet){
   }
   // Drop the old payload BEFORE awaiting, so a slow fetch cannot leave another brand's
   // rows on screen while it runs. A quiet refresh keeps them: it is the same question.
-  if(!quiet){ LONG = null; LONGKEY = null; }
-  LONGBUSY = !quiet;
-  document.getElementById('lcount').innerHTML = quiet
+  if(!keep){ LONG = null; LONGKEY = null; }
+  LONGBUSY = !keep;
+  document.getElementById('lcount').innerHTML = keep
     ? '<span class="spin"></span>updating' : CNT;
   const lb = document.getElementById('lGo');
-  if(lb && !quiet) lb.disabled = true;
+  if(lb && !keep) lb.disabled = true;
   try{
     const r = await fetch(`/api/longevity?brand=${BRAND}&days=${days}${
       force && !quiet ? '&force=1' : ''}${K}`);
@@ -4740,7 +4768,7 @@ async function loadLongevity(force, quiet){
     if(j.error){ document.getElementById('lcount').textContent = 'failed: ' + j.error; return; }
     cachePut('long|' + key, j);
     if(longKey() !== key) return;
-    LONG = j; LONGKEY = key;
+    LONG = j; LONGKEY = key; LONGAT = Date.now();
   }catch(e){
     if(!quiet) document.getElementById('lcount').textContent = 'failed: ' + e;
   }finally{
@@ -4844,7 +4872,7 @@ function renderLongevity(){
   const tbl = document.getElementById('tbl');
   const cols = hasTrials() ? LONG_COLS
                            : LONG_COLS.filter(c => c.k!=='trials' && c.k!=='cpt');
-  if(!longFresh()){
+  if(!longUsable()){
     tbl.querySelector('thead').innerHTML = '';
     tbl.querySelector('tbody').innerHTML = LONGBUSY
       ? sklRows(['300px','76px','76px','44px','44px','120px','82px','66px','58px','58px','62px','170px'], 9)
@@ -5297,7 +5325,7 @@ function renderBlended(){
    honestly offer. Below it they diverge: an ad set is not an ad group. */
 function renderPlatform(){
   const tbl = document.getElementById('tbl');
-  const g = GOOG && googFresh() ? GOOG : null;
+  const g = googUsable() ? GOOG : null;
   const ev = g ? (g.events || [])[0] : null;
   const known = hasTrials();
   const rows = (acctRows() ? DATA.campaigns.filter(inSeg) : []).map(o => ({
@@ -5599,7 +5627,7 @@ function render(){
   /* Only once the tab has been opened: a count is a promise that the number is real, and
      guessing one before the fetch would be a promise this cannot keep. */
   if(!chanIsMeta()){
-    const g = googFresh() ? GOOG : null;
+    const g = googUsable() ? GOOG : null;
     for(const b of document.getElementById('tabs').children){
       const i = b.querySelector('i');
       if(!i) continue;
@@ -5890,7 +5918,7 @@ function googNote(){
 }
 
 function longNote(){
-  if(!longFresh()) return '';
+  if(!longUsable()) return '';
   const scope = `<b>Meta ads only</b> — ad sets in ${DATA ? DATA.brand_label : 'this brand'}'s
      Meta ad accounts. Creatives run on other channels do not appear here at all.<br>
      <b class="modelled">This is the one measured tab</b> — every CPT below is
